@@ -41,6 +41,7 @@ model User {
   betalingsherinneringen Boolean  @default(true)
   herinneringDagen      Int       @default(7)
   kmVergoeding          Float     @default(0.23)
+  anthropicApiKey       String?
   aangemaakt            DateTime  @default(now())
   bijgewerkt            DateTime  @updatedAt
 }

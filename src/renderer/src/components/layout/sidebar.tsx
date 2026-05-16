@@ -14,6 +14,8 @@ import {
   Building2,
   ChevronLeft,
   ChevronRight,
+  Car,
+  Landmark,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
@@ -28,6 +30,8 @@ const navigatie = [
   { naam: "Inkomen", href: "/inkomen", icoon: TrendingUp },
   { naam: "Uitgaven", href: "/uitgaven", icoon: TrendingDown },
   { naam: "Uren", href: "/uren", icoon: Clock },
+  { naam: "Kilometer", href: "/kilometer", icoon: Car },
+  { naam: "Bankimport", href: "/bank-import", icoon: Landmark },
   { naam: "Rapporten", href: "/rapporten", icoon: BarChart3 },
   { naam: "Instellingen", href: "/instellingen", icoon: Settings },
 ];

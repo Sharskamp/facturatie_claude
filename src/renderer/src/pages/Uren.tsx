@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Plus,
   Pencil,
@@ -10,6 +11,7 @@ import {
   Loader2,
   CheckCircle,
   Circle,
+  FileText,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -24,6 +26,13 @@ import {
   ModalClose,
 } from "@/components/ui/modal";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Table,
   TableBody,
   TableCell,
@@ -32,6 +41,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatBedrag, formatDatum } from "@/lib/utils";
+
+interface Klant {
+  id: string;
+  naam: string;
+  bedrijf?: string | null;
+}
 
 interface UrenRegistratie {
   id: string;
@@ -91,6 +106,7 @@ const LEEG_FORMULIER = {
 };
 
 export default function UrenPagina() {
+  const navigate = useNavigate();
   const [uren, setUren] = useState<UrenRegistratie[]>([]);
   const [laden, setLaden] = useState(true);
   const [weekStart, setWeekStart] = useState(huidigWeek());
@@ -99,6 +115,12 @@ export default function UrenPagina() {
   const [melding, setMelding] = useState<{ type: "succes" | "fout"; tekst: string } | null>(null);
   const [opslaan, setOpslaan] = useState(false);
   const [formulier, setFormulier] = useState(LEEG_FORMULIER);
+
+  // Uren → Factuur selectie
+  const [geselecteerdeUren, setGeselecteerdeUren] = useState<Set<string>>(new Set());
+  const [klanten, setKlanten] = useState<Klant[]>([]);
+  const [factuurKlantId, setFactuurKlantId] = useState("");
+  const [factuurLaden, setFactuurLaden] = useState(false);
 
   // Timer state
   const [timerActief, setTimerActief] = useState(false);
@@ -190,9 +212,53 @@ export default function UrenPagina() {
     }
   }, [weekStart]);
 
+  const haalKlantenOp = useCallback(async () => {
+    try {
+      const data = await window.api.klanten.list();
+      setKlanten(Array.isArray(data) ? data : []);
+    } catch {
+      // stil falen
+    }
+  }, []);
+
   useEffect(() => {
     haalUrenOp();
   }, [haalUrenOp]);
+
+  useEffect(() => {
+    haalKlantenOp();
+  }, [haalKlantenOp]);
+
+  const toggleSelecteerUur = (id: string, gefactureerd: boolean) => {
+    if (gefactureerd) return;
+    setGeselecteerdeUren((prev) => {
+      const nieuw = new Set(prev);
+      if (nieuw.has(id)) nieuw.delete(id);
+      else nieuw.add(id);
+      return nieuw;
+    });
+  };
+
+  const maakFactuurVanUren = async () => {
+    if (geselecteerdeUren.size === 0 || !factuurKlantId) {
+      toonMelding("fout", "Selecteer uren en een klant");
+      return;
+    }
+    setFactuurLaden(true);
+    try {
+      const factuurId = await window.api.uren.factuurAanmaken({
+        urenIds: Array.from(geselecteerdeUren),
+        klantId: factuurKlantId,
+      });
+      setGeselecteerdeUren(new Set());
+      setFactuurKlantId("");
+      navigate(`/facturen/${factuurId}`);
+    } catch {
+      toonMelding("fout", "Kon factuur niet aanmaken");
+    } finally {
+      setFactuurLaden(false);
+    }
+  };
 
   const toonMelding = (type: "succes" | "fout", tekst: string) => {
     setMelding({ type, tekst });
@@ -433,6 +499,7 @@ export default function UrenPagina() {
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-10"></TableHead>
                 <TableHead>Datum</TableHead>
                 <TableHead>Project / Klant</TableHead>
                 <TableHead>Omschrijving</TableHead>
@@ -447,19 +514,29 @@ export default function UrenPagina() {
             <TableBody>
               {laden ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center py-8">
+                  <TableCell colSpan={10} className="text-center py-8">
                     <Loader2 className="h-6 w-6 animate-spin text-indigo-400 mx-auto" />
                   </TableCell>
                 </TableRow>
               ) : uren.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center py-8 text-gray-400">
+                  <TableCell colSpan={10} className="text-center py-8 text-gray-400">
                     Geen urenregistraties gevonden voor deze week
                   </TableCell>
                 </TableRow>
               ) : (
                 uren.map((uur) => (
-                  <TableRow key={uur.id}>
+                  <TableRow key={uur.id} className={geselecteerdeUren.has(uur.id) ? "bg-indigo-50" : ""}>
+                    <TableCell>
+                      {!uur.gefactureerd && (
+                        <input
+                          type="checkbox"
+                          checked={geselecteerdeUren.has(uur.id)}
+                          onChange={() => toggleSelecteerUur(uur.id, uur.gefactureerd)}
+                          className="h-4 w-4 rounded border-gray-300 text-indigo-600"
+                        />
+                      )}
+                    </TableCell>
                     <TableCell className="whitespace-nowrap text-gray-500">
                       {formatDatum(uur.datum ?? uur.startTijd)}
                     </TableCell>
@@ -524,6 +601,42 @@ export default function UrenPagina() {
             </TableBody>
           </Table>
         </Card>
+
+        {/* Uren → Factuur actie-balk */}
+        {geselecteerdeUren.size > 0 && (
+          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-white border border-indigo-200 rounded-xl shadow-xl px-5 py-3 flex items-center gap-4">
+            <span className="text-sm font-medium text-indigo-700">
+              {geselecteerdeUren.size} {geselecteerdeUren.size === 1 ? "registratie" : "registraties"} geselecteerd
+            </span>
+            <Select value={factuurKlantId} onValueChange={setFactuurKlantId}>
+              <SelectTrigger className="w-48 h-8 text-sm">
+                <SelectValue placeholder="Selecteer klant..." />
+              </SelectTrigger>
+              <SelectContent>
+                {klanten.map((k) => (
+                  <SelectItem key={k.id} value={k.id}>
+                    {k.bedrijf ?? k.naam}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              size="sm"
+              onClick={maakFactuurVanUren}
+              loading={factuurLaden}
+              disabled={!factuurKlantId}
+            >
+              <FileText className="h-4 w-4" />
+              Maak factuur
+            </Button>
+            <button
+              className="text-sm text-gray-400 hover:text-gray-600"
+              onClick={() => setGeselecteerdeUren(new Set())}
+            >
+              Annuleren
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Modal */}

@@ -598,15 +598,17 @@ function setupIpcHandlers() {
         emailSmtpUser: true, emailSmtpSecure: true, korActief: true, korDrempel: true,
         standaardBetaalTermijn: true, standaardBtwTarief: true, betalingsherinneringen: true,
         herinneringDagen: true, googleRefreshToken: true, kmVergoeding: true,
+        anthropicApiKey: true,
       }
     })
     return { ...user, googleGekoppeld: !!user?.googleRefreshToken }
   })
 
   ipcMain.handle('instellingen:update', async (_, data: Record<string, unknown>) => {
-    const { emailSmtpPass, ...rest } = data
+    const { emailSmtpPass, anthropicApiKey, ...rest } = data
     const updateData: Record<string, unknown> = { ...rest }
     if (emailSmtpPass) updateData.emailSmtpPass = emailSmtpPass
+    if (anthropicApiKey !== undefined) updateData.anthropicApiKey = anthropicApiKey || null
     await prisma.user.updateMany({ data: updateData })
     return { succes: true }
   })
@@ -1012,6 +1014,69 @@ function setupIpcHandlers() {
   ipcMain.handle('uitgaven:openBon', async (_, { pad }: { pad: string }) => {
     await shell.openPath(pad)
     return { succes: true }
+  })
+
+  ipcMain.handle('uitgaven:scanBon', async (_, { bonPad }: { bonPad: string }) => {
+    const user = await prisma.user.findFirst()
+    if (!user?.anthropicApiKey) {
+      return { error: 'Geen Anthropic API sleutel ingesteld. Ga naar Instellingen > AI.' }
+    }
+
+    const ext = bonPad.split('.').pop()?.toLowerCase() ?? ''
+    if (ext === 'pdf') {
+      return { error: 'PDF scanning niet ondersteund. Gebruik een afbeelding (JPG, PNG, WEBP).' }
+    }
+
+    let mediaType: string
+    if (ext === 'jpg' || ext === 'jpeg') {
+      mediaType = 'image/jpeg'
+    } else if (ext === 'png') {
+      mediaType = 'image/png'
+    } else if (ext === 'webp') {
+      mediaType = 'image/webp'
+    } else {
+      return { error: `Onbekend bestandstype: .${ext}. Gebruik JPG, PNG of WEBP.` }
+    }
+
+    const base64 = fs.readFileSync(bonPad).toString('base64')
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': user.anthropicApiKey,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 256,
+          system: 'Je bent een assistent die bonnen uitleest. Reageer alleen met het gevraagde JSON-formaat, niets anders.',
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
+              { type: 'text', text: 'Dit is een kassabon of factuur. Extraheer: 1) totaalbedrag (alleen getal, geen €-teken, punt als decimaalscheidingsteken), 2) naam van de winkel/leverancier, 3) datum (formaat YYYY-MM-DD). Reageer ALLEEN met JSON: {"bedrag": 12.50, "leverancier": "Albert Heijn", "datum": "2025-03-15"}. Als je een waarde niet kunt vinden, gebruik null.' }
+            ]
+          }]
+        })
+      })
+
+      if (!response.ok) {
+        const fout = await response.text()
+        return { error: `API fout (${response.status}): ${fout.slice(0, 200)}` }
+      }
+
+      const apiResp = await response.json() as { content: Array<{ text: string }> }
+      const tekst = apiResp.content?.[0]?.text ?? '{}'
+
+      // Strip mogelijke markdown code fences
+      const schoonTekst = tekst.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
+      const parsed = JSON.parse(schoonTekst) as { bedrag?: number | null; leverancier?: string | null; datum?: string | null }
+      return { bedrag: parsed.bedrag ?? null, leverancier: parsed.leverancier ?? null, datum: parsed.datum ?? null }
+    } catch (e: unknown) {
+      return { error: e instanceof Error ? e.message : 'Onbekende fout bij scannen' }
+    }
   })
 }
 

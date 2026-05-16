@@ -10,6 +10,7 @@ import {
   Copy,
   CheckCircle2,
   ExternalLink,
+  FileDown,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -233,6 +234,17 @@ export default function FactuurDetailPage() {
             >
               <Printer className="h-4 w-4" />
               Afdrukken
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={async () => {
+                const res = await window.api.facturen.downloadPdf(id!) as { succes: boolean; fout?: string }
+                if (!res.succes && res.fout) alert(`PDF mislukt: ${res.fout}`)
+              }}
+            >
+              <FileDown className="h-4 w-4" />
+              PDF downloaden
             </Button>
             {factuur.status !== "BETAALD" && factuur.status !== "GEANNULEERD" && (
               <>

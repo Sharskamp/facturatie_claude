@@ -11,6 +11,9 @@ import {
   Send,
   Link,
   Unlink,
+  Bot,
+  MoreHorizontal,
+  Car,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -24,7 +27,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-type Tab = "bedrijf" | "facturen" | "email" | "google" | "kor";
+type Tab = "bedrijf" | "facturen" | "email" | "google" | "kor" | "ai" | "overig";
 
 const TAB_CONFIG: Array<{ id: Tab; label: string; icon: React.ElementType }> = [
   { id: "bedrijf", label: "Bedrijfsgegevens", icon: Building2 },
@@ -32,6 +35,8 @@ const TAB_CONFIG: Array<{ id: Tab; label: string; icon: React.ElementType }> = [
   { id: "email", label: "Email", icon: Mail },
   { id: "google", label: "Google Agenda", icon: Calendar },
   { id: "kor", label: "KOR", icon: Calculator },
+  { id: "ai", label: "AI / OCR", icon: Bot },
+  { id: "overig", label: "Overig", icon: MoreHorizontal },
 ];
 
 interface Instellingen {
@@ -65,6 +70,10 @@ interface Instellingen {
   // KOR
   korActief?: boolean;
   korDrempel?: number;
+  // AI / OCR
+  anthropicApiKey?: string;
+  // Overig
+  kmVergoeding?: number;
 }
 
 export default function InstellingenPagina() {
@@ -654,6 +663,96 @@ export default function InstellingenPagina() {
 
               <div className="flex justify-end pt-2">
                 <Button onClick={() => slaOp({ korActief: instellingen.korActief, korDrempel: instellingen.korDrempel })} loading={opslaan}>
+                  Opslaan
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* ── Overig ── */}
+        {actieveTab === "overig" && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Car className="h-5 w-5" />
+                Kilometervergoeding
+              </CardTitle>
+              <CardDescription>Tarief voor zakelijke reiskosten per kilometer</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-sm text-blue-800">
+                <p>
+                  De Belastingdienst hanteert een standaard vergoeding van <strong>€ 0,23 per km</strong> (2024).
+                  Dit tarief wordt gebruikt bij de kilometerregistratie om de aftrekbare vergoeding te berekenen.
+                </p>
+              </div>
+              <Input
+                label="Kilometervergoeding (€ per km)"
+                type="number"
+                step="0.001"
+                min="0"
+                max="1"
+                prefix="€"
+                value={instellingen.kmVergoeding ?? 0.23}
+                onChange={(e) => updateVeld("kmVergoeding", parseFloat(e.target.value))}
+                onBlur={() => slaOp({ kmVergoeding: instellingen.kmVergoeding })}
+                placeholder="0.23"
+              />
+              <p className="text-xs text-gray-400">
+                Pas dit aan als je een ander tarief wilt hanteren, bijv. het hogere belastingvrije tarief voor motorfietsen (€ 0,23).
+              </p>
+              <div className="flex justify-end pt-2">
+                <Button onClick={() => slaOp({ kmVergoeding: instellingen.kmVergoeding })} loading={opslaan}>
+                  Opslaan
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* ── AI / OCR ── */}
+        {actieveTab === "ai" && (
+          <Card>
+            <CardHeader>
+              <CardTitle>AI / OCR — Bon scannen</CardTitle>
+              <CardDescription>Gebruik Claude Vision om bonnen automatisch uit te lezen</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="rounded-lg bg-indigo-50 border border-indigo-200 p-4 text-sm text-indigo-900 space-y-2">
+                <p className="font-semibold">Hoe werkt het?</p>
+                <p>
+                  Na het uploaden van een bon kun je op "Scannen" klikken. AdminPro stuurt de
+                  afbeelding naar de Claude Vision API en leest automatisch het bedrag,
+                  de leverancier en de datum uit.
+                </p>
+                <p className="text-indigo-700">
+                  Vereist een Anthropic API-sleutel. Maak er een aan op{" "}
+                  <button
+                    type="button"
+                    className="underline"
+                    onClick={() => window.api.shell.openExternal("https://console.anthropic.com/")}
+                  >
+                    console.anthropic.com
+                  </button>
+                  .
+                </p>
+              </div>
+
+              <Input
+                label="Anthropic API sleutel"
+                type="password"
+                value={instellingen.anthropicApiKey ?? ""}
+                onChange={(e) => updateVeld("anthropicApiKey", e.target.value)}
+                onBlur={() => slaOp({ anthropicApiKey: instellingen.anthropicApiKey })}
+                placeholder="sk-ant-api03-..."
+              />
+              <p className="text-xs text-gray-400">
+                De sleutel wordt veilig lokaal opgeslagen. Ondersteunde formaten: JPG, PNG, WEBP (geen PDF).
+              </p>
+
+              <div className="flex justify-end pt-2">
+                <Button onClick={() => slaOp({ anthropicApiKey: instellingen.anthropicApiKey })} loading={opslaan}>
                   Opslaan
                 </Button>
               </div>

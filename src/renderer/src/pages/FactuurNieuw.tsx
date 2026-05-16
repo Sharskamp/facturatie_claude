@@ -95,6 +95,8 @@ export default function NieuweFactuurPage() {
   );
   const [regels, setRegels] = useState<Regel[]>([LEEG_REGEL()]);
   const [geavanceerdOpen, setGeavanceerdOpen] = useState(false);
+  const [terugkerend, setTerugkerend] = useState(false);
+  const [terugkerendInterval, setTerugkerendInterval] = useState<"maandelijks" | "kwartaal" | "jaarlijks">("maandelijks");
 
   const laadKlanten = useCallback(async () => {
     try {
@@ -177,6 +179,8 @@ export default function NieuweFactuurPage() {
         betalingsCondities: betalingsCondities || null,
         regels: regels.map(({ id: _id, ...r }) => r),
         status,
+        terugkerend,
+        terugkerendInterval: terugkerend ? terugkerendInterval : null,
       };
       const factuur = await window.api.facturen.create(payload);
 
@@ -571,6 +575,44 @@ export default function NieuweFactuurPage() {
                     rows={3}
                   />
                 </div>
+                {/* Terugkerende factuur */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between rounded-lg border border-gray-200 p-3">
+                    <div>
+                      <p className="text-sm font-medium text-gray-700">Terugkerende factuur</p>
+                      <p className="text-xs text-gray-400">Automatisch nieuwe factuur aanmaken op basis van interval</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setTerugkerend(!terugkerend)}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                        terugkerend ? "bg-indigo-600" : "bg-gray-200"
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                          terugkerend ? "translate-x-6" : "translate-x-1"
+                        }`}
+                      />
+                    </button>
+                  </div>
+                  {terugkerend && (
+                    <Select
+                      value={terugkerendInterval}
+                      onValueChange={(v) => setTerugkerendInterval(v as typeof terugkerendInterval)}
+                    >
+                      <SelectTrigger label="Interval">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="maandelijks">Maandelijks</SelectItem>
+                        <SelectItem value="kwartaal">Per kwartaal</SelectItem>
+                        <SelectItem value="jaarlijks">Jaarlijks</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  )}
+                </div>
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Totaalkorting (%)

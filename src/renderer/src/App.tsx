@@ -18,6 +18,8 @@ import Agenda from './pages/Agenda'
 import Uren from './pages/Uren'
 import Rapporten from './pages/Rapporten'
 import Instellingen from './pages/Instellingen'
+import Kilometer from './pages/Kilometer'
+import BankImport from './pages/BankImport'
 import DashboardLayout from './components/layout/DashboardLayout'
 
 function AppRoutes() {
@@ -51,6 +53,8 @@ function AppRoutes() {
           <Route path="/uren" element={<Uren />} />
           <Route path="/rapporten" element={<Rapporten />} />
           <Route path="/instellingen" element={<Instellingen />} />
+          <Route path="/kilometer" element={<Kilometer />} />
+          <Route path="/bank-import" element={<BankImport />} />
         </Route>
       ) : (
         <Route path="*" element={<Navigate to="/login" replace />} />
