@@ -11,6 +11,8 @@ import {
   CheckCircle2,
   ExternalLink,
   FileDown,
+  FileMinus,
+  Bell,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -100,6 +102,9 @@ export default function FactuurDetailPage() {
   const [whatsappUrl, setWhatsappUrl] = useState<string | null>(null);
   const [gekopieerd, setGekopieerd] = useState(false);
   const [statusBijwerken, setStatusBijwerken] = useState(false);
+  const [creditnotaLaden, setCreditnotaLaden] = useState(false);
+  const [herinneringLaden, setHerinneringLaden] = useState(false);
+  const [melding, setMelding] = useState<{ type: "succes" | "fout"; tekst: string } | null>(null);
 
   const laadFactuur = useCallback(async () => {
     try {
@@ -176,6 +181,39 @@ export default function FactuurDetailPage() {
     setTimeout(() => setGekopieerd(false), 2000);
   }
 
+  function toonMelding(type: "succes" | "fout", tekst: string) {
+    setMelding({ type, tekst });
+    setTimeout(() => setMelding(null), 4000);
+  }
+
+  async function maakCreditnota() {
+    if (!factuur) return;
+    if (!confirm(`Weet je zeker dat je een creditnota wilt aanmaken voor factuur ${factuur.nummer}?`)) return;
+    setCreditnotaLaden(true);
+    try {
+      const nieuweId = await window.api.facturen.maakCreditnota(id!);
+      navigate(`/facturen/${nieuweId}`);
+    } catch (e: unknown) {
+      toonMelding("fout", e instanceof Error ? e.message : "Creditnota aanmaken mislukt");
+    } finally {
+      setCreditnotaLaden(false);
+    }
+  }
+
+  async function stuurHerinnering() {
+    if (!factuur) return;
+    if (!confirm(`Herinnering sturen voor factuur ${factuur.nummer}?`)) return;
+    setHerinneringLaden(true);
+    try {
+      await window.api.facturen.stuurHerinneringen();
+      toonMelding("succes", "Herinnering verstuurd");
+    } catch (e: unknown) {
+      toonMelding("fout", e instanceof Error ? e.message : "Herinnering sturen mislukt");
+    } finally {
+      setHerinneringLaden(false);
+    }
+  }
+
   // Bereken BTW per tarief
   const btwGroepen = factuur?.regels.reduce(
     (acc, regel) => {
@@ -246,6 +284,28 @@ export default function FactuurDetailPage() {
               <FileDown className="h-4 w-4" />
               PDF downloaden
             </Button>
+            {(factuur.status === "VERZONDEN" || factuur.status === "BETAALD") && (
+              <Button
+                variant="outline"
+                size="sm"
+                loading={creditnotaLaden}
+                onClick={maakCreditnota}
+              >
+                <FileMinus className="h-4 w-4" />
+                Creditnota aanmaken
+              </Button>
+            )}
+            {factuur.status === "VERZONDEN" && factuur.klant.email && (
+              <Button
+                variant="outline"
+                size="sm"
+                loading={herinneringLaden}
+                onClick={stuurHerinnering}
+              >
+                <Bell className="h-4 w-4" />
+                Herinnering sturen
+              </Button>
+            )}
             {factuur.status !== "BETAALD" && factuur.status !== "GEANNULEERD" && (
               <>
                 {(factuur.status === "VERZONDEN" || verlopen) && (

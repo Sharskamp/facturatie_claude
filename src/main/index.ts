@@ -1232,6 +1232,29 @@ function setupIpcHandlers() {
       return { error: e instanceof Error ? e.message : 'Onbekende fout bij scannen' }
     }
   })
+
+  // ── Vaste Activa ──
+  ipcMain.handle('vasteActiva:list', async () => {
+    return prisma.vasteActiva.findMany({ where: { actief: true }, orderBy: { aanschafDatum: 'desc' } })
+  })
+
+  ipcMain.handle('vasteActiva:create', async (_, data: Record<string, unknown>) => {
+    return prisma.vasteActiva.create({
+      data: { ...data, aanschafDatum: new Date(data.aanschafDatum as string) } as Parameters<typeof prisma.vasteActiva.create>[0]['data']
+    })
+  })
+
+  ipcMain.handle('vasteActiva:update', async (_, id: string, data: Record<string, unknown>) => {
+    return prisma.vasteActiva.update({
+      where: { id },
+      data: { ...data, aanschafDatum: data.aanschafDatum ? new Date(data.aanschafDatum as string) : undefined } as Parameters<typeof prisma.vasteActiva.update>[0]['data']
+    })
+  })
+
+  ipcMain.handle('vasteActiva:delete', async (_, id: string) => {
+    await prisma.vasteActiva.update({ where: { id }, data: { actief: false } })
+    return { succes: true }
+  })
 }
 
 app.whenReady().then(async () => {

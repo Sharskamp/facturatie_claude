@@ -92,4 +92,10 @@ contextBridge.exposeInMainWorld('api', {
     update: (id: string, data: unknown) => ipcRenderer.invoke('producten:update', id, data),
     delete: (id: string) => ipcRenderer.invoke('producten:delete', id),
   },
+  vasteActiva: {
+    list: () => ipcRenderer.invoke('vasteActiva:list'),
+    create: (data: unknown) => ipcRenderer.invoke('vasteActiva:create', data),
+    update: (id: string, data: unknown) => ipcRenderer.invoke('vasteActiva:update', id, data),
+    delete: (id: string) => ipcRenderer.invoke('vasteActiva:delete', id),
+  },
 })
