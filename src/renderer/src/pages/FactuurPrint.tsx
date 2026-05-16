@@ -287,7 +287,7 @@ export default function FactuurPrintPage() {
           {/* BTW verlegd notice */}
           {factuur.btwVerlegd && (
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-6 text-sm text-amber-800">
-              BTW verlegd — de BTW wordt verlegd naar de ontvanger (Art. 12 Wet OB 1968)
+              {labels.btwReversed}
             </div>
           )}
 
@@ -295,7 +295,7 @@ export default function FactuurPrintPage() {
           {factuur.notities && (
             <div className="mb-6">
               <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1">
-                Opmerkingen
+                {labels.notes}
               </p>
               <p className="text-gray-700 text-sm whitespace-pre-wrap">{factuur.notities}</p>
             </div>
@@ -304,7 +304,7 @@ export default function FactuurPrintPage() {
           {/* Payment info */}
           <div className="border-t border-gray-200 pt-6 mt-auto">
             <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">
-              Betalingsinformatie
+              {labels.paymentInfo}
             </p>
             {instellingen.iban && (
               <p className="text-gray-700">
@@ -313,13 +313,30 @@ export default function FactuurPrintPage() {
               </p>
             )}
             <p className="text-gray-700">
-              <span className="text-gray-500">Onder vermelding van:</span>{" "}
+              <span className="text-gray-500">{labels.reference}:</span>{" "}
               <span className="font-medium">{factuur.nummer}</span>
             </p>
             {factuur.betalingsCondities && (
               <p className="text-gray-600 text-sm mt-1">{factuur.betalingsCondities}</p>
             )}
           </div>
+
+          {/* Mollie betaallink */}
+          {factuur.mollieBetaalLink && (
+            <div className="border-t border-gray-200 pt-4 mt-4">
+              <p className="text-sm text-gray-600">
+                {labels.payOnline}:{" "}
+                <a
+                  href={factuur.mollieBetaalLink}
+                  className="text-indigo-600 underline break-all"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {factuur.mollieBetaalLink}
+                </a>
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </>

@@ -5,7 +5,7 @@ interface ElectronAPI {
   }
   auth: {
     setupStatus: () => Promise<{ geconfigureerd: boolean }>
-    setup: (data: { naam: string; email: string; wachtwoord: string; bedrijfsnaam?: string }) => Promise<{ succes: boolean; user: { id: string; naam: string; email: string } }>
+    setup: (data: { naam: string; email: string; wachtwoord: string; bedrijfsnaam?: string; kvkNummer?: string; btwNummer?: string; iban?: string; adres?: string; postcode?: string; stad?: string; telefoon?: string; website?: string; logoBase64?: string }) => Promise<{ succes: boolean; user: { id: string; naam: string; email: string } }>
     login: (email: string, wachtwoord: string) => Promise<{ id: string; naam: string; email: string; bedrijfsnaam?: string }>
   }
   klanten: {
@@ -16,7 +16,7 @@ interface ElectronAPI {
     delete: (id: string) => Promise<{ succes: boolean }>
   }
   facturen: {
-    list: (params?: { status?: string; klantId?: string }) => Promise<unknown[]>
+    list: (params?: { status?: string; klantId?: string; zoek?: string }) => Promise<unknown[]>
     get: (id: string) => Promise<unknown>
     create: (data: unknown) => Promise<unknown>
     update: (id: string, data: unknown) => Promise<unknown>

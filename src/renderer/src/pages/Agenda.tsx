@@ -15,6 +15,14 @@ import {
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Modal,
+  ModalContent,
+  ModalHeader,
+  ModalTitle,
+  ModalFooter,
+  ModalClose,
+} from "@/components/ui/modal";
 
 interface Afspraak {
   id: string;
@@ -30,6 +38,12 @@ interface AgendaResponse {
   afspraken: Afspraak[];
   fout?: string;
   googleNietGekoppeld?: boolean;
+}
+
+interface Klant {
+  id: string;
+  naam: string;
+  bedrijf?: string | null;
 }
 
 // Kleuren per dag van de week voor afspraken
@@ -110,6 +124,13 @@ export default function AgendaPagina() {
   const [geselecteerdeAfspraak, setGeselecteerdeAfspraak] = useState<Afspraak | null>(null);
   const [popoverPositie, setPopoverPositie] = useState({ x: 0, y: 0 });
 
+  // Uren toevoegen vanuit afspraak
+  const [afspraakVoorUren, setAfspraakVoorUren] = useState<Afspraak | null>(null);
+  const [urenKlantId, setUrenKlantId] = useState("");
+  const [urenOpslaan, setUrenOpslaan] = useState(false);
+  const [urenMelding, setUrenMelding] = useState<string | null>(null);
+  const [klanten, setKlanten] = useState<Klant[]>([]);
+
   const haalAfsprakenOp = useCallback(async () => {
     setLaden(true);
     setFout(null);
@@ -135,6 +156,41 @@ export default function AgendaPagina() {
   useEffect(() => {
     haalAfsprakenOp();
   }, [haalAfsprakenOp]);
+
+  useEffect(() => {
+    window.api.klanten.list().then((data: unknown) => {
+      setKlanten(Array.isArray(data) ? (data as Klant[]) : []);
+    }).catch(() => {});
+  }, []);
+
+  const voegAfspraakToeAlsUren = async () => {
+    if (!afspraakVoorUren) return;
+    setUrenOpslaan(true);
+    try {
+      const start = new Date(afspraakVoorUren.start);
+      const einde = afspraakVoorUren.einde
+        ? new Date(afspraakVoorUren.einde)
+        : new Date(start.getTime() + 60 * 60 * 1000);
+      const duurMinuten = Math.round((einde.getTime() - start.getTime()) / 60000);
+      await window.api.uren.create({
+        omschrijving: afspraakVoorUren.samenvatting || "Google Calendar afspraak",
+        startTijd: start.toISOString(),
+        eindTijd: einde.toISOString(),
+        duurMinuten,
+        klantId: urenKlantId || null,
+        gefactureerd: false,
+      });
+      setUrenMelding("Urenregistratie aangemaakt");
+      setTimeout(() => setUrenMelding(null), 4000);
+      setAfspraakVoorUren(null);
+      setUrenKlantId("");
+    } catch {
+      setUrenMelding("Opslaan mislukt");
+      setTimeout(() => setUrenMelding(null), 4000);
+    } finally {
+      setUrenOpslaan(false);
+    }
+  };
 
   const vorigeMaand = () => {
     if (maand === 0) {
@@ -391,7 +447,7 @@ export default function AgendaPagina() {
               )}
             </div>
 
-            <div className="mt-4 pt-3 border-t border-gray-100">
+            <div className="mt-4 pt-3 border-t border-gray-100 space-y-2">
               <Button
                 size="sm"
                 className="w-full"
@@ -403,10 +459,111 @@ export default function AgendaPagina() {
                 <FileText className="h-4 w-4" />
                 Maak factuur van afspraak
               </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-full"
+                onClick={() => {
+                  setAfspraakVoorUren(geselecteerdeAfspraak);
+                  setUrenKlantId("");
+                  setGeselecteerdeAfspraak(null);
+                }}
+              >
+                <Clock className="h-4 w-4" />
+                Voeg toe als uren
+              </Button>
             </div>
           </div>
         </>
       )}
+
+      {/* Modal: afspraak toevoegen als uren */}
+      {urenMelding && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 rounded-lg bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-800 shadow-lg">
+          {urenMelding}
+        </div>
+      )}
+
+      <Modal
+        open={!!afspraakVoorUren}
+        onOpenChange={(o) => {
+          if (!o) {
+            setAfspraakVoorUren(null);
+            setUrenKlantId("");
+          }
+        }}
+      >
+        <ModalContent className="max-w-md">
+          <ModalHeader>
+            <ModalTitle>Afspraak toevoegen als uren</ModalTitle>
+          </ModalHeader>
+          {afspraakVoorUren && (
+            <div className="space-y-4">
+              <div className="rounded-lg bg-gray-50 border border-gray-200 p-3 space-y-1 text-sm">
+                <p className="font-semibold text-gray-900">{afspraakVoorUren.samenvatting}</p>
+                <p className="text-gray-500">
+                  {afspraakVoorUren.geheledag ? (
+                    <>
+                      {new Date(afspraakVoorUren.start).toLocaleDateString("nl-NL", {
+                        weekday: "long",
+                        day: "numeric",
+                        month: "long",
+                      })} — Hele dag
+                    </>
+                  ) : (
+                    <>
+                      {new Date(afspraakVoorUren.start).toLocaleDateString("nl-NL", {
+                        weekday: "short",
+                        day: "numeric",
+                        month: "short",
+                      })}{" "}
+                      {formatTijd(afspraakVoorUren.start, false)}{" "}
+                      {afspraakVoorUren.einde && `– ${formatTijd(afspraakVoorUren.einde, false)}`}
+                    </>
+                  )}
+                </p>
+                {(() => {
+                  const start = new Date(afspraakVoorUren.start);
+                  const einde = afspraakVoorUren.einde
+                    ? new Date(afspraakVoorUren.einde)
+                    : new Date(start.getTime() + 60 * 60 * 1000);
+                  const duurMin = Math.round((einde.getTime() - start.getTime()) / 60000);
+                  const uren = Math.floor(duurMin / 60);
+                  const mins = duurMin % 60;
+                  return (
+                    <p className="text-indigo-700 font-medium">
+                      Duur: {uren > 0 ? `${uren}u ` : ""}{mins > 0 ? `${mins}m` : ""}
+                    </p>
+                  );
+                })()}
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Klant (optioneel)
+                </label>
+                <select
+                  value={urenKlantId}
+                  onChange={(e) => setUrenKlantId(e.target.value)}
+                  className="w-full h-9 rounded-lg border border-gray-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="">Geen klant</option>
+                  {klanten.map((k) => (
+                    <option key={k.id} value={k.id}>{k.bedrijf ?? k.naam}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
+          <ModalFooter>
+            <ModalClose asChild>
+              <Button variant="outline">Annuleren</Button>
+            </ModalClose>
+            <Button onClick={voegAfspraakToeAlsUren} loading={urenOpslaan}>
+              Opslaan als uren
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Plus, FileText, Eye, Loader2, Search, Trash2 } from "lucide-react";
 import { Header } from "@/components/layout/header";
@@ -32,6 +32,12 @@ interface Factuur {
   klant: { id: string; naam: string; bedrijf?: string | null };
 }
 
+interface ContextMenu {
+  x: number;
+  y: number;
+  factuur: Factuur;
+}
+
 type StatusFilter = "ALLES" | "CONCEPT" | "VERZONDEN" | "BETAALD" | "VERLOPEN";
 
 const STATUS_TABS: { label: string; waarde: StatusFilter }[] = [
@@ -53,6 +59,8 @@ export default function FacturenPage() {
   const [zoekterm, setZoekterm] = useState("");
   const [verwijderModalOpen, setVerwijderModalOpen] = useState(false);
   const [teVerwijderen, setTeVerwijderen] = useState<Factuur | null>(null);
+  const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
 
   const laadFacturen = useCallback(async (status: StatusFilter) => {
     setLaden(true);
@@ -71,6 +79,19 @@ export default function FacturenPage() {
   useEffect(() => {
     laadFacturen(statusFilter);
   }, [statusFilter, laadFacturen]);
+
+  // Sluit context menu bij klik buiten
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
+        setContextMenu(null);
+      }
+    }
+    if (contextMenu) {
+      document.addEventListener("mousedown", handleClick);
+    }
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [contextMenu]);
 
   function wisselStatus(s: StatusFilter) {
     setStatusFilter(s);
@@ -94,6 +115,36 @@ export default function FacturenPage() {
     } catch (e) {
       console.error("Fout bij verwijderen:", e);
     }
+  }
+
+  function handleContextMenu(e: React.MouseEvent, f: Factuur) {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({ x: e.clientX, y: e.clientY, factuur: f });
+  }
+
+  async function contextMarkeerBetaald(f: Factuur) {
+    setContextMenu(null);
+    try {
+      await window.api.facturen.update(f.id, { status: "BETAALD" });
+      laadFacturen(statusFilter);
+    } catch (e) {
+      console.error("Fout bij updaten status:", e);
+    }
+  }
+
+  async function contextDownloadPdf(f: Factuur) {
+    setContextMenu(null);
+    try {
+      await window.api.facturen.downloadPdf(f.id);
+    } catch (e) {
+      console.error("Fout bij PDF downloaden:", e);
+    }
+  }
+
+  function contextKopieerNummer(f: Factuur) {
+    setContextMenu(null);
+    navigator.clipboard.writeText(f.nummer).catch(() => {});
   }
 
   // Lokale zoekfilter
@@ -232,6 +283,7 @@ export default function FacturenPage() {
                         key={f.id}
                         className="cursor-pointer"
                         onClick={() => navigate(`/facturen/${f.id}`)}
+                        onContextMenu={(e) => handleContextMenu(e, f)}
                       >
                         <TableCell className="font-mono text-sm font-medium text-indigo-700">
                           {f.nummer}
@@ -302,6 +354,59 @@ export default function FacturenPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Context menu */}
+      {contextMenu && (
+        <div
+          ref={contextMenuRef}
+          style={{ position: "fixed", top: contextMenu.y, left: contextMenu.x, zIndex: 9999 }}
+          className="bg-white border border-gray-200 rounded-lg shadow-xl py-1 min-w-[180px]"
+        >
+          <button
+            onClick={() => {
+              navigate(`/facturen/${contextMenu.factuur.id}`);
+              setContextMenu(null);
+            }}
+            className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+          >
+            <Eye className="h-4 w-4 text-gray-400" />
+            Openen
+          </button>
+          <button
+            onClick={() => contextDownloadPdf(contextMenu.factuur)}
+            className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+          >
+            <FileText className="h-4 w-4 text-gray-400" />
+            PDF downloaden
+          </button>
+          <button
+            onClick={() => contextMarkeerBetaald(contextMenu.factuur)}
+            className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+          >
+            <span className="h-4 w-4 flex items-center justify-center text-green-500 font-bold text-xs">✓</span>
+            Markeer als betaald
+          </button>
+          <button
+            onClick={() => contextKopieerNummer(contextMenu.factuur)}
+            className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+          >
+            <span className="h-4 w-4 flex items-center justify-center text-gray-400 text-xs">⎘</span>
+            Kopieer factuurnummer
+          </button>
+          <div className="my-1 border-t border-gray-100" />
+          <button
+            onClick={() => {
+              setContextMenu(null);
+              setTeVerwijderen(contextMenu.factuur);
+              setVerwijderModalOpen(true);
+            }}
+            className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+          >
+            <Trash2 className="h-4 w-4" />
+            Verwijderen
+          </button>
+        </div>
+      )}
 
       {/* Verwijder modal */}
       <Modal open={verwijderModalOpen} onOpenChange={setVerwijderModalOpen}>

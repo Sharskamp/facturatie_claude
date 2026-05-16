@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Search,
@@ -8,6 +8,7 @@ import {
   Eye,
   Loader2,
   Users,
+  FileText,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -30,6 +31,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+
+interface ContextMenu {
+  x: number;
+  y: number;
+  klant: Klant;
+}
 
 interface Klant {
   id: string;
@@ -72,6 +79,8 @@ export default function KlantenPage() {
   const [formulier, setFormulier] = useState<Partial<Klant>>(LEEG_FORMULIER);
   const [opslaan, setOpslaan] = useState(false);
   const [fout, setFout] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
 
   const laadKlanten = useCallback(async (zoek = "") => {
     try {
@@ -93,6 +102,25 @@ export default function KlantenPage() {
     const timer = setTimeout(() => laadKlanten(zoekterm), 300);
     return () => clearTimeout(timer);
   }, [zoekterm, laadKlanten]);
+
+  // Sluit context menu bij klik buiten
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
+        setContextMenu(null);
+      }
+    }
+    if (contextMenu) {
+      document.addEventListener("mousedown", handleClick);
+    }
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [contextMenu]);
+
+  function handleContextMenu(e: React.MouseEvent, klant: Klant) {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({ x: e.clientX, y: e.clientY, klant });
+  }
 
   function openNieuw() {
     setGeselecteerdeKlant(null);
@@ -224,6 +252,7 @@ export default function KlantenPage() {
                       key={klant.id}
                       className="cursor-pointer"
                       onClick={() => navigate(`/klanten/${klant.id}`)}
+                      onContextMenu={(e) => handleContextMenu(e, klant)}
                     >
                       <TableCell className="font-medium text-gray-900">
                         {klant.naam}
@@ -278,6 +307,47 @@ export default function KlantenPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Context menu */}
+      {contextMenu && (
+        <div
+          ref={contextMenuRef}
+          style={{ position: "fixed", top: contextMenu.y, left: contextMenu.x, zIndex: 9999 }}
+          className="bg-white border border-gray-200 rounded-lg shadow-xl py-1 min-w-[200px]"
+        >
+          <button
+            onClick={() => {
+              navigate(`/klanten/${contextMenu.klant.id}`);
+              setContextMenu(null);
+            }}
+            className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+          >
+            <Eye className="h-4 w-4 text-gray-400" />
+            Bekijk klant
+          </button>
+          <button
+            onClick={() => {
+              navigate(`/facturen/nieuw?klantId=${contextMenu.klant.id}`);
+              setContextMenu(null);
+            }}
+            className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+          >
+            <FileText className="h-4 w-4 text-gray-400" />
+            Nieuwe factuur voor klant
+          </button>
+          <div className="my-1 border-t border-gray-100" />
+          <button
+            onClick={() => {
+              openVerwijder(contextMenu.klant, { stopPropagation: () => {} } as React.MouseEvent);
+              setContextMenu(null);
+            }}
+            className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+          >
+            <Trash2 className="h-4 w-4" />
+            Verwijderen
+          </button>
+        </div>
+      )}
 
       {/* Klant aanmaken / bewerken modal */}
       <Modal open={modalOpen} onOpenChange={setModalOpen}>

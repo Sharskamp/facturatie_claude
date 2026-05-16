@@ -64,6 +64,7 @@ interface UrenRegistratie {
 
 const TIMER_KEY = "adminpro_timer_start";
 const TIMER_PROJECT_KEY = "adminpro_timer_project";
+const TIMER_KLANT_KEY = "adminpro_timer_klant";
 
 function formatDuur(minuten: number): string {
   const uren = Math.floor(minuten / 60);
@@ -126,18 +127,21 @@ export default function UrenPagina() {
   const [timerActief, setTimerActief] = useState(false);
   const [timerSeconden, setTimerSeconden] = useState(0);
   const [timerProject, setTimerProject] = useState("");
+  const [timerKlantId, setTimerKlantId] = useState("");
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Initialiseer timer vanuit localStorage
   useEffect(() => {
     const opgeslagenStart = localStorage.getItem(TIMER_KEY);
     const opgeslagenProject = localStorage.getItem(TIMER_PROJECT_KEY);
+    const opgeslagenKlant = localStorage.getItem(TIMER_KLANT_KEY);
     if (opgeslagenStart) {
       const startMs = parseInt(opgeslagenStart);
       const verlopen = Math.floor((Date.now() - startMs) / 1000);
       setTimerActief(true);
       setTimerSeconden(verlopen);
       setTimerProject(opgeslagenProject ?? "");
+      setTimerKlantId(opgeslagenKlant ?? "");
     }
   }, []);
 
@@ -163,6 +167,7 @@ export default function UrenPagina() {
     const nu = Date.now();
     localStorage.setItem(TIMER_KEY, String(nu));
     localStorage.setItem(TIMER_PROJECT_KEY, timerProject);
+    localStorage.setItem(TIMER_KLANT_KEY, timerKlantId);
     setTimerActief(true);
     setTimerSeconden(0);
   };
@@ -177,6 +182,7 @@ export default function UrenPagina() {
 
     localStorage.removeItem(TIMER_KEY);
     localStorage.removeItem(TIMER_PROJECT_KEY);
+    localStorage.removeItem(TIMER_KLANT_KEY);
     setTimerActief(false);
     setTimerSeconden(0);
 
@@ -189,6 +195,7 @@ export default function UrenPagina() {
       await window.api.uren.create({
         projectNaam: timerProject || null,
         omschrijving: timerProject ? `Gewerkt aan ${timerProject}` : "Timer registratie",
+        klantId: timerKlantId || null,
         startTijd: startDatum.toISOString(),
         eindTijd: eindDatum.toISOString(),
         duurMinuten,
@@ -415,7 +422,7 @@ export default function UrenPagina() {
                   )}
                 </div>
               </div>
-              <div className="flex items-center gap-3 flex-1">
+              <div className="flex items-center gap-3 flex-1 flex-wrap">
                 <input
                   type="text"
                   placeholder="Project of taaknaam..."
@@ -425,8 +432,22 @@ export default function UrenPagina() {
                     if (timerActief) localStorage.setItem(TIMER_PROJECT_KEY, e.target.value);
                   }}
                   disabled={timerActief}
-                  className="flex-1 h-9 rounded-lg border border-indigo-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
+                  className="flex-1 min-w-[140px] h-9 rounded-lg border border-indigo-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
                 />
+                <select
+                  value={timerKlantId}
+                  onChange={(e) => {
+                    setTimerKlantId(e.target.value);
+                    if (timerActief) localStorage.setItem(TIMER_KLANT_KEY, e.target.value);
+                  }}
+                  disabled={timerActief}
+                  className="h-9 rounded-lg border border-indigo-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60"
+                >
+                  <option value="">Geen klant</option>
+                  {klanten.map((k) => (
+                    <option key={k.id} value={k.id}>{k.bedrijf ?? k.naam}</option>
+                  ))}
+                </select>
                 {timerActief ? (
                   <Button variant="destructive" onClick={stopTimer} className="gap-2 shrink-0">
                     <Square className="h-4 w-4" />

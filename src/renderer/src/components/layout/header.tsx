@@ -80,7 +80,7 @@ export function Header({ titel, subtitel, acties }: HeaderProps) {
     try {
       const [klanten, facturen] = await Promise.all([
         window.api.klanten.list({ zoek: term }),
-        window.api.facturen.list({ zoek: term } as Parameters<typeof window.api.facturen.list>[0]),
+        window.api.facturen.list({ zoek: term }),
       ]);
       setKlantResultaten((Array.isArray(klanten) ? klanten as ZoekKlant[] : []).slice(0, 5));
       setFactuurResultaten((Array.isArray(facturen) ? facturen as ZoekFactuur[] : []).slice(0, 5));

@@ -14,7 +14,7 @@ import {
   LineChart,
   Line,
 } from "recharts";
-import { Printer, TrendingUp, TrendingDown, Minus, Loader2 } from "lucide-react";
+import { Printer, TrendingUp, TrendingDown, Minus, Loader2, FileDown } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -35,6 +35,19 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatBedrag, formatDatum } from "@/lib/utils";
+
+function downloadCsv(rows: Record<string, unknown>[], bestandsnaam: string) {
+  if (!rows.length) return;
+  const headers = Object.keys(rows[0]);
+  const csv = [headers.join(";"), ...rows.map((r) => headers.map((h) => String(r[h] ?? "")).join(";"))].join("\n");
+  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = bestandsnaam.replace(".xlsx", ".csv");
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 type Tab = "btw" | "winstverlies" | "factuurstatus" | "btwAangifte" | "balans" | "debiteuren" | "cashflow";
 
@@ -543,30 +556,50 @@ export default function RapportenPagina() {
             {actieveTab === "btw" && (
               <div className="space-y-6">
                 {/* Selectors */}
-                <div className="flex flex-wrap gap-3 items-center">
-                  <Select value={btwKwartaal} onValueChange={setBtwKwartaal}>
-                    <SelectTrigger className="w-28">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {KWARTALEN.map((kw) => (
-                        <SelectItem key={kw} value={kw}>{kw}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Select value={btwJaar} onValueChange={setBtwJaar}>
-                    <SelectTrigger className="w-28">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {jaarOpties.map((j) => (
-                        <SelectItem key={j} value={j}>{j}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <span className="text-sm text-gray-500">
-                    {btwKwartaal} {btwJaar} — BTW aangifte periode
-                  </span>
+                <div className="flex flex-wrap gap-3 items-center justify-between">
+                  <div className="flex flex-wrap gap-3 items-center">
+                    <Select value={btwKwartaal} onValueChange={setBtwKwartaal}>
+                      <SelectTrigger className="w-28">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {KWARTALEN.map((kw) => (
+                          <SelectItem key={kw} value={kw}>{kw}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select value={btwJaar} onValueChange={setBtwJaar}>
+                      <SelectTrigger className="w-28">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {jaarOpties.map((j) => (
+                          <SelectItem key={j} value={j}>{j}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <span className="text-sm text-gray-500">
+                      {btwKwartaal} {btwJaar} — BTW aangifte periode
+                    </span>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      downloadCsv(
+                        btwTarieven.map((r) => ({
+                          Tarief: r.tarief,
+                          "Omzet BTW": r.omzet,
+                          "Inkoop BTW": r.inkoop,
+                          Saldo: r.saldo,
+                        })),
+                        "btw-overzicht.xlsx"
+                      )
+                    }
+                  >
+                    <FileDown className="h-4 w-4" />
+                    Exporteer Excel
+                  </Button>
                 </div>
 
                 {/* Samenvatting */}
@@ -655,27 +688,47 @@ export default function RapportenPagina() {
             {actieveTab === "winstverlies" && (
               <div className="space-y-6">
                 {/* Selectors */}
-                <div className="flex flex-wrap gap-3 items-center">
-                  <Select value={wvPeriode} onValueChange={(v) => setWvPeriode(v as typeof wvPeriode)}>
-                    <SelectTrigger className="w-36">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="maand">Per maand</SelectItem>
-                      <SelectItem value="kwartaal">Per kwartaal</SelectItem>
-                      <SelectItem value="jaar">Jaar totaal</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Select value={wvJaar} onValueChange={setWvJaar}>
-                    <SelectTrigger className="w-28">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {jaarOpties.map((j) => (
-                        <SelectItem key={j} value={j}>{j}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                <div className="flex flex-wrap gap-3 items-center justify-between">
+                  <div className="flex flex-wrap gap-3 items-center">
+                    <Select value={wvPeriode} onValueChange={(v) => setWvPeriode(v as typeof wvPeriode)}>
+                      <SelectTrigger className="w-36">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="maand">Per maand</SelectItem>
+                        <SelectItem value="kwartaal">Per kwartaal</SelectItem>
+                        <SelectItem value="jaar">Jaar totaal</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Select value={wvJaar} onValueChange={setWvJaar}>
+                      <SelectTrigger className="w-28">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {jaarOpties.map((j) => (
+                          <SelectItem key={j} value={j}>{j}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      downloadCsv(
+                        tabelData.map((r) => ({
+                          Periode: r.naam,
+                          Omzet: r.omzet,
+                          Kosten: r.kosten,
+                          Winst: r.winst,
+                        })),
+                        "winst-verlies.xlsx"
+                      )
+                    }
+                  >
+                    <FileDown className="h-4 w-4" />
+                    Exporteer Excel
+                  </Button>
                 </div>
 
                 {/* Totalen */}
@@ -811,6 +864,25 @@ export default function RapportenPagina() {
             {/* ── Facturen Status ── */}
             {actieveTab === "factuurstatus" && (
               <div className="space-y-6">
+                <div className="flex justify-end">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      downloadCsv(
+                        Object.entries(statusGroepen).map(([status, data]) => ({
+                          Status: STATUS_LABELS[status] ?? status,
+                          Aantal: data.aantal,
+                          Totaal: data.totaal,
+                        })),
+                        "facturen-status.xlsx"
+                      )
+                    }
+                  >
+                    <FileDown className="h-4 w-4" />
+                    Exporteer Excel
+                  </Button>
+                </div>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   {/* Pie chart */}
                   <Card>
@@ -969,20 +1041,40 @@ export default function RapportenPagina() {
             {actieveTab === "btwAangifte" && (
               <div className="space-y-6">
                 {/* Period selector */}
-                <div className="flex flex-wrap gap-3 items-center">
-                  <Select value={aangiftePeriode} onValueChange={setAangiftePeriode}>
-                    <SelectTrigger className="w-48">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {aangiftePeriodeOpties.map((opt) => (
-                        <SelectItem key={opt.waarde} value={opt.waarde}>{opt.label}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Button variant="outline" onClick={() => window.print()}>
-                    <Printer className="h-4 w-4 mr-2" />
-                    Exporteer als PDF
+                <div className="flex flex-wrap gap-3 items-center justify-between">
+                  <div className="flex flex-wrap gap-3 items-center">
+                    <Select value={aangiftePeriode} onValueChange={setAangiftePeriode}>
+                      <SelectTrigger className="w-48">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {aangiftePeriodeOpties.map((opt) => (
+                          <SelectItem key={opt.waarde} value={opt.waarde}>{opt.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button variant="outline" onClick={() => window.print()}>
+                      <Printer className="h-4 w-4 mr-2" />
+                      Exporteer als PDF
+                    </Button>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      downloadCsv(
+                        aangifteRubrieken.map((r) => ({
+                          Rubriek: r.nummer,
+                          Omschrijving: r.omschrijving,
+                          "Bedrag (excl. BTW)": r.bedrag ?? "",
+                          "BTW-bedrag": r.btw ?? "",
+                        })),
+                        "btw-aangifte.xlsx"
+                      )
+                    }
+                  >
+                    <FileDown className="h-4 w-4" />
+                    Exporteer Excel
                   </Button>
                 </div>
 
@@ -1052,6 +1144,28 @@ export default function RapportenPagina() {
             {/* ── Balans ── */}
             {actieveTab === "balans" && (
               <div className="space-y-6">
+                <div className="flex justify-end">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      downloadCsv(
+                        [
+                          { Post: "Debiteuren (openstaande facturen)", Bedrag: debiteuren, Categorie: "Activa" },
+                          { Post: "Liquide middelen (schatting)", Bedrag: liquideMiddelen, Categorie: "Activa" },
+                          { Post: "Vaste activa (boekwaarde)", Bedrag: activaVasteActiva, Categorie: "Activa" },
+                          { Post: "BTW-schuld (huidig kwartaal)", Bedrag: btwSchuld, Categorie: "Passiva" },
+                          { Post: "Crediteuren (afgelopen 30 dagen)", Bedrag: crediteuren, Categorie: "Passiva" },
+                          { Post: "Eigen vermogen", Bedrag: eigenVermogen, Categorie: "Passiva" },
+                        ],
+                        "balans.xlsx"
+                      )
+                    }
+                  >
+                    <FileDown className="h-4 w-4" />
+                    Exporteer Excel
+                  </Button>
+                </div>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   {/* Activa */}
                   <Card>
@@ -1139,6 +1253,28 @@ export default function RapportenPagina() {
             {/* ── Debiteurenanalyse ── */}
             {actieveTab === "debiteuren" && (
               <div className="space-y-6">
+                <div className="flex justify-end">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      downloadCsv(
+                        gesorteerdeDebiteuren.map((f) => ({
+                          Factuurnummer: getFactuurNummer(f),
+                          Klant: f.klant?.naam ?? "—",
+                          Datum: getFactuurDatum(f) ?? "—",
+                          Vervaldatum: f.vervaldatumDate ? f.vervaldatumDate.toLocaleDateString("nl-NL") : "—",
+                          Totaal: f.totaal,
+                          "Dagen te laat": f.dagenTeLaat,
+                        })),
+                        "debiteuren.xlsx"
+                      )
+                    }
+                  >
+                    <FileDown className="h-4 w-4" />
+                    Exporteer Excel
+                  </Button>
+                </div>
                 {/* Summary cards */}
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
                   {agingBucketData.map((bucket) => (
@@ -1213,6 +1349,26 @@ export default function RapportenPagina() {
             {/* ── Cashflow ── */}
             {actieveTab === "cashflow" && (
               <div className="space-y-6">
+                <div className="flex justify-end">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      downloadCsv(
+                        cashflowGrafiekData.map((r) => ({
+                          Maand: r.naam,
+                          "Verwacht inkomen": r.inkomen,
+                          "Verwachte uitgaven": r.uitgaven,
+                          "Netto cashflow": r.netto,
+                        })),
+                        "cashflow.xlsx"
+                      )
+                    }
+                  >
+                    <FileDown className="h-4 w-4" />
+                    Exporteer Excel
+                  </Button>
+                </div>
                 {/* Bar chart */}
                 <Card>
                   <CardHeader>
