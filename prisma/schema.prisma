@@ -1,0 +1,216 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id                    String    @id @default(cuid())
+  email                 String    @unique
+  wachtwoord            String
+  naam                  String
+  bedrijfsnaam          String?
+  kvkNummer             String?
+  btwNummer             String?
+  iban                  String?
+  adres                 String?
+  postcode              String?
+  stad                  String?
+  telefoon              String?
+  website               String?
+  logo                  String?
+  factuurPrefix         String    @default("F")
+  factuurVolgNummer     Int       @default(1)
+  offertePrefix         String    @default("O")
+  offerteVolgNummer     Int       @default(1)
+  emailSmtpHost         String?
+  emailSmtpPort         Int?
+  emailSmtpUser         String?
+  emailSmtpPass         String?
+  emailSmtpSecure       Boolean   @default(true)
+  googleRefreshToken    String?
+  googleAccessToken     String?
+  googleTokenExpiry     DateTime?
+  korActief             Boolean   @default(false)
+  korDrempel            Float     @default(20000)
+  standaardBetaalTermijn Int      @default(30)
+  standaardBtwTarief    Float     @default(21)
+  betalingsherinneringen Boolean  @default(true)
+  herinneringDagen      Int       @default(7)
+  aangemaakt            DateTime  @default(now())
+  bijgewerkt            DateTime  @updatedAt
+}
+
+model Klant {
+  id          String    @id @default(cuid())
+  naam        String
+  bedrijf     String?
+  email       String?
+  telefoon    String?
+  adres       String?
+  postcode    String?
+  stad        String?
+  land        String    @default("Nederland")
+  kvkNummer   String?
+  btwNummer   String?
+  iban        String?
+  notities    String?
+  actief      Boolean   @default(true)
+  facturen    Factuur[]
+  offertes    Offerte[]
+  aangemaakt  DateTime  @default(now())
+  bijgewerkt  DateTime  @updatedAt
+}
+
+// status: CONCEPT | VERZONDEN | BETAALD | VERLOPEN | GEANNULEERD | CREDITNOTA
+model Factuur {
+  id                String         @id @default(cuid())
+  nummer            String         @unique
+  klantId           String
+  klant             Klant          @relation(fields: [klantId], references: [id])
+  status            String         @default("CONCEPT")
+  datum             DateTime       @default(now())
+  vervaldatum       DateTime
+  regels            FactuurRegel[]
+  subtotaal         Float          @default(0)
+  kortingBedrag     Float          @default(0)
+  kortingPercentage Float          @default(0)
+  btwBedrag         Float          @default(0)
+  totaal            Float          @default(0)
+  notities          String?
+  betalingsCondities String?
+  btwVerlegd        Boolean        @default(false)
+  terugkerend       Boolean        @default(false)
+  terugkerendInterval String?
+  agendaAfspraakId  String?
+  inkomsten         Inkomen[]
+  offerteId         String?
+  offerte           Offerte?       @relation(fields: [offerteId], references: [id])
+  verzondenOp       DateTime?
+  herinneringVerzondenOp DateTime?
+  aangemaakt        DateTime       @default(now())
+  bijgewerkt        DateTime       @updatedAt
+}
+
+model FactuurRegel {
+  id                String   @id @default(cuid())
+  factuurId         String
+  factuur           Factuur  @relation(fields: [factuurId], references: [id], onDelete: Cascade)
+  omschrijving      String
+  aantal            Float    @default(1)
+  eenheid           String?
+  prijs             Float
+  btwPercentage     Float    @default(21)
+  kortingPercentage Float    @default(0)
+  totaal            Float
+  volgorde          Int      @default(0)
+}
+
+// status: CONCEPT | VERZONDEN | GEACCEPTEERD | AFGEWEZEN | VERLOPEN
+model Offerte {
+  id                String         @id @default(cuid())
+  nummer            String         @unique
+  klantId           String
+  klant             Klant          @relation(fields: [klantId], references: [id])
+  status            String         @default("CONCEPT")
+  datum             DateTime       @default(now())
+  geldigTot         DateTime
+  regels            OfferteRegel[]
+  subtotaal         Float          @default(0)
+  kortingBedrag     Float          @default(0)
+  kortingPercentage Float          @default(0)
+  btwBedrag         Float          @default(0)
+  totaal            Float          @default(0)
+  notities          String?
+  facturen          Factuur[]
+  verzondenOp       DateTime?
+  aangemaakt        DateTime       @default(now())
+  bijgewerkt        DateTime       @updatedAt
+}
+
+model OfferteRegel {
+  id                String   @id @default(cuid())
+  offerteId         String
+  offerte           Offerte  @relation(fields: [offerteId], references: [id], onDelete: Cascade)
+  omschrijving      String
+  aantal            Float    @default(1)
+  eenheid           String?
+  prijs             Float
+  btwPercentage     Float    @default(21)
+  kortingPercentage Float    @default(0)
+  totaal            Float
+  volgorde          Int      @default(0)
+}
+
+model Inkomen {
+  id           String   @id @default(cuid())
+  datum        DateTime
+  omschrijving String
+  bedrag       Float
+  factuurId    String?
+  factuur      Factuur? @relation(fields: [factuurId], references: [id])
+  bron         String?
+  notities     String?
+  aangemaakt   DateTime @default(now())
+  bijgewerkt   DateTime @updatedAt
+}
+
+model Uitgave {
+  id              String     @id @default(cuid())
+  datum           DateTime
+  omschrijving    String
+  bedrag          Float
+  btwBedrag       Float      @default(0)
+  btwPercentage   Float      @default(0)
+  categorieId     String?
+  categorie       Categorie? @relation(fields: [categorieId], references: [id])
+  leverancier     String?
+  bonBestand      String?
+  notities        String?
+  zakelijk        Boolean    @default(true)
+  zakelijkPercent Float      @default(100)
+  aangemaakt      DateTime   @default(now())
+  bijgewerkt      DateTime   @updatedAt
+}
+
+model Categorie {
+  id       String    @id @default(cuid())
+  naam     String
+  kleur    String    @default("#6366f1")
+  icoon    String?
+  uitgaven Uitgave[]
+}
+
+model Uurregistratie {
+  id           String    @id @default(cuid())
+  omschrijving String
+  klantId      String?
+  projectNaam  String?
+  startTijd    DateTime
+  eindTijd     DateTime?
+  duur         Int?
+  uurtarief    Float?
+  gefactureerd Boolean   @default(false)
+  factuurId    String?
+  notities     String?
+  aangemaakt   DateTime  @default(now())
+  bijgewerkt   DateTime  @updatedAt
+}
+
+model VasteActiva {
+  id                  String   @id @default(cuid())
+  naam                String
+  aanschafDatum       DateTime
+  aanschafWaarde      Float
+  afschrijvingMethode String   @default("lineair")
+  afschrijvingJaren   Int
+  restwaarde          Float    @default(0)
+  categorieNaam       String?
+  notities            String?
+  actief              Boolean  @default(true)
+  aangemaakt          DateTime @default(now())
+  bijgewerkt          DateTime @updatedAt
+}
