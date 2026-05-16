@@ -357,6 +357,19 @@ export default function FactuurDetailPage() {
       />
 
       <div className="p-6">
+        {/* Melding banner */}
+        {melding && (
+          <div
+            className={`max-w-4xl mx-auto mb-4 rounded-lg px-4 py-3 text-sm font-medium ${
+              melding.type === "succes"
+                ? "bg-green-50 text-green-800 border border-green-200"
+                : "bg-red-50 text-red-800 border border-red-200"
+            }`}
+          >
+            {melding.tekst}
+          </div>
+        )}
+
         {/* Factuur preview */}
         <Card className="max-w-4xl mx-auto print:shadow-none print:border-0">
           <CardContent className="p-8 sm:p-12">

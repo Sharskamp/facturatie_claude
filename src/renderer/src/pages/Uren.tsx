@@ -195,6 +195,7 @@ export default function UrenPagina() {
       await window.api.uren.create({
         projectNaam: timerProject || null,
         omschrijving: timerProject ? `Gewerkt aan ${timerProject}` : "Timer registratie",
+        datum: startDatum.toISOString().split("T")[0],
         klantId: timerKlantId || null,
         startTijd: startDatum.toISOString(),
         eindTijd: eindDatum.toISOString(),

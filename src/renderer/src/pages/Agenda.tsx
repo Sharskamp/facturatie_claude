@@ -174,6 +174,7 @@ export default function AgendaPagina() {
       const duurMinuten = Math.round((einde.getTime() - start.getTime()) / 60000);
       await window.api.uren.create({
         omschrijving: afspraakVoorUren.samenvatting || "Google Calendar afspraak",
+        datum: start.toISOString().split("T")[0],
         startTijd: start.toISOString(),
         eindTijd: einde.toISOString(),
         duurMinuten,

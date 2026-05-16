@@ -364,6 +364,8 @@ function setupIpcHandlers() {
     totaalKorting?: number
     totaalKortingBedrag?: number
     mollieBetaalLink?: string
+    terugkerend?: boolean
+    terugkerendInterval?: string | null
     regels: Array<{
       omschrijving: string
       aantal: number
@@ -408,6 +410,12 @@ function setupIpcHandlers() {
         btwBedrag,
         totaal: subtotaal + btwBedrag,
         status: payload.status ?? 'CONCEPT',
+        taal: payload.taal ?? 'nl',
+        totaalKorting: payload.totaalKorting ?? 0,
+        totaalKortingBedrag: payload.totaalKortingBedrag ?? 0,
+        mollieBetaalLink: payload.mollieBetaalLink,
+        terugkerend: payload.terugkerend ?? false,
+        terugkerendInterval: payload.terugkerendInterval ?? null,
         regels: { create: berekendeRegels }
       },
       include: { klant: true, regels: true }
@@ -710,11 +718,11 @@ function setupIpcHandlers() {
     return prisma.categorie.findMany({ orderBy: { naam: 'asc' } })
   })
 
-  ipcMain.handle('categorien:create', async (_, data: { naam: string; kleur?: string; icoon?: string }) => {
+  ipcMain.handle('categorien:create', async (_, data: { naam: string; kleur?: string; icoon?: string; standaardBtwTarief?: number }) => {
     return prisma.categorie.create({ data })
   })
 
-  ipcMain.handle('categorien:update', async (_, id: string, data: { naam?: string; kleur?: string; icoon?: string }) => {
+  ipcMain.handle('categorien:update', async (_, id: string, data: { naam?: string; kleur?: string; icoon?: string; standaardBtwTarief?: number | null }) => {
     return prisma.categorie.update({ where: { id }, data })
   })
 
