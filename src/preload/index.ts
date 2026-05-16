@@ -26,6 +26,8 @@ contextBridge.exposeInMainWorld('api', {
     verstuur: (id: string, data: unknown) => ipcRenderer.invoke('facturen:verstuur', id, data),
     downloadPdf: (id: string) => ipcRenderer.invoke('facturen:downloadPdf', id),
     maakTermijnFacturen: () => ipcRenderer.invoke('facturen:maakTermijnFacturen'),
+    maakCreditnota: (id: string) => ipcRenderer.invoke('facturen:maakCreditnota', id),
+    stuurHerinneringen: () => ipcRenderer.invoke('facturen:stuurHerinneringen'),
   },
   offertes: {
     list: (params?: unknown) => ipcRenderer.invoke('offertes:list', params),
@@ -83,5 +85,11 @@ contextBridge.exposeInMainWorld('api', {
   },
   agenda: {
     haalAfspraken: (params?: unknown) => ipcRenderer.invoke('agenda:haal-afspraken', params),
+  },
+  producten: {
+    list: () => ipcRenderer.invoke('producten:list'),
+    create: (data: unknown) => ipcRenderer.invoke('producten:create', data),
+    update: (id: string, data: unknown) => ipcRenderer.invoke('producten:update', id, data),
+    delete: (id: string) => ipcRenderer.invoke('producten:delete', id),
   },
 })

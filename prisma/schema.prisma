@@ -26,6 +26,7 @@ model User {
   factuurVolgNummer     Int       @default(1)
   offertePrefix         String    @default("O")
   offerteVolgNummer     Int       @default(1)
+  standaardCreditnotaPrefix String @default("CN")
   emailSmtpHost         String?
   emailSmtpPort         Int?
   emailSmtpUser         String?
@@ -107,6 +108,7 @@ model Factuur {
   offerte           Offerte?       @relation(fields: [offerteId], references: [id])
   verzondenOp       DateTime?
   herinneringVerzondenOp DateTime?
+  creditNotaVoorId  String?
   aangemaakt        DateTime       @default(now())
   bijgewerkt        DateTime       @updatedAt
 }
@@ -229,4 +231,16 @@ model VasteActiva {
   actief              Boolean  @default(true)
   aangemaakt          DateTime @default(now())
   bijgewerkt          DateTime @updatedAt
+}
+
+model Product {
+  id            String   @id @default(cuid())
+  naam          String
+  omschrijving  String?
+  prijs         Float    @default(0)
+  eenheid       String?  @default("stuks")
+  btwPercentage Float    @default(21)
+  actief        Boolean  @default(true)
+  aangemaakt    DateTime @default(now())
+  bijgewerkt    DateTime @updatedAt
 }

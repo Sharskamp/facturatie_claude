@@ -130,6 +130,67 @@ async function maakTermijnFacturen(): Promise<number> {
   }
 }
 
+// ── Betalingsherinneringen (gedeeld tussen IPC en startup) ──
+async function stuurHerinneringen(): Promise<{ verstuurd: number; fouten: number; fout?: string }> {
+  const user = await prisma.user.findFirst()
+  if (!user || !user.betalingsherinneringen) return { verstuurd: 0, fouten: 0 }
+  if (!user.emailSmtpHost || !user.emailSmtpUser) return { verstuurd: 0, fouten: 0, fout: 'SMTP niet geconfigureerd' }
+
+  const nu = new Date()
+  const drempelDatum = new Date(nu)
+  drempelDatum.setDate(nu.getDate() - user.herinneringDagen)
+
+  // Find overdue invoices: VERZONDEN, past due, no reminder sent yet (or sent long ago)
+  const teHerinnerenFacturen = await prisma.factuur.findMany({
+    where: {
+      status: 'VERZONDEN',
+      vervaldatum: { lt: drempelDatum },
+      OR: [
+        { herinneringVerzondenOp: null },
+        { herinneringVerzondenOp: { lt: new Date(nu.getTime() - 14 * 24 * 60 * 60 * 1000) } } // not in last 14 days
+      ]
+    },
+    include: { klant: true, regels: true }
+  })
+
+  let verstuurd = 0
+  let fouten = 0
+
+  for (const factuur of teHerinnerenFacturen) {
+    if (!factuur.klant.email) continue
+
+    const dagenTeLasten = Math.floor((nu.getTime() - new Date(factuur.vervaldatum).getTime()) / (1000 * 60 * 60 * 24))
+
+    const html = `
+      <p>Geachte ${factuur.klant.naam},</p>
+      <p>Wij hebben geconstateerd dat onderstaande factuur nog niet is voldaan.</p>
+      <table style="border-collapse:collapse;width:100%">
+        <tr><td style="padding:4px 8px"><strong>Factuurnummer:</strong></td><td>${factuur.nummer}</td></tr>
+        <tr><td style="padding:4px 8px"><strong>Factuurdatum:</strong></td><td>${new Date(factuur.datum).toLocaleDateString('nl-NL')}</td></tr>
+        <tr><td style="padding:4px 8px"><strong>Vervaldatum:</strong></td><td>${new Date(factuur.vervaldatum).toLocaleDateString('nl-NL')}</td></tr>
+        <tr><td style="padding:4px 8px"><strong>Openstaand bedrag:</strong></td><td><strong>€ ${factuur.totaal.toFixed(2).replace('.', ',')}</strong></td></tr>
+        <tr><td style="padding:4px 8px"><strong>Dagen te laat:</strong></td><td>${dagenTeLasten} dagen</td></tr>
+      </table>
+      <p>Wij verzoeken u vriendelijk het openstaande bedrag zo spoedig mogelijk te voldoen.</p>
+      <p>Heeft u deze factuur reeds betaald? Dan kunt u dit bericht als niet verzonden beschouwen.</p>
+      <p>Met vriendelijke groet,<br>${user.naam}${user.bedrijfsnaam ? '<br>' + user.bedrijfsnaam : ''}</p>
+    `
+
+    try {
+      await verstuurEmail(
+        { host: user.emailSmtpHost, port: user.emailSmtpPort ?? 587, secure: user.emailSmtpSecure, user: user.emailSmtpUser!, pass: user.emailSmtpPass ?? '' },
+        { van: user.emailSmtpUser!, naar: factuur.klant.email, onderwerp: `Betalingsherinnering - Factuur ${factuur.nummer}`, html }
+      )
+      await prisma.factuur.update({ where: { id: factuur.id }, data: { herinneringVerzondenOp: nu } })
+      verstuurd++
+    } catch {
+      fouten++
+    }
+  }
+
+  return { verstuurd, fouten }
+}
+
 // ── IPC Handlers ──
 
 function setupIpcHandlers() {
@@ -1038,6 +1099,77 @@ function setupIpcHandlers() {
     return { succes: true }
   })
 
+  // ── Producten (catalogus) ──
+  ipcMain.handle('producten:list', async () => {
+    return prisma.product.findMany({ where: { actief: true }, orderBy: { naam: 'asc' } })
+  })
+
+  ipcMain.handle('producten:create', async (_, data: { naam: string; omschrijving?: string; prijs: number; eenheid?: string; btwPercentage: number }) => {
+    return prisma.product.create({ data })
+  })
+
+  ipcMain.handle('producten:update', async (_, id: string, data: Record<string, unknown>) => {
+    return prisma.product.update({ where: { id }, data: data as Parameters<typeof prisma.product.update>[0]['data'] })
+  })
+
+  ipcMain.handle('producten:delete', async (_, id: string) => {
+    // Soft delete
+    await prisma.product.update({ where: { id }, data: { actief: false } })
+    return { succes: true }
+  })
+
+  // ── Creditnota aanmaken ──
+  ipcMain.handle('facturen:maakCreditnota', async (_, factuurId: string) => {
+    const user = await prisma.user.findFirst()
+    if (!user) throw new Error('Geen gebruiker')
+
+    const origineel = await prisma.factuur.findUnique({ where: { id: factuurId }, include: { regels: true } })
+    if (!origineel) throw new Error('Factuur niet gevonden')
+
+    // Generate credit note number using CN prefix
+    const prefix = user.standaardCreditnotaPrefix ?? 'CN'
+    const jaar = new Date().getFullYear()
+    // Count existing credit notes this year to get sequence
+    const aantalCN = await prisma.factuur.count({ where: { nummer: { startsWith: `${prefix}${jaar}` } } })
+    const nummer = `${prefix}${jaar}-${String(aantalCN + 1).padStart(4, '0')}`
+
+    const creditnota = await prisma.factuur.create({
+      data: {
+        nummer,
+        klantId: origineel.klantId,
+        datum: new Date(),
+        vervaldatum: new Date(), // Direct opeisbaar
+        subtotaal: -origineel.subtotaal,
+        kortingBedrag: -origineel.kortingBedrag,
+        kortingPercentage: origineel.kortingPercentage,
+        btwBedrag: -origineel.btwBedrag,
+        totaal: -origineel.totaal,
+        notities: `Creditnota voor factuur ${origineel.nummer}`,
+        btwVerlegd: origineel.btwVerlegd,
+        status: 'CONCEPT',
+        creditNotaVoorId: factuurId,
+        regels: {
+          create: origineel.regels.map(r => ({
+            omschrijving: r.omschrijving,
+            aantal: -r.aantal,
+            eenheid: r.eenheid,
+            prijs: r.prijs,
+            btwPercentage: r.btwPercentage,
+            kortingPercentage: r.kortingPercentage,
+            totaal: -r.totaal,
+            volgorde: r.volgorde
+          }))
+        }
+      },
+      include: { klant: true, regels: true }
+    })
+
+    return creditnota.id
+  })
+
+  // ── Betalingsherinneringen sturen ──
+  ipcMain.handle('facturen:stuurHerinneringen', async () => stuurHerinneringen())
+
   ipcMain.handle('uitgaven:scanBon', async (_, { bonPad }: { bonPad: string }) => {
     const user = await prisma.user.findFirst()
     if (!user?.anthropicApiKey) {
@@ -1109,6 +1241,7 @@ app.whenReady().then(async () => {
 
   // Maak terugkerende facturen aan bij opstarten
   maakTermijnFacturen().catch(e => console.error('Fout bij opstarten terugkerende facturen:', e))
+  stuurHerinneringen().catch(e => console.error('Fout bij sturen herinneringen:', e))
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
