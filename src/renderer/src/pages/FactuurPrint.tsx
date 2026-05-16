@@ -201,26 +201,26 @@ export default function FactuurPrintPage() {
             <thead>
               <tr className="border-b-2 border-gray-200">
                 <th className="text-left py-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
-                  Omschrijving
+                  {labels.description}
                 </th>
                 <th className="text-center py-2 text-xs font-semibold uppercase tracking-wider text-gray-500 w-20">
-                  Aantal
+                  {labels.quantity}
                 </th>
                 <th className="text-right py-2 text-xs font-semibold uppercase tracking-wider text-gray-500 w-24">
-                  Prijs
+                  {labels.price}
                 </th>
                 {!factuur.btwVerlegd && (
                   <th className="text-right py-2 text-xs font-semibold uppercase tracking-wider text-gray-500 w-16">
-                    BTW
+                    {labels.tax}
                   </th>
                 )}
                 {factuur.regels.some((r) => r.kortingPercentage > 0) && (
                   <th className="text-right py-2 text-xs font-semibold uppercase tracking-wider text-gray-500 w-20">
-                    Korting
+                    {labels.discount}
                   </th>
                 )}
                 <th className="text-right py-2 text-xs font-semibold uppercase tracking-wider text-gray-500 w-28">
-                  Totaal
+                  {labels.total}
                 </th>
               </tr>
             </thead>
@@ -253,7 +253,7 @@ export default function FactuurPrintPage() {
           <div className="flex justify-end mb-8">
             <div className="w-64">
               <div className="flex justify-between py-1.5 text-gray-600">
-                <span>Subtotaal</span>
+                <span>{labels.subtotal}</span>
                 <span>{formatBedrag(factuur.subtotaal + factuur.kortingBedrag)}</span>
               </div>
               {factuur.kortingBedrag > 0 && (
@@ -276,7 +276,7 @@ export default function FactuurPrintPage() {
                 ))
               )}
               <div className="flex justify-between py-3 border-t-2 border-gray-900 mt-1">
-                <span className="font-bold text-lg">Totaal</span>
+                <span className="font-bold text-lg">{labels.total}</span>
                 <span className="font-bold text-lg text-indigo-600">
                   {formatBedrag(factuur.totaal)}
                 </span>

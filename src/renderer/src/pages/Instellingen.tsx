@@ -333,6 +333,34 @@ export default function InstellingenPagina() {
                   placeholder="NL91ABNA0417164300"
                 />
               </div>
+              {/* Bedrijfslogo */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Bedrijfslogo</label>
+                {instellingen.logoBase64 && (
+                  <img
+                    src={instellingen.logoBase64}
+                    alt="Logo"
+                    className="h-16 mb-2 object-contain rounded border border-gray-200 p-1"
+                  />
+                )}
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="block text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                      const base64 = reader.result as string;
+                      updateVeld("logoBase64", base64);
+                      slaOp({ logoBase64: base64 });
+                    };
+                    reader.readAsDataURL(file);
+                  }}
+                />
+              </div>
+
               <div className="flex justify-end pt-2">
                 <Button onClick={() => slaOp(instellingen)} loading={opslaan}>
                   Opslaan

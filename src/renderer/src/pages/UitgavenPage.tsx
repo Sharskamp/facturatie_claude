@@ -45,6 +45,7 @@ interface Categorie {
   id: string;
   naam: string;
   kleur?: string | null;
+  standaardBtwTarief?: number | null;
 }
 
 interface Uitgave {
@@ -580,7 +581,16 @@ export default function UitgavenPagina() {
               </Select>
               <Select
                 value={formulier.categorieId}
-                onValueChange={(v) => setFormulier({ ...formulier, categorieId: v })}
+                onValueChange={(v) => {
+                  const cat = categorieen.find((c) => c.id === v);
+                  setFormulier((prev) => ({
+                    ...prev,
+                    categorieId: v,
+                    ...(cat?.standaardBtwTarief != null
+                      ? { btwPercentage: String(cat.standaardBtwTarief) }
+                      : {}),
+                  }));
+                }}
               >
                 <SelectTrigger label="Categorie">
                   <SelectValue placeholder="Geen categorie" />
