@@ -40,8 +40,23 @@ model User {
   standaardBtwTarief    Float     @default(21)
   betalingsherinneringen Boolean  @default(true)
   herinneringDagen      Int       @default(7)
+  kmVergoeding          Float     @default(0.23)
   aangemaakt            DateTime  @default(now())
   bijgewerkt            DateTime  @updatedAt
+}
+
+model Rit {
+  id           String   @id @default(cuid())
+  datum        DateTime
+  omschrijving String
+  van          String
+  naar         String
+  kilometers   Float
+  retour       Boolean  @default(false)
+  zakelijk     Boolean  @default(true)
+  notities     String?
+  aangemaakt   DateTime @default(now())
+  bijgewerkt   DateTime @updatedAt
 }
 
 model Klant {

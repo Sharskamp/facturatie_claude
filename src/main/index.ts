@@ -1,9 +1,10 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { PrismaClient } from '../generated/prisma/client'
 import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3'
 import bcrypt from 'bcryptjs'
+import * as fs from 'fs'
 import { verstuurEmail, maakFactuurEmailHtml } from '../lib/email'
 import { haalAgendaAfspraken, maakGoogleAuthUrl, wisselCodeVoorTokens, vernieuwAccessToken } from '../lib/google-calendar'
 
@@ -596,7 +597,7 @@ function setupIpcHandlers() {
         factuurPrefix: true, offertePrefix: true, emailSmtpHost: true, emailSmtpPort: true,
         emailSmtpUser: true, emailSmtpSecure: true, korActief: true, korDrempel: true,
         standaardBetaalTermijn: true, standaardBtwTarief: true, betalingsherinneringen: true,
-        herinneringDagen: true, googleRefreshToken: true,
+        herinneringDagen: true, googleRefreshToken: true, kmVergoeding: true,
       }
     })
     return { ...user, googleGekoppeld: !!user?.googleRefreshToken }
@@ -655,12 +656,432 @@ function setupIpcHandlers() {
 
     return haalAgendaAfspraken(accessToken!, params?.van, params?.tot)
   })
+
+  // ── Ritten (Kilometerregistratie) ──
+  ipcMain.handle('ritten:list', async () => {
+    const user = await prisma.user.findFirst()
+    const kmVergoeding = user?.kmVergoeding ?? 0.23
+    const ritten = await prisma.rit.findMany({ orderBy: { datum: 'desc' } })
+    return ritten.map(r => ({ ...r, vergoeding: r.kilometers * kmVergoeding }))
+  })
+
+  ipcMain.handle('ritten:create', async (_, data: {
+    datum: string; omschrijving: string; van: string; naar: string;
+    kilometers: number; retour?: boolean; zakelijk?: boolean; notities?: string
+  }) => {
+    const km = data.retour ? data.kilometers * 2 : data.kilometers
+    const rit = await prisma.rit.create({
+      data: {
+        datum: new Date(data.datum),
+        omschrijving: data.omschrijving,
+        van: data.van,
+        naar: data.naar,
+        kilometers: km,
+        retour: data.retour ?? false,
+        zakelijk: data.zakelijk ?? true,
+        notities: data.notities ?? null,
+      }
+    })
+    const user = await prisma.user.findFirst()
+    const kmVergoeding = user?.kmVergoeding ?? 0.23
+    return { ...rit, vergoeding: rit.kilometers * kmVergoeding }
+  })
+
+  ipcMain.handle('ritten:update', async (_, id: string, data: Record<string, unknown>) => {
+    const rit = await prisma.rit.update({
+      where: { id },
+      data: { ...data, datum: data.datum ? new Date(data.datum as string) : undefined } as Parameters<typeof prisma.rit.update>[0]['data']
+    })
+    const user = await prisma.user.findFirst()
+    const kmVergoeding = user?.kmVergoeding ?? 0.23
+    return { ...rit, vergoeding: rit.kilometers * kmVergoeding }
+  })
+
+  ipcMain.handle('ritten:delete', async (_, id: string) => {
+    await prisma.rit.delete({ where: { id } })
+    return { succes: true }
+  })
+
+  ipcMain.handle('ritten:exportCsv', async (_, csvInhoud: string) => {
+    const focusedWindow = BrowserWindow.getFocusedWindow()
+    const result = await dialog.showSaveDialog(focusedWindow!, {
+      defaultPath: `ritten-export-${new Date().toISOString().split('T')[0]}.csv`,
+      filters: [{ name: 'CSV bestanden', extensions: ['csv'] }]
+    })
+    if (result.canceled || !result.filePath) return { succes: false }
+    fs.writeFileSync(result.filePath, csvInhoud, 'utf-8')
+    return { succes: true, pad: result.filePath }
+  })
+
+  // ── Terugkerende facturen ──
+  async function maakTermijnFacturen() {
+    try {
+      const user = await prisma.user.findFirst()
+      if (!user) return 0
+
+      const terugkerende = await prisma.factuur.findMany({
+        where: { terugkerend: true, status: { not: 'CONCEPT' } },
+        include: { regels: true }
+      })
+
+      let aangemaakt = 0
+      const nu = new Date()
+
+      for (const factuur of terugkerende) {
+        const interval = factuur.terugkerendInterval
+        if (!interval) continue
+
+        const dagSinds = Math.floor((nu.getTime() - new Date(factuur.datum).getTime()) / (1000 * 60 * 60 * 24))
+
+        let dueNa = 0
+        if (interval === 'maandelijks') dueNa = 30
+        else if (interval === 'kwartaal') dueNa = 90
+        else if (interval === 'jaarlijks') dueNa = 365
+
+        if (dagSinds < dueNa) continue
+
+        const nieuweNummer = genereerNummer(user.factuurPrefix, user.factuurVolgNummer + aangemaakt)
+        const nieuweDatum = new Date()
+        const nieuweVervaldatum = berekenVervaldatum(user.standaardBetaalTermijn)
+
+        await prisma.factuur.create({
+          data: {
+            nummer: nieuweNummer,
+            klantId: factuur.klantId,
+            datum: nieuweDatum,
+            vervaldatum: nieuweVervaldatum,
+            subtotaal: factuur.subtotaal,
+            btwBedrag: factuur.btwBedrag,
+            kortingBedrag: factuur.kortingBedrag,
+            kortingPercentage: factuur.kortingPercentage,
+            totaal: factuur.totaal,
+            notities: factuur.notities,
+            betalingsCondities: factuur.betalingsCondities,
+            btwVerlegd: factuur.btwVerlegd,
+            status: 'CONCEPT',
+            regels: {
+              create: factuur.regels.map(r => ({
+                omschrijving: r.omschrijving, aantal: r.aantal, eenheid: r.eenheid,
+                prijs: r.prijs, btwPercentage: r.btwPercentage, kortingPercentage: r.kortingPercentage,
+                totaal: r.totaal, volgorde: r.volgorde
+              }))
+            }
+          }
+        })
+
+        aangemaakt++
+      }
+
+      if (aangemaakt > 0) {
+        await prisma.user.updateMany({ data: { factuurVolgNummer: user.factuurVolgNummer + aangemaakt } })
+      }
+
+      return aangemaakt
+    } catch (e) {
+      console.error('Fout bij aanmaken termijnfacturen:', e)
+      return 0
+    }
+  }
+
+  ipcMain.handle('facturen:maakTermijnFacturen', async () => {
+    return { aangemaakt: await maakTermijnFacturen() }
+  })
+
+  // ── PDF download ──
+  ipcMain.handle('facturen:downloadPdf', async (_, factuurId: string) => {
+    try {
+      const factuur = await prisma.factuur.findUnique({ where: { id: factuurId } })
+      if (!factuur) return { succes: false, fout: 'Factuur niet gevonden' }
+
+      const focusedWindow = BrowserWindow.getFocusedWindow()
+      if (!focusedWindow) return { succes: false, fout: 'Geen actief venster' }
+
+      const pdfBuffer = await focusedWindow.webContents.printToPDF({ printBackground: true, pageSize: 'A4' })
+
+      const result = await dialog.showSaveDialog(focusedWindow, {
+        defaultPath: `factuur-${factuur.nummer}.pdf`,
+        filters: [{ name: 'PDF bestanden', extensions: ['pdf'] }]
+      })
+
+      if (result.canceled || !result.filePath) return { succes: false }
+
+      fs.writeFileSync(result.filePath, pdfBuffer)
+      return { succes: true, pad: result.filePath }
+    } catch (e: unknown) {
+      return { succes: false, fout: e instanceof Error ? e.message : 'Onbekende fout' }
+    }
+  })
+
+  // ── Bank CSV import ──
+  ipcMain.handle('bank:openBestandDialog', async () => {
+    const focusedWindow = BrowserWindow.getFocusedWindow()
+    const result = await dialog.showOpenDialog(focusedWindow!, {
+      filters: [{ name: 'CSV bestanden', extensions: ['csv'] }],
+      properties: ['openFile']
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    return result.filePaths[0]
+  })
+
+  ipcMain.handle('bank:importeerCsv', async (_, { bank, filePath }: { bank: 'abn' | 'ing' | 'rabobank'; filePath: string }) => {
+    const inhoud = fs.readFileSync(filePath, 'utf-8')
+    const regels = inhoud.split('\n').map(r => r.trim()).filter(r => r.length > 0)
+
+    function parseerveldCsv(rij: string): string[] {
+      const velden: string[] = []
+      let huidig = ''
+      let inQuotes = false
+      for (let i = 0; i < rij.length; i++) {
+        const c = rij[i]
+        if (c === '"') {
+          inQuotes = !inQuotes
+        } else if (c === ',' && !inQuotes) {
+          velden.push(huidig.trim())
+          huidig = ''
+        } else if (c === ';' && !inQuotes) {
+          velden.push(huidig.trim())
+          huidig = ''
+        } else {
+          huidig += c
+        }
+      }
+      velden.push(huidig.trim())
+      return velden
+    }
+
+    const header = parseerveldCsv(regels[0]).map(h => h.replace(/"/g, '').trim())
+    const transacties: Array<{ datum: string; omschrijving: string; bedrag: number; type: 'inkomen' | 'uitgave' }> = []
+
+    for (let i = 1; i < regels.length; i++) {
+      const velden = parseerveldCsv(regels[i]).map(v => v.replace(/"/g, '').trim())
+      if (velden.length < 3) continue
+
+      try {
+        if (bank === 'abn' || bank === 'ing') {
+          // Kolommen: Datum,Naam / Omschrijving,Rekening,Tegenrekening,Code,Af Bij,Bedrag (EUR),MutatieSoort,Mededelingen
+          const idx = (naam: string) => header.findIndex(h => h.toLowerCase().includes(naam.toLowerCase()))
+          const datumIdx = idx('datum')
+          const omschrijvingIdx = idx('naam')
+          const afBijIdx = header.findIndex(h => h.toLowerCase().includes('af bij') || h.toLowerCase() === 'af bij')
+          const bedragIdx = header.findIndex(h => h.toLowerCase().includes('bedrag'))
+
+          if (datumIdx < 0 || bedragIdx < 0) continue
+
+          const datumRaw = velden[datumIdx] ?? ''
+          // Format: YYYYMMDD or DD-MM-YYYY
+          let datum = datumRaw
+          if (/^\d{8}$/.test(datumRaw)) {
+            datum = `${datumRaw.slice(0, 4)}-${datumRaw.slice(4, 6)}-${datumRaw.slice(6, 8)}`
+          } else if (/^\d{2}-\d{2}-\d{4}$/.test(datumRaw)) {
+            const parts = datumRaw.split('-')
+            datum = `${parts[2]}-${parts[1]}-${parts[0]}`
+          }
+
+          const omschrijving = velden[omschrijvingIdx] ?? ''
+          const bedragStr = (velden[bedragIdx] ?? '').replace('.', '').replace(',', '.')
+          const bedragAbs = Math.abs(parseFloat(bedragStr) || 0)
+          const afBij = velden[afBijIdx]?.toLowerCase() ?? ''
+          const isDebet = afBij === 'af' || afBij === 'debet' || afBij === 'd'
+
+          transacties.push({
+            datum,
+            omschrijving: omschrijving || 'Onbekend',
+            bedrag: isDebet ? -bedragAbs : bedragAbs,
+            type: isDebet ? 'uitgave' : 'inkomen'
+          })
+        } else if (bank === 'rabobank') {
+          // IBAN/BBAN,Munt,BIC,Volgnr,Datum,Rentedatum,Bedrag,Saldo na trn,...
+          const datumIdx = header.findIndex(h => h.toLowerCase() === 'datum')
+          const bedragIdx = header.findIndex(h => h.toLowerCase() === 'bedrag')
+          const naamIdx = header.findIndex(h => h.toLowerCase().includes('tegenpartij naam'))
+          const omschrijvingIdx = header.findIndex(h => h.toLowerCase() === 'omschrijving')
+
+          if (datumIdx < 0 || bedragIdx < 0) continue
+
+          const datumRaw = velden[datumIdx] ?? ''
+          let datum = datumRaw
+          if (/^\d{4}-\d{2}-\d{2}$/.test(datumRaw)) {
+            datum = datumRaw
+          } else if (/^\d{2}-\d{2}-\d{4}$/.test(datumRaw)) {
+            const parts = datumRaw.split('-')
+            datum = `${parts[2]}-${parts[1]}-${parts[0]}`
+          }
+
+          const bedragStr = (velden[bedragIdx] ?? '').replace('.', '').replace(',', '.')
+          const bedrag = parseFloat(bedragStr) || 0
+          const naam = velden[naamIdx] ?? ''
+          const omschrijving = velden[omschrijvingIdx] ?? naam || 'Onbekend'
+
+          transacties.push({
+            datum,
+            omschrijving: omschrijving || 'Onbekend',
+            bedrag,
+            type: bedrag < 0 ? 'uitgave' : 'inkomen'
+          })
+        }
+      } catch {
+        continue
+      }
+    }
+
+    return transacties
+  })
+
+  // ── Uren → Factuur ──
+  ipcMain.handle('uren:factuurAanmaken', async (_, { urenIds, klantId, uurtarief }: { urenIds: string[]; klantId: string; uurtarief?: number }) => {
+    const user = await prisma.user.findFirst()
+    if (!user) throw new Error('Geen gebruiker')
+
+    const urenRegistraties = await prisma.uurregistratie.findMany({ where: { id: { in: urenIds } } })
+    if (urenRegistraties.length === 0) throw new Error('Geen urenregistraties gevonden')
+
+    const nummer = genereerNummer(user.factuurPrefix, user.factuurVolgNummer)
+
+    const btwPercentage = user.standaardBtwTarief
+
+    let subtotaal = 0
+    let btwBedrag = 0
+    const berekendeRegels = urenRegistraties.map((uur, index) => {
+      const uren = (uur.duur ?? 0) / 60
+      const tarief = uurtarief ?? uur.uurtarief ?? 0
+      const omschrijving = uur.projectNaam ? `${uur.omschrijving} - ${uur.projectNaam}` : uur.omschrijving
+      const netto = uren * tarief
+      const btw = (netto * btwPercentage) / 100
+      subtotaal += netto
+      btwBedrag += btw
+      return {
+        omschrijving,
+        aantal: parseFloat(uren.toFixed(2)),
+        eenheid: 'uur',
+        prijs: tarief,
+        btwPercentage,
+        kortingPercentage: 0,
+        totaal: netto + btw,
+        volgorde: index
+      }
+    })
+
+    const factuur = await prisma.factuur.create({
+      data: {
+        nummer,
+        klantId,
+        datum: new Date(),
+        vervaldatum: berekenVervaldatum(user.standaardBetaalTermijn),
+        subtotaal,
+        btwBedrag,
+        kortingBedrag: 0,
+        kortingPercentage: 0,
+        totaal: subtotaal + btwBedrag,
+        status: 'CONCEPT',
+        regels: { create: berekendeRegels }
+      },
+      include: { klant: true, regels: true }
+    })
+
+    await prisma.user.updateMany({ data: { factuurVolgNummer: user.factuurVolgNummer + 1 } })
+
+    await prisma.uurregistratie.updateMany({
+      where: { id: { in: urenIds } },
+      data: { gefactureerd: true, factuurId: factuur.id }
+    })
+
+    return factuur.id
+  })
+
+  // ── Bon uploaden (Uitgaven) ──
+  ipcMain.handle('uitgaven:uploadBon', async (_, { uitgaveId }: { uitgaveId: string }) => {
+    const focusedWindow = BrowserWindow.getFocusedWindow()
+    const result = await dialog.showOpenDialog(focusedWindow!, {
+      filters: [{ name: 'Afbeeldingen', extensions: ['jpg', 'jpeg', 'png', 'pdf', 'webp'] }],
+      properties: ['openFile']
+    })
+    if (result.canceled || result.filePaths.length === 0) return { succes: false }
+
+    const bronPad = result.filePaths[0]
+    const bestandsnaam = bronPad.split('/').pop() ?? bronPad.split('\\').pop() ?? 'bon'
+    const bonMap = join(app.getPath('userData'), 'bonnen')
+    if (!fs.existsSync(bonMap)) fs.mkdirSync(bonMap, { recursive: true })
+
+    const doelPad = join(bonMap, `${uitgaveId}-${bestandsnaam}`)
+    fs.copyFileSync(bronPad, doelPad)
+
+    await prisma.uitgave.update({ where: { id: uitgaveId }, data: { bonBestand: doelPad } })
+    return { succes: true, pad: doelPad }
+  })
+
+  ipcMain.handle('uitgaven:openBon', async (_, { pad }: { pad: string }) => {
+    await shell.openPath(pad)
+    return { succes: true }
+  })
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   initPrisma()
   setupIpcHandlers()
   createWindow()
+
+  // Maak terugkerende facturen aan bij opstarten
+  try {
+    const user = await prisma.user.findFirst()
+    if (user) {
+      const genereerNummer = (prefix: string, volgNummer: number): string => {
+        const jaar = new Date().getFullYear()
+        return `${prefix}${jaar}-${String(volgNummer).padStart(4, '0')}`
+      }
+      const berekenVervaldatum = (dagen: number): Date => {
+        const d = new Date()
+        d.setDate(d.getDate() + dagen)
+        return d
+      }
+      const terugkerende = await prisma.factuur.findMany({
+        where: { terugkerend: true, status: { not: 'CONCEPT' } },
+        include: { regels: true }
+      })
+      let aangemaakt = 0
+      const nu = new Date()
+      for (const factuur of terugkerende) {
+        const interval = factuur.terugkerendInterval
+        if (!interval) continue
+        const dagSinds = Math.floor((nu.getTime() - new Date(factuur.datum).getTime()) / (1000 * 60 * 60 * 24))
+        let dueNa = 0
+        if (interval === 'maandelijks') dueNa = 30
+        else if (interval === 'kwartaal') dueNa = 90
+        else if (interval === 'jaarlijks') dueNa = 365
+        if (dagSinds < dueNa) continue
+        const nieuweNummer = genereerNummer(user.factuurPrefix, user.factuurVolgNummer + aangemaakt)
+        await prisma.factuur.create({
+          data: {
+            nummer: nieuweNummer,
+            klantId: factuur.klantId,
+            datum: new Date(),
+            vervaldatum: berekenVervaldatum(user.standaardBetaalTermijn),
+            subtotaal: factuur.subtotaal,
+            btwBedrag: factuur.btwBedrag,
+            kortingBedrag: factuur.kortingBedrag,
+            kortingPercentage: factuur.kortingPercentage,
+            totaal: factuur.totaal,
+            notities: factuur.notities,
+            betalingsCondities: factuur.betalingsCondities,
+            btwVerlegd: factuur.btwVerlegd,
+            status: 'CONCEPT',
+            regels: {
+              create: factuur.regels.map(r => ({
+                omschrijving: r.omschrijving, aantal: r.aantal, eenheid: r.eenheid,
+                prijs: r.prijs, btwPercentage: r.btwPercentage, kortingPercentage: r.kortingPercentage,
+                totaal: r.totaal, volgorde: r.volgorde
+              }))
+            }
+          }
+        })
+        aangemaakt++
+      }
+      if (aangemaakt > 0) {
+        await prisma.user.updateMany({ data: { factuurVolgNummer: user.factuurVolgNummer + aangemaakt } })
+      }
+    }
+  } catch (e) {
+    console.error('Fout bij opstarten terugkerende facturen:', e)
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

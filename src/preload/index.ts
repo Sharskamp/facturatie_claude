@@ -24,6 +24,8 @@ contextBridge.exposeInMainWorld('api', {
     update: (id: string, data: unknown) => ipcRenderer.invoke('facturen:update', id, data),
     delete: (id: string) => ipcRenderer.invoke('facturen:delete', id),
     verstuur: (id: string, data: unknown) => ipcRenderer.invoke('facturen:verstuur', id, data),
+    downloadPdf: (id: string) => ipcRenderer.invoke('facturen:downloadPdf', id),
+    maakTermijnFacturen: () => ipcRenderer.invoke('facturen:maakTermijnFacturen'),
   },
   offertes: {
     list: (params?: unknown) => ipcRenderer.invoke('offertes:list', params),
@@ -43,6 +45,8 @@ contextBridge.exposeInMainWorld('api', {
     create: (data: unknown) => ipcRenderer.invoke('uitgaven:create', data),
     update: (id: string, data: unknown) => ipcRenderer.invoke('uitgaven:update', id, data),
     delete: (id: string) => ipcRenderer.invoke('uitgaven:delete', id),
+    uploadBon: (data: unknown) => ipcRenderer.invoke('uitgaven:uploadBon', data),
+    openBon: (data: unknown) => ipcRenderer.invoke('uitgaven:openBon', data),
   },
   categorien: {
     list: () => ipcRenderer.invoke('categorien:list'),
@@ -55,6 +59,18 @@ contextBridge.exposeInMainWorld('api', {
     create: (data: unknown) => ipcRenderer.invoke('uren:create', data),
     update: (id: string, data: unknown) => ipcRenderer.invoke('uren:update', id, data),
     delete: (id: string) => ipcRenderer.invoke('uren:delete', id),
+    factuurAanmaken: (data: unknown) => ipcRenderer.invoke('uren:factuurAanmaken', data),
+  },
+  ritten: {
+    list: () => ipcRenderer.invoke('ritten:list'),
+    create: (data: unknown) => ipcRenderer.invoke('ritten:create', data),
+    update: (id: string, data: unknown) => ipcRenderer.invoke('ritten:update', id, data),
+    delete: (id: string) => ipcRenderer.invoke('ritten:delete', id),
+    exportCsv: (csv: string) => ipcRenderer.invoke('ritten:exportCsv', csv),
+  },
+  bank: {
+    openBestandDialog: () => ipcRenderer.invoke('bank:openBestandDialog'),
+    importeerCsv: (data: unknown) => ipcRenderer.invoke('bank:importeerCsv', data),
   },
   instellingen: {
     get: () => ipcRenderer.invoke('instellingen:get'),
