@@ -1,6 +1,6 @@
-appId: nl.adminpro.app
-productName: AdminPro
-copyright: AdminPro
+appId: nl.streamlinefacturatie.app
+productName: Streamline Facturatie
+copyright: Streamline Facturatie
 
 directories:
   buildResources: build
@@ -30,3 +30,8 @@ nsis:
   installerHeaderIcon: build/icon.ico
   createDesktopShortcut: true
   createStartMenuShortcut: true
+
+publish:
+  provider: github
+  owner: Sharskamp
+  repo: rxx

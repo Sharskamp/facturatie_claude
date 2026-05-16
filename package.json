@@ -1,5 +1,5 @@
 {
-  "name": "rxx",
+  "name": "streamline-facturatie",
   "version": "0.1.0",
   "private": true,
   "main": "out/main/index.js",
@@ -8,6 +8,7 @@
     "build": "prisma generate && electron-vite build",
     "preview": "electron-vite preview",
     "package": "npm run build && electron-builder --win",
+    "package:win": "npm run build && electron-builder --win --publish never",
     "postinstall": "prisma generate"
   },
   "dependencies": {
@@ -46,7 +47,9 @@
     "react-router-dom": "^7.6.0",
     "recharts": "^3.8.1",
     "tailwind-merge": "^3.6.0",
-    "zod": "^4.4.3"
+    "zod": "^4.4.3",
+    "electron-updater": "^6.3.9",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@electron-toolkit/tsconfig": "^2.0.0",
