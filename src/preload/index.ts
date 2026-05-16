@@ -1,0 +1,70 @@
+import { contextBridge, ipcRenderer } from 'electron'
+
+contextBridge.exposeInMainWorld('api', {
+  shell: {
+    openExternal: (url: string) => ipcRenderer.invoke('shell:open-external', url),
+    openPrint: (factuurId: string) => ipcRenderer.invoke('shell:open-print', factuurId),
+  },
+  auth: {
+    setupStatus: () => ipcRenderer.invoke('auth:setup-status'),
+    setup: (data: unknown) => ipcRenderer.invoke('auth:setup', data),
+    login: (email: string, wachtwoord: string) => ipcRenderer.invoke('auth:login', email, wachtwoord),
+  },
+  klanten: {
+    list: (params?: unknown) => ipcRenderer.invoke('klanten:list', params),
+    get: (id: string) => ipcRenderer.invoke('klanten:get', id),
+    create: (data: unknown) => ipcRenderer.invoke('klanten:create', data),
+    update: (id: string, data: unknown) => ipcRenderer.invoke('klanten:update', id, data),
+    delete: (id: string) => ipcRenderer.invoke('klanten:delete', id),
+  },
+  facturen: {
+    list: (params?: unknown) => ipcRenderer.invoke('facturen:list', params),
+    get: (id: string) => ipcRenderer.invoke('facturen:get', id),
+    create: (data: unknown) => ipcRenderer.invoke('facturen:create', data),
+    update: (id: string, data: unknown) => ipcRenderer.invoke('facturen:update', id, data),
+    delete: (id: string) => ipcRenderer.invoke('facturen:delete', id),
+    verstuur: (id: string, data: unknown) => ipcRenderer.invoke('facturen:verstuur', id, data),
+  },
+  offertes: {
+    list: (params?: unknown) => ipcRenderer.invoke('offertes:list', params),
+    get: (id: string) => ipcRenderer.invoke('offertes:get', id),
+    create: (data: unknown) => ipcRenderer.invoke('offertes:create', data),
+    update: (id: string, data: unknown) => ipcRenderer.invoke('offertes:update', id, data),
+    delete: (id: string) => ipcRenderer.invoke('offertes:delete', id),
+  },
+  inkomen: {
+    list: (params?: unknown) => ipcRenderer.invoke('inkomen:list', params),
+    create: (data: unknown) => ipcRenderer.invoke('inkomen:create', data),
+    update: (id: string, data: unknown) => ipcRenderer.invoke('inkomen:update', id, data),
+    delete: (id: string) => ipcRenderer.invoke('inkomen:delete', id),
+  },
+  uitgaven: {
+    list: (params?: unknown) => ipcRenderer.invoke('uitgaven:list', params),
+    create: (data: unknown) => ipcRenderer.invoke('uitgaven:create', data),
+    update: (id: string, data: unknown) => ipcRenderer.invoke('uitgaven:update', id, data),
+    delete: (id: string) => ipcRenderer.invoke('uitgaven:delete', id),
+  },
+  categorien: {
+    list: () => ipcRenderer.invoke('categorien:list'),
+    create: (data: unknown) => ipcRenderer.invoke('categorien:create', data),
+    update: (id: string, data: unknown) => ipcRenderer.invoke('categorien:update', id, data),
+    delete: (id: string) => ipcRenderer.invoke('categorien:delete', id),
+  },
+  uren: {
+    list: (params?: unknown) => ipcRenderer.invoke('uren:list', params),
+    create: (data: unknown) => ipcRenderer.invoke('uren:create', data),
+    update: (id: string, data: unknown) => ipcRenderer.invoke('uren:update', id, data),
+    delete: (id: string) => ipcRenderer.invoke('uren:delete', id),
+  },
+  instellingen: {
+    get: () => ipcRenderer.invoke('instellingen:get'),
+    update: (data: unknown) => ipcRenderer.invoke('instellingen:update', data),
+    testEmail: (config: unknown) => ipcRenderer.invoke('instellingen:test-email', config),
+    googleAuthUrl: () => ipcRenderer.invoke('instellingen:google-auth-url'),
+    googleKoppelen: (code: string) => ipcRenderer.invoke('instellingen:google-koppelen', code),
+    googleOntkoppelen: () => ipcRenderer.invoke('instellingen:google-ontkoppelen'),
+  },
+  agenda: {
+    haalAfspraken: (params?: unknown) => ipcRenderer.invoke('agenda:haal-afspraken', params),
+  },
+})
