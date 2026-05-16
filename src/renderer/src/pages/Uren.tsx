@@ -659,12 +659,22 @@ export default function UrenPagina() {
               placeholder="Bijv. Vergadering met klant"
             />
             <div className="grid grid-cols-2 gap-4">
-              <Input
-                label="Klant (naam of ID)"
-                value={formulier.klantId}
-                onChange={(e) => setFormulier({ ...formulier, klantId: e.target.value })}
-                placeholder="Bijv. Bedrijf BV"
-              />
+              <Select
+                value={formulier.klantId || "geen"}
+                onValueChange={(v) => setFormulier({ ...formulier, klantId: v === "geen" ? "" : v })}
+              >
+                <SelectTrigger label="Klant">
+                  <SelectValue placeholder="Geen klant" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="geen">Geen klant</SelectItem>
+                  {klanten.map((k) => (
+                    <SelectItem key={k.id} value={k.id}>
+                      {k.bedrijf ?? k.naam}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <Input
                 label="Project"
                 value={formulier.projectNaam}

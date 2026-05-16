@@ -63,6 +63,73 @@ function formatDatum(datum: string | Date): string {
   return new Intl.DateTimeFormat('nl-NL', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(datum))
 }
 
+// ── Terugkerende facturen (gedeeld tussen IPC en startup) ──
+async function maakTermijnFacturen(): Promise<number> {
+  try {
+    const user = await prisma.user.findFirst()
+    if (!user) return 0
+
+    const terugkerende = await prisma.factuur.findMany({
+      where: { terugkerend: true, status: { not: 'CONCEPT' } },
+      include: { regels: true }
+    })
+
+    let aangemaakt = 0
+    const nu = new Date()
+
+    for (const factuur of terugkerende) {
+      const interval = factuur.terugkerendInterval
+      if (!interval) continue
+
+      const dagSinds = Math.floor((nu.getTime() - new Date(factuur.datum).getTime()) / (1000 * 60 * 60 * 24))
+
+      let dueNa = 0
+      if (interval === 'maandelijks') dueNa = 30
+      else if (interval === 'kwartaal') dueNa = 90
+      else if (interval === 'jaarlijks') dueNa = 365
+
+      if (dagSinds < dueNa) continue
+
+      const nieuweNummer = genereerNummer(user.factuurPrefix, user.factuurVolgNummer + aangemaakt)
+
+      await prisma.factuur.create({
+        data: {
+          nummer: nieuweNummer,
+          klantId: factuur.klantId,
+          datum: new Date(),
+          vervaldatum: berekenVervaldatum(user.standaardBetaalTermijn),
+          subtotaal: factuur.subtotaal,
+          btwBedrag: factuur.btwBedrag,
+          kortingBedrag: factuur.kortingBedrag,
+          kortingPercentage: factuur.kortingPercentage,
+          totaal: factuur.totaal,
+          notities: factuur.notities,
+          betalingsCondities: factuur.betalingsCondities,
+          btwVerlegd: factuur.btwVerlegd,
+          status: 'CONCEPT',
+          regels: {
+            create: factuur.regels.map(r => ({
+              omschrijving: r.omschrijving, aantal: r.aantal, eenheid: r.eenheid,
+              prijs: r.prijs, btwPercentage: r.btwPercentage, kortingPercentage: r.kortingPercentage,
+              totaal: r.totaal, volgorde: r.volgorde
+            }))
+          }
+        }
+      })
+      aangemaakt++
+    }
+
+    if (aangemaakt > 0) {
+      await prisma.user.updateMany({ data: { factuurVolgNummer: user.factuurVolgNummer + aangemaakt } })
+    }
+
+    return aangemaakt
+  } catch (e) {
+    console.error('Fout bij aanmaken termijnfacturen:', e)
+    return 0
+  }
+}
+
 // ── IPC Handlers ──
 
 function setupIpcHandlers() {
@@ -715,76 +782,6 @@ function setupIpcHandlers() {
     return { succes: true, pad: result.filePath }
   })
 
-  // ── Terugkerende facturen ──
-  async function maakTermijnFacturen() {
-    try {
-      const user = await prisma.user.findFirst()
-      if (!user) return 0
-
-      const terugkerende = await prisma.factuur.findMany({
-        where: { terugkerend: true, status: { not: 'CONCEPT' } },
-        include: { regels: true }
-      })
-
-      let aangemaakt = 0
-      const nu = new Date()
-
-      for (const factuur of terugkerende) {
-        const interval = factuur.terugkerendInterval
-        if (!interval) continue
-
-        const dagSinds = Math.floor((nu.getTime() - new Date(factuur.datum).getTime()) / (1000 * 60 * 60 * 24))
-
-        let dueNa = 0
-        if (interval === 'maandelijks') dueNa = 30
-        else if (interval === 'kwartaal') dueNa = 90
-        else if (interval === 'jaarlijks') dueNa = 365
-
-        if (dagSinds < dueNa) continue
-
-        const nieuweNummer = genereerNummer(user.factuurPrefix, user.factuurVolgNummer + aangemaakt)
-        const nieuweDatum = new Date()
-        const nieuweVervaldatum = berekenVervaldatum(user.standaardBetaalTermijn)
-
-        await prisma.factuur.create({
-          data: {
-            nummer: nieuweNummer,
-            klantId: factuur.klantId,
-            datum: nieuweDatum,
-            vervaldatum: nieuweVervaldatum,
-            subtotaal: factuur.subtotaal,
-            btwBedrag: factuur.btwBedrag,
-            kortingBedrag: factuur.kortingBedrag,
-            kortingPercentage: factuur.kortingPercentage,
-            totaal: factuur.totaal,
-            notities: factuur.notities,
-            betalingsCondities: factuur.betalingsCondities,
-            btwVerlegd: factuur.btwVerlegd,
-            status: 'CONCEPT',
-            regels: {
-              create: factuur.regels.map(r => ({
-                omschrijving: r.omschrijving, aantal: r.aantal, eenheid: r.eenheid,
-                prijs: r.prijs, btwPercentage: r.btwPercentage, kortingPercentage: r.kortingPercentage,
-                totaal: r.totaal, volgorde: r.volgorde
-              }))
-            }
-          }
-        })
-
-        aangemaakt++
-      }
-
-      if (aangemaakt > 0) {
-        await prisma.user.updateMany({ data: { factuurVolgNummer: user.factuurVolgNummer + aangemaakt } })
-      }
-
-      return aangemaakt
-    } catch (e) {
-      console.error('Fout bij aanmaken termijnfacturen:', e)
-      return 0
-    }
-  }
-
   ipcMain.handle('facturen:maakTermijnFacturen', async () => {
     return { aangemaakt: await maakTermijnFacturen() }
   })
@@ -795,17 +792,42 @@ function setupIpcHandlers() {
       const factuur = await prisma.factuur.findUnique({ where: { id: factuurId } })
       if (!factuur) return { succes: false, fout: 'Factuur niet gevonden' }
 
-      const focusedWindow = BrowserWindow.getFocusedWindow()
-      if (!focusedWindow) return { succes: false, fout: 'Geen actief venster' }
+      const parentWindow = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
+      if (!parentWindow) return { succes: false, fout: 'Geen actief venster' }
 
-      const pdfBuffer = await focusedWindow.webContents.printToPDF({ printBackground: true, pageSize: 'A4' })
-
-      const result = await dialog.showSaveDialog(focusedWindow, {
+      // Toon save dialog VOOR het aanmaken van de printpagina
+      const result = await dialog.showSaveDialog(parentWindow, {
         defaultPath: `factuur-${factuur.nummer}.pdf`,
         filters: [{ name: 'PDF bestanden', extensions: ['pdf'] }]
       })
-
       if (result.canceled || !result.filePath) return { succes: false }
+
+      // Maak een verborgen venster met de printlayout (zelfde patroon als shell:open-print)
+      const pdfWindow = new BrowserWindow({
+        show: false,
+        width: 900,
+        height: 1200,
+        webPreferences: {
+          preload: join(__dirname, '../preload/index.js'),
+          contextIsolation: true,
+          nodeIntegration: false,
+        }
+      })
+      pdfWindow.setMenuBarVisibility(false)
+
+      if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+        await pdfWindow.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/#/facturen/${factuurId}/print`)
+      } else {
+        await pdfWindow.loadFile(join(__dirname, '../renderer/index.html'), {
+          hash: `/facturen/${factuurId}/print`
+        })
+      }
+
+      // Wacht op volledige render (fonts, afbeeldingen)
+      await new Promise(resolve => setTimeout(resolve, 1500))
+
+      const pdfBuffer = await pdfWindow.webContents.printToPDF({ printBackground: true, pageSize: 'A4' })
+      pdfWindow.destroy()
 
       fs.writeFileSync(result.filePath, pdfBuffer)
       return { succes: true, pad: result.filePath }
@@ -1086,67 +1108,7 @@ app.whenReady().then(async () => {
   createWindow()
 
   // Maak terugkerende facturen aan bij opstarten
-  try {
-    const user = await prisma.user.findFirst()
-    if (user) {
-      const genereerNummer = (prefix: string, volgNummer: number): string => {
-        const jaar = new Date().getFullYear()
-        return `${prefix}${jaar}-${String(volgNummer).padStart(4, '0')}`
-      }
-      const berekenVervaldatum = (dagen: number): Date => {
-        const d = new Date()
-        d.setDate(d.getDate() + dagen)
-        return d
-      }
-      const terugkerende = await prisma.factuur.findMany({
-        where: { terugkerend: true, status: { not: 'CONCEPT' } },
-        include: { regels: true }
-      })
-      let aangemaakt = 0
-      const nu = new Date()
-      for (const factuur of terugkerende) {
-        const interval = factuur.terugkerendInterval
-        if (!interval) continue
-        const dagSinds = Math.floor((nu.getTime() - new Date(factuur.datum).getTime()) / (1000 * 60 * 60 * 24))
-        let dueNa = 0
-        if (interval === 'maandelijks') dueNa = 30
-        else if (interval === 'kwartaal') dueNa = 90
-        else if (interval === 'jaarlijks') dueNa = 365
-        if (dagSinds < dueNa) continue
-        const nieuweNummer = genereerNummer(user.factuurPrefix, user.factuurVolgNummer + aangemaakt)
-        await prisma.factuur.create({
-          data: {
-            nummer: nieuweNummer,
-            klantId: factuur.klantId,
-            datum: new Date(),
-            vervaldatum: berekenVervaldatum(user.standaardBetaalTermijn),
-            subtotaal: factuur.subtotaal,
-            btwBedrag: factuur.btwBedrag,
-            kortingBedrag: factuur.kortingBedrag,
-            kortingPercentage: factuur.kortingPercentage,
-            totaal: factuur.totaal,
-            notities: factuur.notities,
-            betalingsCondities: factuur.betalingsCondities,
-            btwVerlegd: factuur.btwVerlegd,
-            status: 'CONCEPT',
-            regels: {
-              create: factuur.regels.map(r => ({
-                omschrijving: r.omschrijving, aantal: r.aantal, eenheid: r.eenheid,
-                prijs: r.prijs, btwPercentage: r.btwPercentage, kortingPercentage: r.kortingPercentage,
-                totaal: r.totaal, volgorde: r.volgorde
-              }))
-            }
-          }
-        })
-        aangemaakt++
-      }
-      if (aangemaakt > 0) {
-        await prisma.user.updateMany({ data: { factuurVolgNummer: user.factuurVolgNummer + aangemaakt } })
-      }
-    }
-  } catch (e) {
-    console.error('Fout bij opstarten terugkerende facturen:', e)
-  }
+  maakTermijnFacturen().catch(e => console.error('Fout bij opstarten terugkerende facturen:', e))
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

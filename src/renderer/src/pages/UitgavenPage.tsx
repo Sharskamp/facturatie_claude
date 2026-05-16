@@ -115,6 +115,7 @@ export default function UitgavenPagina() {
   const [opslaan, setOpslaan] = useState(false);
 
   const [formulier, setFormulier] = useState(LEEG_FORMULIER);
+  const [huidigeBon, setHuidigeBon] = useState<string | null>(null);
   // Scan-bon state: welke uitgave heeft net een bon gekregen en klaar is om te scannen
   const [bonScanInfo, setBonScanInfo] = useState<{ uitgaveId: string; bonPad: string } | null>(null);
   const [scanLaden, setScanLaden] = useState(false);
@@ -157,6 +158,7 @@ export default function UitgavenPagina() {
   const resetFormulier = () => {
     setFormulier(LEEG_FORMULIER);
     setBewerkenId(null);
+    setHuidigeBon(null);
   };
 
   const openBewerken = (uitgave: Uitgave) => {
@@ -171,6 +173,7 @@ export default function UitgavenPagina() {
       zakelijkPercent: uitgave.zakelijkPercent,
       notities: uitgave.notities ?? "",
     });
+    setHuidigeBon(uitgave.bonBestand ?? null);
     setBewerkenId(uitgave.id);
     setModalOpen(true);
   };
@@ -669,33 +672,69 @@ export default function UitgavenPagina() {
             {/* Bon uploaden */}
             {bewerkenId && (
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Bon uploaden</label>
-                <div className="border-2 border-dashed border-gray-200 rounded-lg p-4 text-center">
-                  <Upload className="h-6 w-6 text-gray-300 mx-auto mb-2" />
-                  <p className="text-sm text-gray-400">Klik om een bon te uploaden</p>
-                  <p className="text-xs text-gray-300 mt-1">PDF, JPG, PNG, WEBP</p>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="mt-2"
-                    type="button"
-                    onClick={async () => {
-                      if (!bewerkenId) return;
-                      try {
-                        const res = await window.api.uitgaven.uploadBon({ uitgaveId: bewerkenId }) as { succes: boolean; pad?: string };
-                        if (res.succes && res.pad) {
-                          toonMelding("succes", "Bon opgeslagen. Klik op 'Scannen' om het bedrag automatisch in te vullen.");
-                          setBonScanInfo({ uitgaveId: bewerkenId, bonPad: res.pad });
-                          haalUitgavenOp();
+                <label className="block text-sm font-medium text-gray-700 mb-1">Bon</label>
+                {huidigeBon ? (
+                  <div className="flex items-center justify-between rounded-lg border border-green-200 bg-green-50 px-3 py-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Upload className="h-4 w-4 text-green-600 shrink-0" />
+                      <span className="text-sm text-green-800 truncate">
+                        {huidigeBon.split(/[/\\]/).pop()}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0 ml-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        type="button"
+                        onClick={() => window.api.uitgaven.openBon({ pad: huidigeBon })}
+                      >
+                        Openen
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        type="button"
+                        onClick={async () => {
+                          const res = await window.api.uitgaven.uploadBon({ uitgaveId: bewerkenId }) as { succes: boolean; pad?: string };
+                          if (res.succes && res.pad) {
+                            setHuidigeBon(res.pad);
+                            setBonScanInfo({ uitgaveId: bewerkenId, bonPad: res.pad });
+                            haalUitgavenOp();
+                          }
+                        }}
+                      >
+                        Vervangen
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="border-2 border-dashed border-gray-200 rounded-lg p-4 text-center">
+                    <Upload className="h-6 w-6 text-gray-300 mx-auto mb-2" />
+                    <p className="text-sm text-gray-400">Nog geen bon gekoppeld</p>
+                    <p className="text-xs text-gray-300 mt-1">PDF, JPG, PNG, WEBP</p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-2"
+                      type="button"
+                      onClick={async () => {
+                        if (!bewerkenId) return;
+                        try {
+                          const res = await window.api.uitgaven.uploadBon({ uitgaveId: bewerkenId }) as { succes: boolean; pad?: string };
+                          if (res.succes && res.pad) {
+                            setHuidigeBon(res.pad);
+                            setBonScanInfo({ uitgaveId: bewerkenId, bonPad: res.pad });
+                            haalUitgavenOp();
+                          }
+                        } catch {
+                          toonMelding("fout", "Uploaden mislukt");
                         }
-                      } catch {
-                        toonMelding("fout", "Uploaden mislukt");
-                      }
-                    }}
-                  >
-                    Bestand kiezen
-                  </Button>
-                </div>
+                      }}
+                    >
+                      Bestand kiezen
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
           </div>

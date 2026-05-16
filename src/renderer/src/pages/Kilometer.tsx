@@ -69,6 +69,13 @@ export default function KilometerPagina() {
   const [melding, setMelding] = useState<{ type: "succes" | "fout"; tekst: string } | null>(null);
   const [opslaan, setOpslaan] = useState(false);
   const [formulier, setFormulier] = useState(LEEG_FORMULIER);
+  const [kmVergoeding, setKmVergoeding] = useState<number>(0.23);
+
+  useEffect(() => {
+    window.api.instellingen.get().then((data: any) => {
+      if (data?.kmVergoeding != null) setKmVergoeding(data.kmVergoeding);
+    }).catch(() => {});
+  }, []);
 
   const haalRittenOp = useCallback(async () => {
     try {
@@ -242,7 +249,7 @@ export default function KilometerPagina() {
             </CardHeader>
             <CardContent>
               <p className="text-2xl font-bold text-indigo-600">{formatBedrag(totaalVergoedingMaand)}</p>
-              <p className="text-xs text-gray-400 mt-1">Op basis van € /km tarief</p>
+              <p className="text-xs text-gray-400 mt-1">Op basis van € {kmVergoeding.toFixed(3)}/km</p>
             </CardContent>
           </Card>
           <Card>

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   CheckCircle,
   Loader2,
@@ -42,6 +43,7 @@ const BANKEN: Array<{ id: Bank; naam: string; kleur: string }> = [
 ];
 
 export default function BankImportPagina() {
+  const navigate = useNavigate();
   const [stap, setStap] = useState<Stap>(1);
   const [geselecteerdeBank, setGeselecteerdeBank] = useState<Bank | null>(null);
   const [transacties, setTransacties] = useState<TransactieRij[]>([]);
@@ -387,9 +389,15 @@ export default function BankImportPagina() {
                   zijn succesvol geïmporteerd.
                 </p>
               </div>
-              <div className="flex justify-center gap-3 pt-4">
+              <div className="flex flex-wrap justify-center gap-3 pt-4">
                 <Button variant="outline" onClick={opnieuw}>
                   Nieuw importeren
+                </Button>
+                <Button variant="outline" onClick={() => navigate("/inkomen")}>
+                  Bekijk inkomen
+                </Button>
+                <Button variant="outline" onClick={() => navigate("/uitgaven")}>
+                  Bekijk uitgaven
                 </Button>
               </div>
             </CardContent>
