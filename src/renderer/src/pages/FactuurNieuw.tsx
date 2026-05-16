@@ -1,7 +1,5 @@
-"use client";
-
 import { useEffect, useState, useCallback, useMemo } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Plus,
   Trash2,
@@ -75,8 +73,8 @@ function vervaldatumString(dagen = 30) {
 }
 
 export default function NieuweFactuurPage() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const initieleKlantId = searchParams.get("klantId") ?? "";
 
   const [klanten, setKlanten] = useState<Klant[]>([]);
@@ -100,8 +98,7 @@ export default function NieuweFactuurPage() {
 
   const laadKlanten = useCallback(async () => {
     try {
-      const res = await fetch("/api/klanten");
-      const data = await res.json();
+      const data = await window.api.klanten.list();
       setKlanten(Array.isArray(data) ? data : []);
     } catch (e) {
       console.error("Fout bij laden klanten:", e);
@@ -181,22 +178,12 @@ export default function NieuweFactuurPage() {
         regels: regels.map(({ id: _id, ...r }) => r),
         status,
       };
-      const res = await fetch("/api/facturen", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.fout ?? "Opslaan mislukt");
-      }
-      const factuur = await res.json();
+      const factuur = await window.api.facturen.create(payload);
 
       if (status === "CONCEPT") {
-        router.push(`/facturen/${factuur.id}`);
+        navigate(`/facturen/${factuur.id}`);
       } else {
-        // Direct verstuur-modal openen
-        router.push(`/facturen/${factuur.id}?verstuur=1`);
+        navigate(`/facturen/${factuur.id}?verstuur=1`);
       }
     } catch (e: unknown) {
       setFout(e instanceof Error ? e.message : "Opslaan mislukt");
@@ -215,7 +202,7 @@ export default function NieuweFactuurPage() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => router.push("/facturen")}
+            onClick={() => navigate("/facturen")}
           >
             <ArrowLeft className="h-4 w-4" />
             Terug
@@ -282,7 +269,7 @@ export default function NieuweFactuurPage() {
                   <button
                     type="button"
                     onClick={() =>
-                      router.push(`/klanten/${geselecteerdeKlant.id}`)
+                      navigate(`/klanten/${geselecteerdeKlant.id}`)
                     }
                     className="text-indigo-600 hover:text-indigo-800 text-xs font-medium mt-1"
                   >
@@ -295,7 +282,7 @@ export default function NieuweFactuurPage() {
                 <div className="rounded-lg border border-dashed border-gray-300 p-4 text-center">
                   <p className="text-sm text-gray-500">Nog geen klanten.</p>
                   <button
-                    onClick={() => router.push("/klanten")}
+                    onClick={() => navigate("/klanten")}
                     className="text-indigo-600 hover:text-indigo-800 text-sm font-medium"
                   >
                     Klant aanmaken →

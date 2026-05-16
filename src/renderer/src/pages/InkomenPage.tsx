@@ -1,5 +1,3 @@
-"use client";
-
 import { useState, useEffect, useCallback } from "react";
 import { Plus, Pencil, Trash2, Link, TrendingUp, Unlink } from "lucide-react";
 import { Header } from "@/components/layout/header";
@@ -82,9 +80,8 @@ export default function InkomenPagina() {
 
   const haalInkomensOp = useCallback(async () => {
     try {
-      const res = await fetch(`/api/inkomen?maand=${maandFilter}`);
-      const data = await res.json();
-      setInkomens(Array.isArray(data) ? data : data.inkomens ?? []);
+      const data = await window.api.inkomen.list({ maand: maandFilter });
+      setInkomens(Array.isArray(data) ? data : (data as any).inkomens ?? []);
     } catch {
       toonMelding("fout", "Kon inkomens niet laden");
     } finally {
@@ -94,9 +91,8 @@ export default function InkomenPagina() {
 
   const haalFacturenOp = useCallback(async () => {
     try {
-      const res = await fetch("/api/facturen?status=VERZONDEN");
-      const data = await res.json();
-      setFacturen(Array.isArray(data) ? data : data.facturen ?? []);
+      const data = await window.api.facturen.list({ status: "VERZONDEN" });
+      setFacturen(Array.isArray(data) ? data : (data as any).facturen ?? []);
     } catch {
       // stil falen
     }
@@ -148,42 +144,28 @@ export default function InkomenPagina() {
       factuurId: formulier.factuurId || null,
     };
     try {
-      const res = bewerkenId
-        ? await fetch(`/api/inkomen/${bewerkenId}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-          })
-        : await fetch("/api/inkomen", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-          });
-      if (res.ok) {
-        toonMelding("succes", bewerkenId ? "Inkomen bijgewerkt" : "Inkomen toegevoegd");
-        setModalOpen(false);
-        resetFormulier();
-        haalInkomensOp();
+      if (bewerkenId) {
+        await window.api.inkomen.update(bewerkenId, payload);
       } else {
-        toonMelding("fout", "Opslaan mislukt");
+        await window.api.inkomen.create(payload);
       }
+      toonMelding("succes", bewerkenId ? "Inkomen bijgewerkt" : "Inkomen toegevoegd");
+      setModalOpen(false);
+      resetFormulier();
+      haalInkomensOp();
     } catch {
-      toonMelding("fout", "Verbindingsfout");
+      toonMelding("fout", "Opslaan mislukt");
     }
   };
 
   const verwijder = async (id: string) => {
     if (!confirm("Weet je zeker dat je dit inkomen wilt verwijderen?")) return;
     try {
-      const res = await fetch(`/api/inkomen/${id}`, { method: "DELETE" });
-      if (res.ok) {
-        toonMelding("succes", "Inkomen verwijderd");
-        haalInkomensOp();
-      } else {
-        toonMelding("fout", "Verwijderen mislukt");
-      }
+      await window.api.inkomen.delete(id);
+      toonMelding("succes", "Inkomen verwijderd");
+      haalInkomensOp();
     } catch {
-      toonMelding("fout", "Verbindingsfout");
+      toonMelding("fout", "Verwijderen mislukt");
     }
   };
 
@@ -196,34 +178,20 @@ export default function InkomenPagina() {
   const slaKoppelOp = async () => {
     if (!koppelInkomenId || !koppelFactuurId) return;
     try {
-      const res = await fetch(`/api/inkomen/${koppelInkomenId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ factuurId: koppelFactuurId }),
-      });
-      if (res.ok) {
-        toonMelding("succes", "Gekoppeld aan factuur");
-        setKoppelModalOpen(false);
-        haalInkomensOp();
-      } else {
-        toonMelding("fout", "Koppelen mislukt");
-      }
+      await window.api.inkomen.update(koppelInkomenId, { factuurId: koppelFactuurId });
+      toonMelding("succes", "Gekoppeld aan factuur");
+      setKoppelModalOpen(false);
+      haalInkomensOp();
     } catch {
-      toonMelding("fout", "Verbindingsfout");
+      toonMelding("fout", "Koppelen mislukt");
     }
   };
 
   const ontkoppel = async (id: string) => {
     try {
-      const res = await fetch(`/api/inkomen/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ factuurId: null }),
-      });
-      if (res.ok) {
-        toonMelding("succes", "Ontkoppeld van factuur");
-        haalInkomensOp();
-      }
+      await window.api.inkomen.update(id, { factuurId: null });
+      toonMelding("succes", "Ontkoppeld van factuur");
+      haalInkomensOp();
     } catch {
       toonMelding("fout", "Verbindingsfout");
     }
@@ -365,12 +333,9 @@ export default function InkomenPagina() {
                     </TableCell>
                     <TableCell>
                       {inkomen.factuur ? (
-                        <a
-                          href={`/facturen/${inkomen.factuurId}`}
-                          className="text-indigo-600 hover:underline text-sm font-medium"
-                        >
+                        <span className="text-indigo-600 text-sm font-medium">
                           {inkomen.factuur.factuurNummer}
-                        </a>
+                        </span>
                       ) : (
                         <span className="text-gray-400 text-xs">Niet gekoppeld</span>
                       )}

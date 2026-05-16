@@ -1,13 +1,10 @@
-"use client";
-
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useNavigate } from "react-router-dom";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
-import { Plus, FileCheck, Eye, Trash2, ArrowRight } from "lucide-react";
+import { Plus, FileCheck, Trash2, ArrowRight } from "lucide-react";
 import { formatBedrag, formatDatum, statusKleur, statusLabel } from "@/lib/utils";
 
 interface Offerte {
@@ -23,7 +20,7 @@ interface Offerte {
 const statusFilters = ["Alles", "CONCEPT", "VERZONDEN", "GEACCEPTEERD", "AFGEWEZEN", "VERLOPEN"];
 
 export default function OffertesPage() {
-  const router = useRouter();
+  const navigate = useNavigate();
   const [offertes, setOffertes] = useState<Offerte[]>([]);
   const [loading, setLoading] = useState(true);
   const [actieveFilter, setActieveFilter] = useState("Alles");
@@ -34,29 +31,23 @@ export default function OffertesPage() {
 
   async function laadOffertes() {
     setLoading(true);
-    const params = actieveFilter !== "Alles" ? `?status=${actieveFilter}` : "";
-    const res = await fetch(`/api/offertes${params}`);
-    const data = await res.json();
+    const params = actieveFilter !== "Alles" ? { status: actieveFilter } : undefined;
+    const data = await window.api.offertes.list(params);
     setOffertes(data);
     setLoading(false);
   }
 
   async function naarFactuur(id: string) {
     if (!confirm("Wil je van deze offerte een factuur maken?")) return;
-    const res = await fetch(`/api/offertes/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ actie: "naar-factuur" }),
-    });
-    const data = await res.json();
+    const data = await window.api.offertes.update(id, { actie: "naar-factuur" });
     if (data.factuur) {
-      router.push(`/facturen/${data.factuur.id}`);
+      navigate(`/facturen/${data.factuur.id}`);
     }
   }
 
   async function verwijder(id: string) {
     if (!confirm("Weet je zeker dat je deze offerte wilt verwijderen?")) return;
-    await fetch(`/api/offertes/${id}`, { method: "DELETE" });
+    await window.api.offertes.delete(id);
     laadOffertes();
   }
 
@@ -66,7 +57,7 @@ export default function OffertesPage() {
         titel="Offertes"
         subtitel="Beheer je offertes en zet ze om naar facturen"
         acties={
-          <Button onClick={() => router.push("/offertes/nieuw")}>
+          <Button onClick={() => navigate("/offertes/nieuw")}>
             <Plus className="h-4 w-4" /> Nieuwe offerte
           </Button>
         }

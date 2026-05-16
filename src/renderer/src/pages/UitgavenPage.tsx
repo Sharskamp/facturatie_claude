@@ -1,5 +1,3 @@
-"use client";
-
 import { useState, useEffect, useCallback } from "react";
 import {
   Plus,
@@ -118,11 +116,10 @@ export default function UitgavenPagina() {
 
   const haalUitgavenOp = useCallback(async () => {
     try {
-      const params = new URLSearchParams({ maand: maandFilter });
-      if (categorieFilter !== "alle") params.set("categorieId", categorieFilter);
-      const res = await fetch(`/api/uitgaven?${params}`);
-      const data = await res.json();
-      setUitgaven(Array.isArray(data) ? data : data.uitgaven ?? []);
+      const params: Record<string, string> = { maand: maandFilter };
+      if (categorieFilter !== "alle") params.categorieId = categorieFilter;
+      const data = await window.api.uitgaven.list(params);
+      setUitgaven(Array.isArray(data) ? data : (data as any).uitgaven ?? []);
     } catch {
       toonMelding("fout", "Kon uitgaven niet laden");
     } finally {
@@ -132,9 +129,8 @@ export default function UitgavenPagina() {
 
   const haalCategorieenOp = useCallback(async () => {
     try {
-      const res = await fetch("/api/categorien");
-      const data = await res.json();
-      setCategorieen(Array.isArray(data) ? data : data.categorieen ?? []);
+      const data = await window.api.categorien.list();
+      setCategorieen(Array.isArray(data) ? data : (data as any).categorieen ?? []);
     } catch {
       // stil falen
     }
@@ -197,27 +193,17 @@ export default function UitgavenPagina() {
     };
     setOpslaan(true);
     try {
-      const res = bewerkenId
-        ? await fetch(`/api/uitgaven/${bewerkenId}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-          })
-        : await fetch("/api/uitgaven", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-          });
-      if (res.ok) {
-        toonMelding("succes", bewerkenId ? "Uitgave bijgewerkt" : "Uitgave toegevoegd");
-        setModalOpen(false);
-        resetFormulier();
-        haalUitgavenOp();
+      if (bewerkenId) {
+        await window.api.uitgaven.update(bewerkenId, payload);
       } else {
-        toonMelding("fout", "Opslaan mislukt");
+        await window.api.uitgaven.create(payload);
       }
+      toonMelding("succes", bewerkenId ? "Uitgave bijgewerkt" : "Uitgave toegevoegd");
+      setModalOpen(false);
+      resetFormulier();
+      haalUitgavenOp();
     } catch {
-      toonMelding("fout", "Verbindingsfout");
+      toonMelding("fout", "Opslaan mislukt");
     } finally {
       setOpslaan(false);
     }
@@ -226,15 +212,11 @@ export default function UitgavenPagina() {
   const verwijder = async (id: string) => {
     if (!confirm("Weet je zeker dat je deze uitgave wilt verwijderen?")) return;
     try {
-      const res = await fetch(`/api/uitgaven/${id}`, { method: "DELETE" });
-      if (res.ok) {
-        toonMelding("succes", "Uitgave verwijderd");
-        haalUitgavenOp();
-      } else {
-        toonMelding("fout", "Verwijderen mislukt");
-      }
+      await window.api.uitgaven.delete(id);
+      toonMelding("succes", "Uitgave verwijderd");
+      haalUitgavenOp();
     } catch {
-      toonMelding("fout", "Verbindingsfout");
+      toonMelding("fout", "Verwijderen mislukt");
     }
   };
 

@@ -1,8 +1,6 @@
-"use client";
-
 import { useEffect, useState } from "react";
-import { use } from "react";
-import { Printer, ArrowLeft } from "lucide-react";
+import { useParams } from "react-router-dom";
+import { Printer } from "lucide-react";
 import { formatBedrag, formatDatum } from "@/lib/utils";
 
 interface FactuurRegel {
@@ -46,7 +44,7 @@ interface Factuur {
 }
 
 interface Instellingen {
-  naam: string;
+  naam?: string;
   bedrijfsnaam?: string;
   adres?: string;
   postcode?: string;
@@ -59,15 +57,15 @@ interface Instellingen {
   iban?: string;
 }
 
-export default function FactuurPrintPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
+export default function FactuurPrintPage() {
+  const { id } = useParams<{ id: string }>();
   const [factuur, setFactuur] = useState<Factuur | null>(null);
   const [instellingen, setInstellingen] = useState<Instellingen | null>(null);
 
   useEffect(() => {
     Promise.all([
-      fetch(`/api/facturen/${id}`).then((r) => r.json()),
-      fetch("/api/instellingen").then((r) => r.json()),
+      window.api.facturen.get(id!),
+      window.api.instellingen.get(),
     ]).then(([f, i]) => {
       setFactuur(f);
       setInstellingen(i);
@@ -98,11 +96,8 @@ export default function FactuurPrintPage({ params }: { params: Promise<{ id: str
 
   return (
     <>
-      {/* Print controls - hidden when printing */}
-      <div className="no-print fixed top-4 left-4 right-4 flex justify-between items-center z-10 bg-white rounded-lg shadow p-3">
-        <a href={`/facturen/${id}`} className="flex items-center gap-2 text-gray-600 hover:text-gray-900">
-          <ArrowLeft className="h-4 w-4" /> Terug
-        </a>
+      {/* Print knop */}
+      <div className="no-print fixed top-4 right-4 z-10">
         <button
           onClick={() => window.print()}
           className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700"

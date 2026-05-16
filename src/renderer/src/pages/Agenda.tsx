@@ -1,7 +1,5 @@
-"use client";
-
 import { useState, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useNavigate } from "react-router-dom";
 import {
   ChevronLeft,
   ChevronRight,
@@ -57,15 +55,6 @@ function formatTijd(datum: string, geheledag: boolean): string {
   });
 }
 
-function formatDatumLang(datum: Date): string {
-  return datum.toLocaleDateString("nl-NL", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  });
-}
-
 function getMaandDagen(jaar: number, maand: number): Date[] {
   const eerste = new Date(jaar, maand, 1);
   const laatste = new Date(jaar, maand + 1, 0);
@@ -110,7 +99,7 @@ const MAANDEN = [
 const WEEKDAGEN = ["Ma", "Di", "Wo", "Do", "Vr", "Za", "Zo"];
 
 export default function AgendaPagina() {
-  const router = useRouter();
+  const navigate = useNavigate();
   const nu = new Date();
   const [jaar, setJaar] = useState(nu.getFullYear());
   const [maand, setMaand] = useState(nu.getMonth());
@@ -125,8 +114,7 @@ export default function AgendaPagina() {
     setLaden(true);
     setFout(null);
     try {
-      const res = await fetch(`/api/agenda?jaar=${jaar}&maand=${maand + 1}`);
-      const data: AgendaResponse = await res.json();
+      const data: AgendaResponse = await window.api.agenda.haalAfspraken();
       if (data.googleNietGekoppeld || (data.fout && data.fout.includes("niet gekoppeld"))) {
         setGoogleNietGekoppeld(true);
         setAfspraken([]);
@@ -142,7 +130,7 @@ export default function AgendaPagina() {
     } finally {
       setLaden(false);
     }
-  }, [jaar, maand]);
+  }, []);
 
   useEffect(() => {
     haalAfsprakenOp();
@@ -241,7 +229,7 @@ export default function AgendaPagina() {
                 </p>
               </div>
               <Button
-                onClick={() => router.push("/instellingen")}
+                onClick={() => navigate("/instellingen")}
                 className="shrink-0"
               >
                 <ExternalLink className="h-4 w-4" />
@@ -409,7 +397,7 @@ export default function AgendaPagina() {
                 className="w-full"
                 onClick={() => {
                   setGeselecteerdeAfspraak(null);
-                  router.push(maakFactuurUrl(geselecteerdeAfspraak));
+                  navigate(maakFactuurUrl(geselecteerdeAfspraak));
                 }}
               >
                 <FileText className="h-4 w-4" />

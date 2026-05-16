@@ -1,5 +1,3 @@
-"use client";
-
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Plus,
@@ -17,7 +15,6 @@ import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import {
   Modal,
   ModalContent,
@@ -34,7 +31,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Textarea } from "@/components/ui/textarea";
 import { formatBedrag, formatDatum } from "@/lib/utils";
 
 interface UrenRegistratie {
@@ -168,17 +164,13 @@ export default function UrenPagina() {
     }
 
     try {
-      await fetch("/api/uren", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          projectNaam: timerProject || null,
-          omschrijving: timerProject ? `Gewerkt aan ${timerProject}` : "Timer registratie",
-          startTijd: startDatum.toISOString(),
-          eindTijd: eindDatum.toISOString(),
-          duurMinuten,
-          gefactureerd: false,
-        }),
+      await window.api.uren.create({
+        projectNaam: timerProject || null,
+        omschrijving: timerProject ? `Gewerkt aan ${timerProject}` : "Timer registratie",
+        startTijd: startDatum.toISOString(),
+        eindTijd: eindDatum.toISOString(),
+        duurMinuten,
+        gefactureerd: false,
       });
       toonMelding("succes", `Timer gestopt: ${formatDuur(duurMinuten)} geregistreerd`);
       haalUrenOp();
@@ -189,9 +181,8 @@ export default function UrenPagina() {
 
   const haalUrenOp = useCallback(async () => {
     try {
-      const res = await fetch(`/api/uren?week=${weekStart}`);
-      const data = await res.json();
-      setUren(Array.isArray(data) ? data : data.uren ?? []);
+      const data = await window.api.uren.list({ week: weekStart });
+      setUren(Array.isArray(data) ? data : (data as any).uren ?? []);
     } catch {
       toonMelding("fout", "Kon urenregistraties niet laden");
     } finally {
@@ -254,27 +245,17 @@ export default function UrenPagina() {
     };
     setOpslaan(true);
     try {
-      const res = bewerkenId
-        ? await fetch(`/api/uren/${bewerkenId}`, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-          })
-        : await fetch("/api/uren", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-          });
-      if (res.ok) {
-        toonMelding("succes", bewerkenId ? "Registratie bijgewerkt" : "Uren toegevoegd");
-        setModalOpen(false);
-        resetFormulier();
-        haalUrenOp();
+      if (bewerkenId) {
+        await window.api.uren.update(bewerkenId, payload);
       } else {
-        toonMelding("fout", "Opslaan mislukt");
+        await window.api.uren.create(payload);
       }
+      toonMelding("succes", bewerkenId ? "Registratie bijgewerkt" : "Uren toegevoegd");
+      setModalOpen(false);
+      resetFormulier();
+      haalUrenOp();
     } catch {
-      toonMelding("fout", "Verbindingsfout");
+      toonMelding("fout", "Opslaan mislukt");
     } finally {
       setOpslaan(false);
     }
@@ -283,11 +264,9 @@ export default function UrenPagina() {
   const verwijder = async (id: string) => {
     if (!confirm("Weet je zeker dat je deze registratie wilt verwijderen?")) return;
     try {
-      const res = await fetch(`/api/uren/${id}`, { method: "DELETE" });
-      if (res.ok) {
-        toonMelding("succes", "Registratie verwijderd");
-        haalUrenOp();
-      }
+      await window.api.uren.delete(id);
+      toonMelding("succes", "Registratie verwijderd");
+      haalUrenOp();
     } catch {
       toonMelding("fout", "Verbindingsfout");
     }
@@ -295,11 +274,7 @@ export default function UrenPagina() {
 
   const wisselGefactureerd = async (uur: UrenRegistratie) => {
     try {
-      await fetch(`/api/uren/${uur.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ gefactureerd: !uur.gefactureerd }),
-      });
+      await window.api.uren.update(uur.id, { gefactureerd: !uur.gefactureerd });
       haalUrenOp();
     } catch {
       toonMelding("fout", "Bijwerken mislukt");

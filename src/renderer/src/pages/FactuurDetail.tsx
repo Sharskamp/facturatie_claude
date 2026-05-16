@@ -1,10 +1,7 @@
-"use client";
-
 import { useEffect, useState, useCallback } from "react";
-import { useRouter, useParams } from "next/navigation";
+import { useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
-  Pencil,
   Printer,
   Send,
   Loader2,
@@ -70,26 +67,27 @@ interface Factuur {
   };
 }
 
+interface Instellingen {
+  naam?: string;
+  bedrijfsnaam?: string;
+  adres?: string;
+  postcode?: string;
+  stad?: string;
+  email?: string;
+  telefoon?: string;
+  kvkNummer?: string;
+  btwNummer?: string;
+  iban?: string;
+}
+
 type VerstuurTab = "email" | "whatsapp";
 
-const BEDRIJF_PLACEHOLDER = {
-  naam: "Uw Bedrijfsnaam",
-  adres: "Adresstraat 1",
-  postcode: "1234 AB",
-  stad: "Amsterdam",
-  telefoon: "+31 6 00000000",
-  email: "info@uwbedrijf.nl",
-  kvk: "12345678",
-  btw: "NL123456789B01",
-  iban: "NL00 BANK 0000 0000 00",
-};
-
 export default function FactuurDetailPage() {
-  const router = useRouter();
-  const params = useParams<{ id: string }>();
-  const id = params.id;
+  const navigate = useNavigate();
+  const { id } = useParams<{ id: string }>();
 
   const [factuur, setFactuur] = useState<Factuur | null>(null);
+  const [instellingen, setInstellingen] = useState<Instellingen | null>(null);
   const [laden, setLaden] = useState(true);
   const [verstuurModalOpen, setVerstuurModalOpen] = useState(false);
   const [verstuurTab, setVerstuurTab] = useState<VerstuurTab>("email");
@@ -104,24 +102,31 @@ export default function FactuurDetailPage() {
 
   const laadFactuur = useCallback(async () => {
     try {
-      const res = await fetch(`/api/facturen/${id}`);
-      if (!res.ok) {
-        router.push("/facturen");
-        return;
-      }
-      const data = await res.json();
+      const data = await window.api.facturen.get(id!);
       setFactuur(data);
       setEmailAdres(data.klant?.email ?? "");
     } catch (e) {
       console.error("Fout bij laden factuur:", e);
+      navigate("/facturen");
     } finally {
       setLaden(false);
     }
-  }, [id, router]);
+  }, [id, navigate]);
+
+  const laadInstellingen = useCallback(async () => {
+    try {
+      const data = await window.api.instellingen.get();
+      setInstellingen(data ?? {});
+    } catch (e) {
+      console.error("Fout bij laden instellingen:", e);
+      setInstellingen({});
+    }
+  }, []);
 
   useEffect(() => {
     laadFactuur();
-  }, [laadFactuur]);
+    laadInstellingen();
+  }, [laadFactuur, laadInstellingen]);
 
   async function verstuur() {
     if (!factuur) return;
@@ -133,15 +138,7 @@ export default function FactuurDetailPage() {
           ? { methode: "email", naarEmail: emailAdres, bericht: emailBericht }
           : { methode: "whatsapp" };
 
-      const res = await fetch(`/api/facturen/${id}/verstuur`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.fout ?? "Verzenden mislukt");
-      }
+      const data = await window.api.facturen.verstuur(id!, body);
       if (verstuurTab === "whatsapp" && data.whatsappUrl) {
         setWhatsappUrl(data.whatsappUrl);
       } else {
@@ -163,11 +160,7 @@ export default function FactuurDetailPage() {
     if (!factuur) return;
     setStatusBijwerken(true);
     try {
-      await fetch(`/api/facturen/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "BETAALD" }),
-      });
+      await window.api.facturen.update(id!, { status: "BETAALD" });
       laadFactuur();
     } catch (e) {
       console.error("Fout bij bijwerken status:", e);
@@ -215,7 +208,8 @@ export default function FactuurDetailPage() {
     new Date(factuur.vervaldatum) < new Date();
   const effectiefStatus = verlopen ? "VERLOPEN" : factuur.status;
 
-  const whatsappBericht = `Beste ${factuur.klant.naam},\n\nHierbij stuur ik u factuur ${factuur.nummer} ter waarde van ${formatBedrag(factuur.totaal)}.\n\nVervaldatum: ${formatDatum(factuur.vervaldatum)}\n\nMet vriendelijke groet,\n${BEDRIJF_PLACEHOLDER.naam}`;
+  const bedrijfNaam = instellingen?.bedrijfsnaam ?? instellingen?.naam ?? "Uw Bedrijfsnaam";
+  const whatsappBericht = `Beste ${factuur.klant.naam},\n\nHierbij stuur ik u factuur ${factuur.nummer} ter waarde van ${formatBedrag(factuur.totaal)}.\n\nVervaldatum: ${formatDatum(factuur.vervaldatum)}\n\nMet vriendelijke groet,\n${bedrijfNaam}`;
 
   return (
     <div>
@@ -227,7 +221,7 @@ export default function FactuurDetailPage() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => router.push("/facturen")}
+              onClick={() => navigate("/facturen")}
             >
               <ArrowLeft className="h-4 w-4" />
               Terug
@@ -284,18 +278,18 @@ export default function FactuurDetailPage() {
                   <span className="text-white font-bold text-lg">A</span>
                 </div>
                 <h2 className="text-lg font-bold text-gray-900">
-                  {BEDRIJF_PLACEHOLDER.naam}
+                  {bedrijfNaam}
                 </h2>
                 <div className="text-sm text-gray-500 mt-1 space-y-0.5">
-                  <p>{BEDRIJF_PLACEHOLDER.adres}</p>
-                  <p>
-                    {BEDRIJF_PLACEHOLDER.postcode} {BEDRIJF_PLACEHOLDER.stad}
-                  </p>
-                  <p>{BEDRIJF_PLACEHOLDER.telefoon}</p>
-                  <p>{BEDRIJF_PLACEHOLDER.email}</p>
-                  <p className="pt-1">KVK: {BEDRIJF_PLACEHOLDER.kvk}</p>
-                  <p>BTW: {BEDRIJF_PLACEHOLDER.btw}</p>
-                  <p>IBAN: {BEDRIJF_PLACEHOLDER.iban}</p>
+                  {instellingen?.adres && <p>{instellingen.adres}</p>}
+                  {(instellingen?.postcode || instellingen?.stad) && (
+                    <p>{instellingen.postcode} {instellingen.stad}</p>
+                  )}
+                  {instellingen?.telefoon && <p>{instellingen.telefoon}</p>}
+                  {instellingen?.email && <p>{instellingen.email}</p>}
+                  {instellingen?.kvkNummer && <p className="pt-1">KVK: {instellingen.kvkNummer}</p>}
+                  {instellingen?.btwNummer && <p>BTW: {instellingen.btwNummer}</p>}
+                  {instellingen?.iban && <p>IBAN: {instellingen.iban}</p>}
                 </div>
               </div>
 
@@ -534,9 +528,10 @@ export default function FactuurDetailPage() {
             {/* Voettekst */}
             <div className="mt-10 pt-6 border-t border-gray-100 text-center">
               <p className="text-xs text-gray-400">
-                {BEDRIJF_PLACEHOLDER.naam} · KVK {BEDRIJF_PLACEHOLDER.kvk} ·
-                BTW {BEDRIJF_PLACEHOLDER.btw} · IBAN{" "}
-                {BEDRIJF_PLACEHOLDER.iban}
+                {bedrijfNaam}
+                {instellingen?.kvkNummer && ` · KVK ${instellingen.kvkNummer}`}
+                {instellingen?.btwNummer && ` · BTW ${instellingen.btwNummer}`}
+                {instellingen?.iban && ` · IBAN ${instellingen.iban}`}
               </p>
             </div>
           </CardContent>
@@ -545,7 +540,7 @@ export default function FactuurDetailPage() {
         {/* Knop om klant te bekijken */}
         <div className="max-w-4xl mx-auto mt-4">
           <button
-            onClick={() => router.push(`/klanten/${factuur.klant.id}`)}
+            onClick={() => navigate(`/klanten/${factuur.klant.id}`)}
             className="flex items-center gap-1.5 text-sm text-indigo-600 hover:text-indigo-800 font-medium"
           >
             <ExternalLink className="h-4 w-4" />
@@ -658,15 +653,13 @@ export default function FactuurDetailPage() {
                         WhatsApp.
                       </p>
                     </div>
-                    <a
-                      href={whatsappUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
+                    <button
+                      onClick={() => window.api.shell.openExternal(whatsappUrl)}
                       className="flex items-center justify-center gap-2 w-full h-9 px-4 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700 transition-colors"
                     >
                       <MessageSquare className="h-4 w-4" />
                       Openen in WhatsApp
-                    </a>
+                    </button>
                   </div>
                 ) : (
                   <>

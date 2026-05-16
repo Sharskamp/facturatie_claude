@@ -1,5 +1,3 @@
-"use client";
-
 import { useState, useEffect, useCallback } from "react";
 import {
   BarChart,
@@ -119,19 +117,14 @@ export default function RapportenPagina() {
   const haalDataOp = useCallback(async () => {
     setLaden(true);
     try {
-      const [fRes, iRes, uRes] = await Promise.all([
-        fetch("/api/facturen"),
-        fetch("/api/inkomen"),
-        fetch("/api/uitgaven"),
-      ]);
       const [fData, iData, uData] = await Promise.all([
-        fRes.json(),
-        iRes.json(),
-        uRes.json(),
+        window.api.facturen.list(),
+        window.api.inkomen.list(),
+        window.api.uitgaven.list(),
       ]);
-      setFacturen(Array.isArray(fData) ? fData : fData.facturen ?? []);
-      setInkomens(Array.isArray(iData) ? iData : iData.inkomens ?? []);
-      setUitgaven(Array.isArray(uData) ? uData : uData.uitgaven ?? []);
+      setFacturen(Array.isArray(fData) ? fData : (fData as any).facturen ?? []);
+      setInkomens(Array.isArray(iData) ? iData : (iData as any).inkomens ?? []);
+      setUitgaven(Array.isArray(uData) ? uData : (uData as any).uitgaven ?? []);
     } catch {
       // stil falen
     } finally {
@@ -196,7 +189,7 @@ export default function RapportenPagina() {
     return { naam, omzet, kosten, winst: omzet - kosten };
   });
 
-  const wvGekwartaald = KWARTALEN.map((kw, qi) => {
+  const wvGekwartaald = KWARTALEN.map((kw) => {
     const maanden = kwartaalMaanden[kw];
     const omzet = wvData.filter((_, i) => maanden.includes(i)).reduce((s, m) => s + m.omzet, 0);
     const kosten = wvData.filter((_, i) => maanden.includes(i)).reduce((s, m) => s + m.kosten, 0);

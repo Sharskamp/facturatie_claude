@@ -1,5 +1,3 @@
-"use client";
-
 import { useState, useEffect, useCallback } from "react";
 import {
   Building2,
@@ -25,7 +23,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
 
 type Tab = "bedrijf" | "facturen" | "email" | "google" | "kor";
 
@@ -81,8 +78,7 @@ export default function InstellingenPagina() {
 
   const haalInstellingenOp = useCallback(async () => {
     try {
-      const res = await fetch("/api/instellingen");
-      const data = await res.json();
+      const data = await window.api.instellingen.get();
       setInstellingen(data ?? {});
     } catch {
       toonMelding("fout", "Kon instellingen niet laden");
@@ -103,20 +99,11 @@ export default function InstellingenPagina() {
   const slaOp = async (velden: Partial<Instellingen>) => {
     setOpslaan(true);
     try {
-      const res = await fetch("/api/instellingen", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(velden),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setInstellingen((prev) => ({ ...prev, ...data }));
-        toonMelding("succes", "Instellingen opgeslagen");
-      } else {
-        toonMelding("fout", "Opslaan mislukt");
-      }
+      const data = await window.api.instellingen.update(velden);
+      setInstellingen((prev) => ({ ...prev, ...data }));
+      toonMelding("succes", "Instellingen opgeslagen");
     } catch {
-      toonMelding("fout", "Verbindingsfout");
+      toonMelding("fout", "Opslaan mislukt");
     } finally {
       setOpslaan(false);
     }
@@ -129,26 +116,17 @@ export default function InstellingenPagina() {
   const testEmail = async () => {
     setEmailTestStatus("laden");
     try {
-      const res = await fetch("/api/instellingen", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          actie: "test-email",
-          smtpHost: instellingen.smtpHost,
-          smtpPort: instellingen.smtpPort,
-          smtpSecure: instellingen.smtpSecure,
-          smtpUser: instellingen.smtpUser,
-          smtpPass: instellingen.smtpPass,
-          email: instellingen.email,
-        }),
-      });
-      if (res.ok) {
-        setEmailTestStatus("succes");
-        setTimeout(() => setEmailTestStatus("idle"), 4000);
-      } else {
-        setEmailTestStatus("fout");
-        setTimeout(() => setEmailTestStatus("idle"), 4000);
-      }
+      await window.api.instellingen.update({
+        actie: "test-email",
+        smtpHost: instellingen.smtpHost,
+        smtpPort: instellingen.smtpPort,
+        smtpSecure: instellingen.smtpSecure,
+        smtpUser: instellingen.smtpUser,
+        smtpPass: instellingen.smtpPass,
+        email: instellingen.email,
+      } as any);
+      setEmailTestStatus("succes");
+      setTimeout(() => setEmailTestStatus("idle"), 4000);
     } catch {
       setEmailTestStatus("fout");
       setTimeout(() => setEmailTestStatus("idle"), 4000);
@@ -158,14 +136,9 @@ export default function InstellingenPagina() {
   const koppelGoogle = async () => {
     setGoogleLaden(true);
     try {
-      const res = await fetch("/api/instellingen", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ actie: "google-koppelen" }),
-      });
-      const data = await res.json();
-      if (data.redirectUrl) {
-        window.location.href = data.redirectUrl;
+      const data = await window.api.instellingen.update({ actie: "google-koppelen" } as any);
+      if ((data as any).redirectUrl) {
+        window.api.shell.openExternal((data as any).redirectUrl);
       } else {
         toonMelding("fout", "Kon Google OAuth niet starten");
       }
@@ -180,19 +153,11 @@ export default function InstellingenPagina() {
     if (!confirm("Weet je zeker dat je Google Agenda wilt ontkoppelen?")) return;
     setGoogleLaden(true);
     try {
-      const res = await fetch("/api/instellingen", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ actie: "google-ontkoppelen" }),
-      });
-      if (res.ok) {
-        setInstellingen((prev) => ({ ...prev, googleGekoppeld: false, googleEmail: undefined }));
-        toonMelding("succes", "Google Agenda ontkoppeld");
-      } else {
-        toonMelding("fout", "Ontkoppelen mislukt");
-      }
+      await window.api.instellingen.update({ actie: "google-ontkoppelen" } as any);
+      setInstellingen((prev) => ({ ...prev, googleGekoppeld: false, googleEmail: undefined }));
+      toonMelding("succes", "Google Agenda ontkoppeld");
     } catch {
-      toonMelding("fout", "Verbindingsfout");
+      toonMelding("fout", "Ontkoppelen mislukt");
     } finally {
       setGoogleLaden(false);
     }
