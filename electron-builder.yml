@@ -1,0 +1,32 @@
+appId: nl.adminpro.app
+productName: AdminPro
+copyright: AdminPro
+
+directories:
+  buildResources: build
+  output: dist
+
+files:
+  - out/**/*
+  - prisma/migrations/**/*
+  - "!node_modules/**/*"
+
+extraResources:
+  - from: prisma/migrations
+    to: migrations
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: build/icon.ico
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
