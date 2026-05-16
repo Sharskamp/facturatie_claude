@@ -22,6 +22,10 @@ interface ElectronAPI {
     update: (id: string, data: unknown) => Promise<unknown>
     delete: (id: string) => Promise<{ succes: boolean }>
     verstuur: (id: string, data: unknown) => Promise<unknown>
+    downloadPdf: (id: string) => Promise<unknown>
+    maakTermijnFacturen: () => Promise<unknown>
+    maakCreditnota: (id: string) => Promise<string>
+    stuurHerinneringen: () => Promise<unknown>
   }
   offertes: {
     list: (params?: { status?: string }) => Promise<unknown[]>
@@ -41,6 +45,9 @@ interface ElectronAPI {
     create: (data: unknown) => Promise<unknown>
     update: (id: string, data: unknown) => Promise<unknown>
     delete: (id: string) => Promise<{ succes: boolean }>
+    uploadBon: (data: unknown) => Promise<unknown>
+    openBon: (data: unknown) => Promise<unknown>
+    scanBon: (data: unknown) => Promise<unknown>
   }
   categorien: {
     list: () => Promise<unknown[]>
@@ -53,6 +60,18 @@ interface ElectronAPI {
     create: (data: unknown) => Promise<unknown>
     update: (id: string, data: unknown) => Promise<unknown>
     delete: (id: string) => Promise<{ succes: boolean }>
+    factuurAanmaken: (data: unknown) => Promise<string>
+  }
+  ritten: {
+    list: () => Promise<unknown[]>
+    create: (data: unknown) => Promise<unknown>
+    update: (id: string, data: unknown) => Promise<unknown>
+    delete: (id: string) => Promise<{ succes: boolean }>
+    exportCsv: (csv: string) => Promise<unknown>
+  }
+  bank: {
+    openBestandDialog: () => Promise<string | null>
+    importeerCsv: (data: unknown) => Promise<unknown[]>
   }
   instellingen: {
     get: () => Promise<unknown>
@@ -64,6 +83,28 @@ interface ElectronAPI {
   }
   agenda: {
     haalAfspraken: (params?: { van?: string; tot?: string }) => Promise<unknown[]>
+  }
+  producten: {
+    list: () => Promise<unknown[]>
+    create: (data: unknown) => Promise<unknown>
+    update: (id: string, data: unknown) => Promise<unknown>
+    delete: (id: string) => Promise<{ succes: boolean }>
+  }
+  vasteActiva: {
+    list: () => Promise<unknown[]>
+    create: (data: unknown) => Promise<unknown>
+    update: (id: string, data: unknown) => Promise<unknown>
+    delete: (id: string) => Promise<{ succes: boolean }>
+  }
+  audit: {
+    list: (factuurId: string) => Promise<unknown[]>
+    create: (data: unknown) => Promise<unknown>
+  }
+  app: {
+    getAutoStart: () => Promise<boolean>
+    setAutoStart: (enabled: boolean) => Promise<{ succes: boolean }>
+    backup: () => Promise<{ succes?: boolean; geannuleerd?: boolean; pad?: string }>
+    kiesPdfMap: () => Promise<string | null>
   }
 }
 

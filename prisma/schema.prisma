@@ -43,6 +43,13 @@ model User {
   herinneringDagen      Int       @default(7)
   kmVergoeding          Float     @default(0.23)
   anthropicApiKey       String?
+  donkerModus           String    @default("systeem")
+  autoStart             Boolean   @default(false)
+  pdfMapPad             String?
+  mollieApiKey          String?
+  logoBase64            String?
+  factuurNummerFormaat  String    @default("{PREFIX}{JAAR}-{NNNN}")
+  korWaarschuwing       Boolean   @default(true)
   aangemaakt            DateTime  @default(now())
   bijgewerkt            DateTime  @updatedAt
 }
@@ -73,13 +80,15 @@ model Klant {
   land        String    @default("Nederland")
   kvkNummer   String?
   btwNummer   String?
-  iban        String?
-  notities    String?
-  actief      Boolean   @default(true)
-  facturen    Factuur[]
-  offertes    Offerte[]
-  aangemaakt  DateTime  @default(now())
-  bijgewerkt  DateTime  @updatedAt
+  iban          String?
+  notities      String?
+  actief        Boolean   @default(true)
+  betaalTermijn Int?
+  taal          String    @default("nl")
+  facturen      Factuur[]
+  offertes      Offerte[]
+  aangemaakt    DateTime  @default(now())
+  bijgewerkt    DateTime  @updatedAt
 }
 
 // status: CONCEPT | VERZONDEN | BETAALD | VERLOPEN | GEANNULEERD | CREDITNOTA
@@ -109,6 +118,10 @@ model Factuur {
   verzondenOp       DateTime?
   herinneringVerzondenOp DateTime?
   creditNotaVoorId  String?
+  totaalKorting     Float          @default(0)
+  totaalKortingBedrag Float        @default(0)
+  taal              String         @default("nl")
+  mollieBetaalLink  String?
   aangemaakt        DateTime       @default(now())
   bijgewerkt        DateTime       @updatedAt
 }
@@ -145,6 +158,8 @@ model Offerte {
   notities          String?
   facturen          Factuur[]
   verzondenOp       DateTime?
+  totaalKorting     Float          @default(0)
+  totaalKortingBedrag Float        @default(0)
   aangemaakt        DateTime       @default(now())
   bijgewerkt        DateTime       @updatedAt
 }
@@ -195,11 +210,20 @@ model Uitgave {
 }
 
 model Categorie {
-  id       String    @id @default(cuid())
-  naam     String
-  kleur    String    @default("#6366f1")
-  icoon    String?
-  uitgaven Uitgave[]
+  id                 String    @id @default(cuid())
+  naam               String
+  kleur              String    @default("#6366f1")
+  icoon              String?
+  standaardBtwTarief Float?
+  uitgaven           Uitgave[]
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  factuurId  String?
+  actie      String
+  details    String?
+  aangemaakt DateTime @default(now())
 }
 
 model Uurregistratie {

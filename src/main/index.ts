@@ -7,9 +7,19 @@ import bcrypt from 'bcryptjs'
 import * as fs from 'fs'
 import { verstuurEmail, maakFactuurEmailHtml } from '../lib/email'
 import { haalAgendaAfspraken, maakGoogleAuthUrl, wisselCodeVoorTokens, vernieuwAccessToken } from '../lib/google-calendar'
+import { autoUpdater } from 'electron-updater'
+import * as os from 'os'
+
+app.setName('Streamline Facturatie')
 
 let prisma: PrismaClient
 let mainWindow: BrowserWindow | null = null
+
+const logBestand = join(app.getPath('userData'), 'app.log')
+function logSchrijven(bericht: string) {
+  const regel = `[${new Date().toISOString()}] ${bericht}\n`
+  try { fs.appendFileSync(logBestand, regel) } catch {}
+}
 
 function initPrisma() {
   const dbPath = is.dev
@@ -20,13 +30,25 @@ function initPrisma() {
   prisma = new PrismaClient({ adapter })
 }
 
+const gotTheLock = app.requestSingleInstanceLock()
+if (!gotTheLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
+    }
+  })
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 900,
     minHeight: 600,
-    title: 'AdminPro',
+    title: 'Streamline Facturatie',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -34,6 +56,7 @@ function createWindow() {
     }
   })
 
+  mainWindow.maximize()
   mainWindow.setMenuBarVisibility(false)
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
@@ -995,7 +1018,7 @@ function setupIpcHandlers() {
           const bedragStr = (velden[bedragIdx] ?? '').replace('.', '').replace(',', '.')
           const bedrag = parseFloat(bedragStr) || 0
           const naam = velden[naamIdx] ?? ''
-          const omschrijving = velden[omschrijvingIdx] ?? naam || 'Onbekend'
+          const omschrijving = (velden[omschrijvingIdx] ?? naam) || 'Onbekend'
 
           transacties.push({
             datum,
@@ -1255,16 +1278,109 @@ function setupIpcHandlers() {
     await prisma.vasteActiva.update({ where: { id }, data: { actief: false } })
     return { succes: true }
   })
+
+  // ── Audit Log ──
+  ipcMain.handle('audit:list', async (_, factuurId: string) => {
+    return prisma.auditLog.findMany({
+      where: { factuurId },
+      orderBy: { aangemaakt: 'desc' }
+    })
+  })
+
+  ipcMain.handle('audit:create', async (_, data: { factuurId: string; actie: string; details?: string }) => {
+    return prisma.auditLog.create({ data })
+  })
+
+  // ── Autostart ──
+  ipcMain.handle('app:getAutoStart', () => {
+    return app.getLoginItemSettings().openAtLogin
+  })
+
+  ipcMain.handle('app:setAutoStart', (_, enabled: boolean) => {
+    app.setLoginItemSettings({ openAtLogin: enabled })
+    return { succes: true }
+  })
+
+  // ── Database backup ──
+  ipcMain.handle('app:backup', async () => {
+    const dbPath = is.dev
+      ? join(process.cwd(), 'dev.db')
+      : join(app.getPath('userData'), 'adminpro.db')
+
+    const result = await dialog.showSaveDialog({
+      title: 'Database backup opslaan',
+      defaultPath: `streamline-backup-${new Date().toISOString().slice(0, 10)}.db`,
+      filters: [{ name: 'Database', extensions: ['db'] }]
+    })
+
+    if (!result.filePath) return { geannuleerd: true }
+
+    fs.copyFileSync(dbPath, result.filePath)
+    return { succes: true, pad: result.filePath }
+  })
+
+  // ── PDF map kiezen ──
+  ipcMain.handle('app:kiesPdfMap', async () => {
+    const result = await dialog.showOpenDialog({
+      title: 'PDF-map selecteren',
+      properties: ['openDirectory', 'createDirectory']
+    })
+    if (result.canceled) return null
+    return result.filePaths[0] ?? null
+  })
 }
 
 app.whenReady().then(async () => {
   initPrisma()
+
+  // Voer database migratie uit bij eerste start
+  try {
+    const { execSync } = require('child_process')
+    const prismaPath = is.dev
+      ? join(process.cwd(), 'node_modules/.bin/prisma')
+      : join(process.resourcesPath, 'node_modules/.bin/prisma')
+    // In productie: gebruik prisma migrate deploy
+    // In dev: skip (al gedaan door developer)
+    if (!is.dev) {
+      const migrationsPath = join(process.resourcesPath, 'migrations')
+      process.env.DATABASE_URL = `file:${join(app.getPath('userData'), 'adminpro.db')}`
+      execSync(`"${prismaPath}" migrate deploy --schema="${join(process.resourcesPath, 'schema.prisma')}"`, {
+        env: { ...process.env }
+      })
+    }
+    logSchrijven('Database migratie succesvol')
+  } catch (e) {
+    logSchrijven(`Database migratie fout (niet kritiek): ${e}`)
+  }
+
   setupIpcHandlers()
   createWindow()
+
+  if (!is.dev) {
+    autoUpdater.checkForUpdatesAndNotify().catch(e => logSchrijven(`Update check fout: ${e}`))
+  }
 
   // Maak terugkerende facturen aan bij opstarten
   maakTermijnFacturen().catch(e => console.error('Fout bij opstarten terugkerende facturen:', e))
   stuurHerinneringen().catch(e => console.error('Fout bij sturen herinneringen:', e))
+
+  // Notificatie voor vervallen facturen
+  setTimeout(async () => {
+    try {
+      const nu = new Date()
+      const vervallenFacturen = await prisma.factuur.findMany({
+        where: { status: 'VERZONDEN', vervaldatum: { lt: nu } },
+        include: { klant: true }
+      })
+      if (vervallenFacturen.length > 0 && mainWindow) {
+        const { Notification } = require('electron')
+        new Notification({
+          title: 'Streamline Facturatie',
+          body: `${vervallenFacturen.length} factuur${vervallenFacturen.length > 1 ? 'en zijn' : ' is'} vervallen en wacht${vervallenFacturen.length > 1 ? 'en' : ''} op betaling.`
+        }).show()
+      }
+    } catch {}
+  }, 3000)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

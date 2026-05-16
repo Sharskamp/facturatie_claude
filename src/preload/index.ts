@@ -98,4 +98,14 @@ contextBridge.exposeInMainWorld('api', {
     update: (id: string, data: unknown) => ipcRenderer.invoke('vasteActiva:update', id, data),
     delete: (id: string) => ipcRenderer.invoke('vasteActiva:delete', id),
   },
+  audit: {
+    list: (factuurId: string) => ipcRenderer.invoke('audit:list', factuurId),
+    create: (data: unknown) => ipcRenderer.invoke('audit:create', data),
+  },
+  app: {
+    getAutoStart: () => ipcRenderer.invoke('app:getAutoStart'),
+    setAutoStart: (enabled: boolean) => ipcRenderer.invoke('app:setAutoStart', enabled),
+    backup: () => ipcRenderer.invoke('app:backup'),
+    kiesPdfMap: () => ipcRenderer.invoke('app:kiesPdfMap'),
+  },
 })
