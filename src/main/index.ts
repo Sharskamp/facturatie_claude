@@ -333,11 +333,18 @@ function setupIpcHandlers() {
   })
 
   // Facturen
-  ipcMain.handle('facturen:list', async (_, params?: { status?: string; klantId?: string }) => {
+  ipcMain.handle('facturen:list', async (_, params?: { status?: string; klantId?: string; zoek?: string }) => {
     return prisma.factuur.findMany({
       where: {
         ...(params?.status ? { status: params.status } : {}),
         ...(params?.klantId ? { klantId: params.klantId } : {}),
+        ...(params?.zoek ? {
+          OR: [
+            { nummer: { contains: params.zoek } },
+            { klant: { naam: { contains: params.zoek } } },
+            { klant: { bedrijf: { contains: params.zoek } } },
+          ]
+        } : {}),
       },
       include: { klant: true },
       orderBy: { datum: 'desc' }
@@ -378,6 +385,9 @@ function setupIpcHandlers() {
     const user = await prisma.user.findFirst()
     if (!user) throw new Error('Geen gebruiker')
 
+    const klant = await prisma.klant.findUnique({ where: { id: payload.klantId } })
+    const effectieveBetaalTermijn = klant?.betaalTermijn ?? user.standaardBetaalTermijn
+
     const nummer = genereerNummer(user.factuurPrefix, user.factuurVolgNummer)
 
     let subtotaal = 0
@@ -400,7 +410,7 @@ function setupIpcHandlers() {
         nummer,
         klantId: payload.klantId,
         datum: payload.datum ? new Date(payload.datum) : new Date(),
-        vervaldatum: payload.vervaldatum ? new Date(payload.vervaldatum) : berekenVervaldatum(user.standaardBetaalTermijn),
+        vervaldatum: payload.vervaldatum ? new Date(payload.vervaldatum) : berekenVervaldatum(effectieveBetaalTermijn),
         notities: payload.notities,
         betalingsCondities: payload.betalingsCondities,
         btwVerlegd: payload.btwVerlegd ?? false,
@@ -1353,6 +1363,37 @@ function setupIpcHandlers() {
     })
     if (result.canceled) return null
     return result.filePaths[0] ?? null
+  })
+
+  ipcMain.handle('mollie:maakBetaalLink', async (_, factuurId: string) => {
+    const user = await prisma.user.findFirst()
+    if (!user?.mollieApiKey) throw new Error('Geen Mollie API-sleutel geconfigureerd in Instellingen')
+
+    const factuur = await prisma.factuur.findUnique({ where: { id: factuurId } })
+    if (!factuur) throw new Error('Factuur niet gevonden')
+
+    const response = await fetch('https://api.mollie.com/v2/payment-links', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${user.mollieApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        amount: { currency: 'EUR', value: factuur.totaal.toFixed(2) },
+        description: `Factuur ${factuur.nummer}`,
+      }),
+    })
+
+    if (!response.ok) {
+      const fout = await response.json() as { detail?: string; message?: string }
+      throw new Error(fout.detail || fout.message || `Mollie API fout (${response.status})`)
+    }
+
+    const data = await response.json() as { _links?: { paymentLink?: { href: string } } }
+    const betaalLink = data._links?.paymentLink?.href ?? ''
+
+    await prisma.factuur.update({ where: { id: factuurId }, data: { mollieBetaalLink: betaalLink } })
+    return { url: betaalLink }
   })
 }
 

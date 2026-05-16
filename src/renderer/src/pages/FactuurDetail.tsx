@@ -54,6 +54,10 @@ interface Factuur {
   btwVerlegd: boolean;
   notities?: string | null;
   betalingsCondities?: string | null;
+  taal?: string;
+  totaalKorting?: number;
+  totaalKortingBedrag?: number;
+  mollieBetaalLink?: string | null;
   regels: FactuurRegel[];
   klant: {
     id: string;
@@ -104,6 +108,7 @@ export default function FactuurDetailPage() {
   const [statusBijwerken, setStatusBijwerken] = useState(false);
   const [creditnotaLaden, setCreditnotaLaden] = useState(false);
   const [herinneringLaden, setHerinneringLaden] = useState(false);
+  const [mollieLaden, setMollieLaden] = useState(false);
   const [melding, setMelding] = useState<{ type: "succes" | "fout"; tekst: string } | null>(null);
   const [auditLogs, setAuditLogs] = useState<Array<{id: string; actie: string; details?: string; aangemaakt: string}>>([]);
 
@@ -302,6 +307,42 @@ export default function FactuurDetailPage() {
               <FileDown className="h-4 w-4" />
               PDF downloaden
             </Button>
+            {factuur.mollieBetaalLink ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  navigator.clipboard.writeText(factuur.mollieBetaalLink!).catch(() => {});
+                  toonMelding("succes", "iDEAL betaallink gekopieerd");
+                }}
+              >
+                <Copy className="h-4 w-4" />
+                Betaallink kopiëren
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                loading={mollieLaden}
+                onClick={async () => {
+                  setMollieLaden(true);
+                  try {
+                    const res = await window.api.mollie.maakBetaalLink(id!);
+                    await laadFactuur();
+                    toonMelding("succes", "iDEAL betaallink aangemaakt");
+                    if (res.url) navigator.clipboard.writeText(res.url).catch(() => {});
+                  } catch (e: unknown) {
+                    const err = e as Error;
+                    toonMelding("fout", err.message || "Mollie betaallink mislukt");
+                  } finally {
+                    setMollieLaden(false);
+                  }
+                }}
+              >
+                <ExternalLink className="h-4 w-4" />
+                iDEAL betaallink
+              </Button>
+            )}
             {(factuur.status === "VERZONDEN" || factuur.status === "BETAALD") && (
               <Button
                 variant="outline"

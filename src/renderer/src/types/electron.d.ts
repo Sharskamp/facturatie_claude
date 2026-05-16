@@ -106,6 +106,9 @@ interface ElectronAPI {
     backup: () => Promise<{ succes?: boolean; geannuleerd?: boolean; pad?: string }>
     kiesPdfMap: () => Promise<string | null>
   }
+  mollie: {
+    maakBetaalLink: (factuurId: string) => Promise<{ url: string }>
+  }
 }
 
 declare global {

@@ -51,6 +51,8 @@ interface Klant {
   kvkNummer?: string | null;
   btwNummer?: string | null;
   notities?: string | null;
+  betaalTermijn?: number | null;
+  taal?: string;
   _count?: { facturen: number };
 }
 
@@ -66,6 +68,8 @@ const LEEG_FORMULIER: Partial<Klant> = {
   kvkNummer: "",
   btwNummer: "",
   notities: "",
+  betaalTermijn: undefined,
+  taal: "nl",
 };
 
 export default function KlantenPage() {
@@ -144,6 +148,8 @@ export default function KlantenPage() {
       kvkNummer: klant.kvkNummer ?? "",
       btwNummer: klant.btwNummer ?? "",
       notities: klant.notities ?? "",
+      betaalTermijn: klant.betaalTermijn ?? undefined,
+      taal: klant.taal ?? "nl",
     });
     setFout(null);
     setModalOpen(true);
@@ -435,6 +441,29 @@ export default function KlantenPage() {
                 onChange={(e) => updateFormulier("btwNummer", e.target.value)}
                 placeholder="NL123456789B01"
               />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Input
+                label="Betaaltermijn (dagen)"
+                type="number"
+                value={formulier.betaalTermijn ?? ""}
+                onChange={(e) => updateFormulier("betaalTermijn", e.target.value ? Number(e.target.value) : undefined)}
+                placeholder="Standaard globaal"
+              />
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Factuurtaal
+                </label>
+                <select
+                  value={formulier.taal ?? "nl"}
+                  onChange={(e) => updateFormulier("taal", e.target.value)}
+                  className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm"
+                >
+                  <option value="nl">Nederlands</option>
+                  <option value="en">English</option>
+                </select>
+              </div>
             </div>
 
             <div>

@@ -108,4 +108,7 @@ contextBridge.exposeInMainWorld('api', {
     backup: () => ipcRenderer.invoke('app:backup'),
     kiesPdfMap: () => ipcRenderer.invoke('app:kiesPdfMap'),
   },
+  mollie: {
+    maakBetaalLink: (factuurId: string) => ipcRenderer.invoke('mollie:maakBetaalLink', factuurId),
+  },
 })
