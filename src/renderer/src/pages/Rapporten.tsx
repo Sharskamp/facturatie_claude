@@ -282,9 +282,9 @@ export default function RapportenPagina() {
   const aangiftePeriodeOpties: { waarde: string; label: string }[] = [];
   const huidigJaar = new Date().getFullYear();
   for (let y = huidigJaar; y >= huidigJaar - 4; y--) {
-    aangifte PeriodeOpties.push({ waarde: `jaar_${y}`, label: `Heel jaar ${y}` });
+    aangiftePeriodeOpties.push({ waarde: `jaar_${y}`, label: `Heel jaar ${y}` });
     for (const kw of [...KWARTALEN].reverse()) {
-      aangifte PeriodeOpties.push({ waarde: `${kw}_${y}`, label: `${kw} ${y}` });
+      aangiftePeriodeOpties.push({ waarde: `${kw}_${y}`, label: `${kw} ${y}` });
     }
   }
 
@@ -389,7 +389,7 @@ export default function RapportenPagina() {
   const eigenVermogen = totalActiva - passivaSubtotaal;
 
   // ─── Debiteurenanalyse berekeningen ────────────────────────────────────────
-  const openFacturenMet Datum = openFacturen.map((f) => {
+  const openFacturenMetDatum = openFacturen.map((f) => {
     const vervaldatum = f.vervaldatum ? new Date(f.vervaldatum) : null;
     const dagenTeLaat = vervaldatum
       ? Math.floor((nu.getTime() - vervaldatum.getTime()) / 86400000)
@@ -398,7 +398,7 @@ export default function RapportenPagina() {
   });
 
   // Sort by days overdue descending
-  const gesorteerdeDebiteuren = [...openFacturenMet Datum].sort((a, b) => b.dagenTeLaat - a.dagenTeLaat);
+  const gesorteerdeDebiteuren = [...openFacturenMetDatum].sort((a, b) => b.dagenTeLaat - a.dagenTeLaat);
 
   const agingBuckets = [
     {
@@ -444,7 +444,7 @@ export default function RapportenPagina() {
   ];
 
   const agingBucketData = agingBuckets.map((bucket) => {
-    const items = openFacturenMet Datum.filter((f) => {
+    const items = openFacturenMetDatum.filter((f) => {
       if (bucket.max === 0) return f.dagenTeLaat <= 0;
       return f.dagenTeLaat >= bucket.min && f.dagenTeLaat <= bucket.max;
     });
@@ -975,7 +975,7 @@ export default function RapportenPagina() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {aangifte PeriodeOpties.map((opt) => (
+                      {aangiftePeriodeOpties.map((opt) => (
                         <SelectItem key={opt.waarde} value={opt.waarde}>{opt.label}</SelectItem>
                       ))}
                     </SelectContent>

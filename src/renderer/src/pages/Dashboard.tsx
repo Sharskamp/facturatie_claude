@@ -10,7 +10,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import { TrendingUp, AlertCircle, TrendingDown, Activity, ArrowRight, Loader2 } from "lucide-react";
+import { TrendingUp, AlertCircle, TrendingDown, Activity, ArrowRight, Loader2, TriangleAlert } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Header } from "@/components/layout/header";
@@ -46,6 +46,12 @@ interface Uitgave {
 interface MaandData {
   maand: string;
   omzet: number;
+}
+
+interface Instellingen {
+  korActief?: boolean;
+  korWaarschuwing?: boolean;
+  korDrempel?: number;
 }
 
 function StatCard({
@@ -93,19 +99,22 @@ export default function Dashboard() {
   const [facturen, setFacturen] = useState<Factuur[]>([]);
   const [inkomen, setInkomen] = useState<Inkomen[]>([]);
   const [uitgaven, setUitgaven] = useState<Uitgave[]>([]);
+  const [instellingen, setInstellingen] = useState<Instellingen>({});
   const [laden, setLaden] = useState(true);
 
   useEffect(() => {
     async function laadData() {
       try {
-        const [facturenData, inkomenData, uitgavenData] = await Promise.all([
+        const [facturenData, inkomenData, uitgavenData, instellingenData] = await Promise.all([
           window.api.facturen.list(),
           window.api.inkomen.list(),
           window.api.uitgaven.list(),
+          window.api.instellingen.get(),
         ]);
         setFacturen(Array.isArray(facturenData) ? facturenData as Factuur[] : []);
         setInkomen(Array.isArray(inkomenData) ? inkomenData as Inkomen[] : []);
         setUitgaven(Array.isArray(uitgavenData) ? uitgavenData as Uitgave[] : []);
+        setInstellingen(instellingenData as Instellingen ?? {});
       } catch (e) {
         console.error("Fout bij laden dashboard:", e);
       } finally {
@@ -159,6 +168,19 @@ export default function Dashboard() {
     };
   });
 
+  // KOR drempel berekening
+  const korDrempel = instellingen.korDrempel ?? 20000;
+  const jaarBegin = new Date(nu.getFullYear(), 0, 1);
+  const jaarEinde = new Date(nu.getFullYear(), 11, 31, 23, 59, 59);
+  const jaaromzet = facturen
+    .filter((f) => {
+      const d = new Date(f.datum);
+      return (f.status === "BETAALD" || f.status === "VERZONDEN") && d >= jaarBegin && d <= jaarEinde;
+    })
+    .reduce((s, f) => s + f.subtotaal, 0);
+  const korPercentage = korDrempel > 0 ? (jaaromzet / korDrempel) * 100 : 0;
+  const toonKorWaarschuwing = instellingen.korActief && instellingen.korWaarschuwing && korPercentage >= 80;
+
   const recenteFacturen = [...facturen]
     .sort((a, b) => new Date(b.datum).getTime() - new Date(a.datum).getTime())
     .slice(0, 5);
@@ -179,6 +201,34 @@ export default function Dashboard() {
       />
 
       <div className="p-6 space-y-6">
+        {/* KOR drempelwaarschuwing */}
+        {toonKorWaarschuwing && !laden && (
+          <div
+            className={`flex items-start gap-3 rounded-xl border px-5 py-4 ${
+              korPercentage > 100
+                ? "bg-red-50 border-red-300 text-red-800"
+                : korPercentage >= 90
+                ? "bg-red-50 border-red-200 text-red-700"
+                : "bg-amber-50 border-amber-200 text-amber-800"
+            }`}
+          >
+            <TriangleAlert className="h-5 w-5 mt-0.5 flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="font-semibold text-sm">
+                {korPercentage > 100
+                  ? "Je jaaromzet heeft de KOR-drempel overschreden!"
+                  : korPercentage >= 90
+                  ? `Waarschuwing: je jaaromzet is bijna €${korDrempel.toLocaleString("nl-NL")} (KOR-grens)`
+                  : `Let op: je omzet nadert de KOR-drempel van €${korDrempel.toLocaleString("nl-NL")}`}
+              </p>
+              <p className="text-sm mt-0.5">
+                Huidige jaaromzet: <span className="font-semibold">{formatBedrag(jaaromzet)}</span>
+                {" "}({korPercentage.toFixed(1)}% van de drempel)
+              </p>
+            </div>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
           <StatCard
             titel="Omzet deze maand"

@@ -50,7 +50,7 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        "flex flex-col h-screen bg-gray-900 text-white transition-all duration-300 sticky top-0",
+        "flex flex-col h-screen bg-gray-900 dark:bg-gray-950 text-white transition-all duration-300 sticky top-0",
         ingeklapt ? "w-16" : "w-64"
       )}
     >

@@ -247,13 +247,23 @@ function setupIpcHandlers() {
     return { geconfigureerd: count > 0 }
   })
 
-  ipcMain.handle('auth:setup', async (_, data: { naam: string; email: string; wachtwoord: string; bedrijfsnaam?: string }) => {
+  ipcMain.handle('auth:setup', async (_, data: {
+    naam: string; email: string; wachtwoord: string; bedrijfsnaam?: string;
+    kvkNummer?: string; btwNummer?: string; iban?: string; adres?: string;
+    postcode?: string; stad?: string; telefoon?: string; website?: string; logoBase64?: string
+  }) => {
     const bestaand = await prisma.user.findFirst()
     if (bestaand) throw new Error('Systeem is al geconfigureerd')
 
     const gehashed = await bcrypt.hash(data.wachtwoord, 12)
     const user = await prisma.user.create({
-      data: { naam: data.naam, email: data.email, wachtwoord: gehashed, bedrijfsnaam: data.bedrijfsnaam }
+      data: {
+        naam: data.naam, email: data.email, wachtwoord: gehashed,
+        bedrijfsnaam: data.bedrijfsnaam, kvkNummer: data.kvkNummer,
+        btwNummer: data.btwNummer, iban: data.iban, adres: data.adres,
+        postcode: data.postcode, stad: data.stad, telefoon: data.telefoon,
+        website: data.website, logoBase64: data.logoBase64
+      }
     })
 
     await prisma.categorie.createMany({
@@ -744,12 +754,16 @@ function setupIpcHandlers() {
     const user = await prisma.user.findFirst({
       select: {
         id: true, naam: true, email: true, bedrijfsnaam: true, kvkNummer: true, btwNummer: true,
-        iban: true, adres: true, postcode: true, stad: true, telefoon: true, website: true, logo: true,
-        factuurPrefix: true, offertePrefix: true, emailSmtpHost: true, emailSmtpPort: true,
-        emailSmtpUser: true, emailSmtpSecure: true, korActief: true, korDrempel: true,
-        standaardBetaalTermijn: true, standaardBtwTarief: true, betalingsherinneringen: true,
-        herinneringDagen: true, googleRefreshToken: true, kmVergoeding: true,
-        anthropicApiKey: true,
+        iban: true, adres: true, postcode: true, stad: true, telefoon: true, website: true,
+        logo: true, logoBase64: true,
+        factuurPrefix: true, offertePrefix: true, factuurVolgNummer: true, offerteVolgNummer: true,
+        factuurNummerFormaat: true, standaardCreditnotaPrefix: true,
+        emailSmtpHost: true, emailSmtpPort: true, emailSmtpUser: true, emailSmtpSecure: true,
+        korActief: true, korDrempel: true, korWaarschuwing: true,
+        standaardBetaalTermijn: true, standaardBtwTarief: true,
+        betalingsherinneringen: true, herinneringDagen: true,
+        googleRefreshToken: true, kmVergoeding: true, anthropicApiKey: true,
+        donkerModus: true, autoStart: true, pdfMapPad: true, mollieApiKey: true,
       }
     })
     return { ...user, googleGekoppeld: !!user?.googleRefreshToken }

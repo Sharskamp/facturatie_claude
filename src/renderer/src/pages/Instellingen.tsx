@@ -14,6 +14,8 @@ import {
   Bot,
   MoreHorizontal,
   Car,
+  Download,
+  Settings,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -26,8 +28,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useTheme } from "@/context/theme";
 
-type Tab = "bedrijf" | "facturen" | "email" | "google" | "kor" | "ai" | "overig";
+type Tab = "bedrijf" | "facturen" | "email" | "google" | "kor" | "ai" | "overig" | "geavanceerd";
 
 const TAB_CONFIG: Array<{ id: Tab; label: string; icon: React.ElementType }> = [
   { id: "bedrijf", label: "Bedrijfsgegevens", icon: Building2 },
@@ -37,6 +40,7 @@ const TAB_CONFIG: Array<{ id: Tab; label: string; icon: React.ElementType }> = [
   { id: "kor", label: "KOR", icon: Calculator },
   { id: "ai", label: "AI / OCR", icon: Bot },
   { id: "overig", label: "Overig", icon: MoreHorizontal },
+  { id: "geavanceerd", label: "Geavanceerd", icon: Settings },
 ];
 
 interface Instellingen {
@@ -74,9 +78,18 @@ interface Instellingen {
   anthropicApiKey?: string;
   // Overig
   kmVergoeding?: number;
+  // Geavanceerd
+  pdfMapPad?: string;
+  mollieApiKey?: string;
+  logoBase64?: string;
+  korWaarschuwing?: boolean;
+  factuurVolgNummer?: number;
+  donkerModus?: string;
+  autoStart?: boolean;
 }
 
 export default function InstellingenPagina() {
+  const { modus, setModus } = useTheme();
   const [actieveTab, setActieveTab] = useState<Tab>("bedrijf");
   const [instellingen, setInstellingen] = useState<Instellingen>({});
   const [laden, setLaden] = useState(true);
@@ -84,6 +97,7 @@ export default function InstellingenPagina() {
   const [melding, setMelding] = useState<{ type: "succes" | "fout"; tekst: string } | null>(null);
   const [emailTestStatus, setEmailTestStatus] = useState<"idle" | "laden" | "succes" | "fout">("idle");
   const [googleLaden, setGoogleLaden] = useState(false);
+  const [autoStart, setAutoStart] = useState(false);
 
   const haalInstellingenOp = useCallback(async () => {
     try {
@@ -99,6 +113,10 @@ export default function InstellingenPagina() {
   useEffect(() => {
     haalInstellingenOp();
   }, [haalInstellingenOp]);
+
+  useEffect(() => {
+    window.api.app.getAutoStart().then(setAutoStart).catch(() => {});
+  }, []);
 
   const toonMelding = (type: "succes" | "fout", tekst: string) => {
     setMelding({ type, tekst });
@@ -758,6 +776,268 @@ export default function InstellingenPagina() {
               </div>
             </CardContent>
           </Card>
+        )}
+
+        {/* ── Geavanceerd ── */}
+        {actieveTab === "geavanceerd" && (
+          <div className="space-y-6">
+            {/* Weergave */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Weergave</CardTitle>
+                <CardDescription>Pas het uiterlijk van de app aan</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div>
+                  <Select
+                    value={modus}
+                    onValueChange={(v) => {
+                      setModus(v as "systeem" | "licht" | "donker");
+                      slaOp({ donkerModus: v });
+                    }}
+                  >
+                    <SelectTrigger label="Kleurthema">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="systeem">Volg Windows</SelectItem>
+                      <SelectItem value="licht">Altijd licht</SelectItem>
+                      <SelectItem value="donker">Altijd donker</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex items-center justify-between rounded-lg border border-gray-200 p-4">
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">Opstarten met Windows</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Start de app automatisch wanneer Windows opstart</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      window.api.app.setAutoStart(!autoStart).then(() => setAutoStart(!autoStart)).catch(() => {});
+                    }}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      autoStart ? "bg-indigo-600" : "bg-gray-200"
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                        autoStart ? "translate-x-6" : "translate-x-1"
+                      }`}
+                    />
+                  </button>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Bedrijfslogo */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Bedrijfslogo</CardTitle>
+                <CardDescription>Logo dat op facturen wordt afgedrukt</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {instellingen.logoBase64 && (
+                  <img
+                    src={instellingen.logoBase64}
+                    alt="Bedrijfslogo"
+                    className="h-16 mb-2 object-contain rounded border border-gray-200 p-1"
+                  />
+                )}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Logo uploaden</label>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="block text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const reader = new FileReader();
+                      reader.onload = () => {
+                        const base64 = reader.result as string;
+                        updateVeld("logoBase64", base64);
+                        slaOp({ logoBase64: base64 });
+                      };
+                      reader.readAsDataURL(file);
+                    }}
+                  />
+                  <p className="text-xs text-gray-400 mt-1">PNG, JPG, SVG — maximaal 2 MB aanbevolen</p>
+                </div>
+                {instellingen.logoBase64 && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      updateVeld("logoBase64", "");
+                      slaOp({ logoBase64: "" });
+                    }}
+                  >
+                    Logo verwijderen
+                  </Button>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Factuurnummer formaat */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Factuurnummer</CardTitle>
+                <CardDescription>Stel het formaat en volgend nummer in</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <Input
+                    label="Factuurnummer prefix"
+                    value={instellingen.factuurPrefix ?? ""}
+                    onChange={(e) => updateVeld("factuurPrefix", e.target.value)}
+                    onBlur={() => slaOp({ factuurPrefix: instellingen.factuurPrefix })}
+                    placeholder="F"
+                  />
+                  <Input
+                    label="Volgend factuurnummer"
+                    type="number"
+                    min="1"
+                    value={instellingen.factuurVolgNummer ?? ""}
+                    onChange={(e) => updateVeld("factuurVolgNummer", Number(e.target.value))}
+                    onBlur={() => slaOp({ factuurVolgNummer: instellingen.factuurVolgNummer })}
+                    placeholder="1"
+                  />
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Mollie API-sleutel */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Betaalintegratie</CardTitle>
+                <CardDescription>iDEAL betaallinks via Mollie</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div>
+                  <Input
+                    label="Mollie API-sleutel"
+                    type="password"
+                    value={instellingen.mollieApiKey ?? ""}
+                    onChange={(e) => updateVeld("mollieApiKey", e.target.value)}
+                    onBlur={() => slaOp({ mollieApiKey: instellingen.mollieApiKey })}
+                    placeholder="live_..."
+                  />
+                  <p className="text-xs text-gray-400 mt-1">
+                    Voor iDEAL betaallinks op facturen (optioneel). Maak een API-sleutel aan op{" "}
+                    <button
+                      type="button"
+                      className="underline"
+                      onClick={() => window.api.shell.openExternal("https://mollie.com/")}
+                    >
+                      mollie.com
+                    </button>
+                    .
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* PDF-opslagmap */}
+            <Card>
+              <CardHeader>
+                <CardTitle>PDF-opslag</CardTitle>
+                <CardDescription>Locatie voor opgeslagen PDF-facturen</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">PDF-opslagmap</label>
+                  <div className="flex gap-2">
+                    <input
+                      value={instellingen.pdfMapPad || "Standaard (Documenten)"}
+                      readOnly
+                      className="flex-1 h-9 rounded-lg border border-gray-300 bg-gray-50 px-3 text-sm text-gray-600"
+                    />
+                    <Button
+                      variant="outline"
+                      onClick={async () => {
+                        try {
+                          const pad = await window.api.app.kiesPdfMap() as string | null;
+                          if (pad) {
+                            updateVeld("pdfMapPad", pad);
+                            slaOp({ pdfMapPad: pad });
+                          }
+                        } catch {
+                          toonMelding("fout", "Kon map niet selecteren");
+                        }
+                      }}
+                    >
+                      Map kiezen
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* KOR-waarschuwing */}
+            <Card>
+              <CardHeader>
+                <CardTitle>KOR-drempel waarschuwing</CardTitle>
+                <CardDescription>Melding bij nadering van de KOR-drempel</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex items-center justify-between rounded-lg border border-gray-200 p-4">
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">Waarschuw bij nadering KOR-drempel</p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Ontvang een melding als je omzet de KOR-drempel nadert
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nieuw = !instellingen.korWaarschuwing;
+                      updateVeld("korWaarschuwing", nieuw);
+                      slaOp({ korWaarschuwing: nieuw });
+                    }}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      instellingen.korWaarschuwing ? "bg-indigo-600" : "bg-gray-200"
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                        instellingen.korWaarschuwing ? "translate-x-6" : "translate-x-1"
+                      }`}
+                    />
+                  </button>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Data & beveiliging */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Data &amp; beveiliging</CardTitle>
+                <CardDescription>Maak een backup van je gegevens</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button
+                  variant="outline"
+                  onClick={async () => {
+                    try {
+                      const result = await window.api.app.backup() as { succes: boolean; pad?: string };
+                      if (result.succes) {
+                        toonMelding("succes", `Backup opgeslagen: ${result.pad}`);
+                      } else {
+                        toonMelding("fout", "Backup mislukt");
+                      }
+                    } catch {
+                      toonMelding("fout", "Backup mislukt");
+                    }
+                  }}
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  Database backup maken
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
         )}
       </div>
     </div>

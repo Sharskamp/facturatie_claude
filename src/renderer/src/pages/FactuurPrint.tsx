@@ -28,6 +28,8 @@ interface Factuur {
   notities?: string;
   betalingsCondities?: string;
   btwVerlegd: boolean;
+  taal?: string;
+  mollieBetaalLink?: string;
   regels: FactuurRegel[];
   klant: {
     naam: string;
@@ -79,6 +81,27 @@ export default function FactuurPrintPage() {
       </div>
     );
   }
+
+  const isEn = factuur.taal === "en";
+  const labels = {
+    title: isEn ? "INVOICE" : "FACTUUR",
+    invoiceNumber: isEn ? "Invoice number" : "Factuurnummer",
+    invoiceDate: isEn ? "Date" : "Factuurdatum",
+    dueDate: isEn ? "Due date" : "Vervaldatum",
+    billTo: isEn ? "Bill to" : "Factuur aan",
+    description: isEn ? "Description" : "Omschrijving",
+    quantity: isEn ? "Qty" : "Aantal",
+    price: isEn ? "Price" : "Prijs",
+    tax: isEn ? "Tax" : "BTW",
+    discount: isEn ? "Discount" : "Korting",
+    total: isEn ? "Total" : "Totaal",
+    subtotal: isEn ? "Subtotal" : "Subtotaal",
+    notes: isEn ? "Notes" : "Opmerkingen",
+    paymentInfo: isEn ? "Payment information" : "Betalingsinformatie",
+    reference: isEn ? "Reference" : "Onder vermelding van",
+    btwReversed: isEn ? "Reverse charge — VAT is payable by the recipient" : "BTW verlegd — de BTW wordt verlegd naar de ontvanger (Art. 12 Wet OB 1968)",
+    payOnline: isEn ? "Pay online via" : "Betaal online via",
+  };
 
   // Groepeer BTW per tarief
   const btwGroepen = factuur.regels.reduce(
@@ -132,17 +155,17 @@ export default function FactuurPrintPage() {
             </div>
 
             <div className="text-right">
-              <div className="text-3xl font-bold text-indigo-600">FACTUUR</div>
+              <div className="text-3xl font-bold text-indigo-600">{labels.title}</div>
               <div className="mt-2">
-                <span className="text-gray-500">Factuurnummer: </span>
+                <span className="text-gray-500">{labels.invoiceNumber}: </span>
                 <span className="font-semibold">{factuur.nummer}</span>
               </div>
               <div>
-                <span className="text-gray-500">Factuurdatum: </span>
+                <span className="text-gray-500">{labels.invoiceDate}: </span>
                 <span className="font-semibold">{formatDatum(factuur.datum)}</span>
               </div>
               <div>
-                <span className="text-gray-500">Vervaldatum: </span>
+                <span className="text-gray-500">{labels.dueDate}: </span>
                 <span className="font-semibold text-red-600">{formatDatum(factuur.vervaldatum)}</span>
               </div>
             </div>
@@ -154,7 +177,7 @@ export default function FactuurPrintPage() {
           {/* Bill to */}
           <div className="mb-8">
             <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">
-              Factuur aan
+              {labels.billTo}
             </p>
             <p className="font-semibold text-gray-900">
               {factuur.klant.bedrijf ?? factuur.klant.naam}

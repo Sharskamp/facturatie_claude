@@ -105,6 +105,7 @@ export default function FactuurDetailPage() {
   const [creditnotaLaden, setCreditnotaLaden] = useState(false);
   const [herinneringLaden, setHerinneringLaden] = useState(false);
   const [melding, setMelding] = useState<{ type: "succes" | "fout"; tekst: string } | null>(null);
+  const [auditLogs, setAuditLogs] = useState<Array<{id: string; actie: string; details?: string; aangemaakt: string}>>([]);
 
   const laadFactuur = useCallback(async () => {
     try {
@@ -134,6 +135,11 @@ export default function FactuurDetailPage() {
     laadInstellingen();
   }, [laadFactuur, laadInstellingen]);
 
+  useEffect(() => {
+    if (!id) return;
+    window.api.audit.list(id).then(setAuditLogs).catch(() => {});
+  }, [id]);
+
   async function verstuur() {
     if (!factuur) return;
     setVerstuurLaden(true);
@@ -147,7 +153,11 @@ export default function FactuurDetailPage() {
       const data = await window.api.facturen.verstuur(id!, body);
       if (verstuurTab === "whatsapp" && data.whatsappUrl) {
         setWhatsappUrl(data.whatsappUrl);
+        window.api.audit.create({ factuurId: id!, actie: "VERZONDEN", details: factuur.klant.telefoon ?? "whatsapp" }).catch(() => {});
+        window.api.audit.list(id!).then(setAuditLogs).catch(() => {});
       } else {
+        window.api.audit.create({ factuurId: id!, actie: "VERZONDEN", details: emailAdres }).catch(() => {});
+        window.api.audit.list(id!).then(setAuditLogs).catch(() => {});
         setVerstuurSucces(true);
         setTimeout(() => {
           setVerstuurModalOpen(false);
@@ -165,9 +175,12 @@ export default function FactuurDetailPage() {
   async function markeerBetaald() {
     if (!factuur) return;
     setStatusBijwerken(true);
+    const oudStatus = factuur.status;
     try {
       await window.api.facturen.update(id!, { status: "BETAALD" });
+      window.api.audit.create({ factuurId: id!, actie: "STATUS_GEWIJZIGD", details: `${oudStatus} → BETAALD` }).catch(() => {});
       laadFactuur();
+      window.api.audit.list(id!).then(setAuditLogs).catch(() => {});
     } catch (e) {
       console.error("Fout bij bijwerken status:", e);
     } finally {
@@ -278,7 +291,12 @@ export default function FactuurDetailPage() {
               size="sm"
               onClick={async () => {
                 const res = await window.api.facturen.downloadPdf(id!) as { succes: boolean; fout?: string }
-                if (!res.succes && res.fout) alert(`PDF mislukt: ${res.fout}`)
+                if (!res.succes && res.fout) {
+                  alert(`PDF mislukt: ${res.fout}`)
+                } else {
+                  window.api.audit.create({ factuurId: id!, actie: "PDF_GEDOWNLOAD" }).catch(() => {});
+                  window.api.audit.list(id!).then(setAuditLogs).catch(() => {});
+                }
               }}
             >
               <FileDown className="h-4 w-4" />
@@ -618,6 +636,24 @@ export default function FactuurDetailPage() {
             <ExternalLink className="h-4 w-4" />
             Klantprofiel bekijken: {factuur.klant.naam}
           </button>
+        </div>
+
+        {/* Audit log timeline */}
+        <div className="max-w-4xl mx-auto mt-6 pb-6">
+          <div className="mt-6">
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">Activiteiten</h3>
+            {auditLogs.length === 0 ? (
+              <p className="text-sm text-gray-400 italic">Nog geen activiteiten geregistreerd.</p>
+            ) : (
+              auditLogs.map((log) => (
+                <div key={log.id} className="flex gap-3 text-sm py-2 border-b border-gray-100">
+                  <span className="text-gray-400 whitespace-nowrap">{formatDatum(log.aangemaakt)}</span>
+                  <span className="font-medium">{log.actie}</span>
+                  {log.details && <span className="text-gray-500">{log.details}</span>}
+                </div>
+              ))
+            )}
+          </div>
         </div>
       </div>
 

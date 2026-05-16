@@ -98,6 +98,15 @@ export default function NieuweFactuurPage() {
   const [terugkerend, setTerugkerend] = useState(false);
   const [terugkerendInterval, setTerugkerendInterval] = useState<"maandelijks" | "kwartaal" | "jaarlijks">("maandelijks");
 
+  // Totaalkorting
+  const [totaalKortingActief, setTotaalKortingActief] = useState(false);
+  const [totaalKortingType, setTotaalKortingType] = useState<"percentage" | "vastBedrag">("percentage");
+  const [totaalKortingPercentage, setTotaalKortingPercentage] = useState(0);
+  const [totaalKortingVastBedrag, setTotaalKortingVastBedrag] = useState(0);
+
+  // Factuurtaal
+  const [taal, setTaal] = useState<"nl" | "en">("nl");
+
   const laadKlanten = useCallback(async () => {
     try {
       const data = await window.api.klanten.list();
@@ -116,25 +125,63 @@ export default function NieuweFactuurPage() {
   // Totaalberekeningen
   const totalen = useMemo(() => {
     let subtotaalBruto = 0;
-    let totaalBtw = 0;
-    const btwPerTarief: Record<string, number> = {};
+    // Collect netto per BTW-tarief for proportional discount application
+    const nettoPerTarief: Record<number, number> = {};
 
     for (const regel of regels) {
-      const { netto, btw } = berekenRegelTotalen(regel, btwVerlegd);
+      const { netto } = berekenRegelTotalen(regel, btwVerlegd);
       subtotaalBruto += netto;
-      totaalBtw += btw;
-      if (!btwVerlegd && btw > 0) {
-        const key = `${regel.btwPercentage}%`;
-        btwPerTarief[key] = (btwPerTarief[key] ?? 0) + btw;
+      if (!btwVerlegd) {
+        nettoPerTarief[regel.btwPercentage] = (nettoPerTarief[regel.btwPercentage] ?? 0) + netto;
       }
     }
 
-    const kortingBedrag = (subtotaalBruto * kortingPercentage) / 100;
-    const subtotaal = subtotaalBruto - kortingBedrag;
-    const totaal = subtotaal + totaalBtw;
+    // Totaalkorting berekening
+    let kortingBedrag = 0;
+    if (totaalKortingActief) {
+      if (totaalKortingType === "percentage") {
+        kortingBedrag = (subtotaalBruto * totaalKortingPercentage) / 100;
+      } else {
+        kortingBedrag = Math.min(totaalKortingVastBedrag, subtotaalBruto);
+      }
+    }
 
-    return { subtotaalBruto, kortingBedrag, subtotaal, totaalBtw, btwPerTarief, totaal };
-  }, [regels, kortingPercentage, btwVerlegd]);
+    const subtotaalNaKorting = subtotaalBruto - kortingBedrag;
+    const kortingRatio = subtotaalBruto > 0 ? kortingBedrag / subtotaalBruto : 0;
+
+    // BTW berekenen over bedrag NA korting, evenredig per tarief
+    const btwPerTarief: Record<string, number> = {};
+    let totaalBtw = 0;
+    if (!btwVerlegd) {
+      for (const [tarief, netto] of Object.entries(nettoPerTarief)) {
+        const tariefNum = Number(tarief);
+        const nettoNaKorting = netto * (1 - kortingRatio);
+        const btw = (nettoNaKorting * tariefNum) / 100;
+        if (btw > 0) {
+          const key = `${tariefNum}%`;
+          btwPerTarief[key] = (btwPerTarief[key] ?? 0) + btw;
+          totaalBtw += btw;
+        }
+      }
+    }
+
+    const totaal = subtotaalNaKorting + totaalBtw;
+
+    const totaalKortingResultaat =
+      totaalKortingType === "percentage" ? totaalKortingPercentage : 0;
+    const totaalKortingBedrag = kortingBedrag;
+
+    return {
+      subtotaalBruto,
+      kortingBedrag,
+      subtotaal: subtotaalNaKorting,
+      totaalBtw,
+      btwPerTarief,
+      totaal,
+      totaalKortingResultaat,
+      totaalKortingBedrag,
+    };
+  }, [regels, btwVerlegd, totaalKortingActief, totaalKortingType, totaalKortingPercentage, totaalKortingVastBedrag]);
 
   function voegRegelToe() {
     setRegels((prev) => [...prev, LEEG_REGEL()]);
@@ -181,6 +228,13 @@ export default function NieuweFactuurPage() {
         status,
         terugkerend,
         terugkerendInterval: terugkerend ? terugkerendInterval : null,
+        totaalKorting: totaalKortingActief
+          ? totaalKortingType === "percentage"
+            ? totaalKortingPercentage
+            : 0
+          : 0,
+        totaalKortingBedrag: totalen.totaalKortingBedrag,
+        taal,
       };
       const factuur = await window.api.facturen.create(payload);
 
@@ -535,6 +589,117 @@ export default function NieuweFactuurPage() {
           </CardContent>
         </Card>
 
+        {/* Totaalkorting & Factuurtaal */}
+        <Card>
+          <CardHeader className="pb-4">
+            <CardTitle>Korting &amp; taal</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Factuurtaal */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Factuurtaal
+              </label>
+              <Select value={taal} onValueChange={(v) => setTaal(v as "nl" | "en")}>
+                <SelectTrigger className="w-48">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="nl">Nederlands</SelectItem>
+                  <SelectItem value="en">English</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Totaalkorting toggle */}
+            <div className="flex items-center justify-between rounded-lg border border-gray-200 p-3">
+              <div>
+                <p className="text-sm font-medium text-gray-700">Totaalkorting toepassen</p>
+                <p className="text-xs text-gray-400">Korting op het totaalbedrag (BTW wordt berekend over het bedrag na korting)</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTotaalKortingActief(!totaalKortingActief)}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                  totaalKortingActief ? "bg-indigo-600" : "bg-gray-200"
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                    totaalKortingActief ? "translate-x-6" : "translate-x-1"
+                  }`}
+                />
+              </button>
+            </div>
+
+            {totaalKortingActief && (
+              <div className="space-y-3 pl-1">
+                {/* Radio: percentage of vast bedrag */}
+                <div className="flex gap-6">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="totaalKortingType"
+                      value="percentage"
+                      checked={totaalKortingType === "percentage"}
+                      onChange={() => setTotaalKortingType("percentage")}
+                      className="h-4 w-4 text-indigo-600 border-gray-300 focus:ring-indigo-500"
+                    />
+                    <span className="text-sm text-gray-700">Percentage</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="totaalKortingType"
+                      value="vastBedrag"
+                      checked={totaalKortingType === "vastBedrag"}
+                      onChange={() => setTotaalKortingType("vastBedrag")}
+                      className="h-4 w-4 text-indigo-600 border-gray-300 focus:ring-indigo-500"
+                    />
+                    <span className="text-sm text-gray-700">Vast bedrag</span>
+                  </label>
+                </div>
+
+                {totaalKortingType === "percentage" ? (
+                  <div className="flex items-center gap-3">
+                    <div className="relative w-36">
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.1"
+                        value={totaalKortingPercentage}
+                        onChange={(e) => setTotaalKortingPercentage(parseFloat(e.target.value) || 0)}
+                        className="flex h-9 w-full rounded-lg border border-gray-300 bg-white px-3 pr-7 py-1 text-sm text-gray-900 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:border-transparent"
+                      />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm select-none">%</span>
+                    </div>
+                    {totalen.kortingBedrag > 0 && (
+                      <span className="text-sm text-green-600 font-medium">
+                        = -{new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(totalen.kortingBedrag)}
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-3">
+                    <div className="relative w-36">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm select-none">€</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={totaalKortingVastBedrag}
+                        onChange={(e) => setTotaalKortingVastBedrag(parseFloat(e.target.value) || 0)}
+                        className="flex h-9 w-full rounded-lg border border-gray-300 bg-white pl-7 pr-3 py-1 text-sm text-gray-900 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:border-transparent"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Notities en betalingscondities */}
           <Card>
@@ -613,27 +778,6 @@ export default function NieuweFactuurPage() {
                   )}
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Totaalkorting (%)
-                  </label>
-                  <div className="relative max-w-[140px]">
-                    <input
-                      type="number"
-                      min="0"
-                      max="100"
-                      step="0.1"
-                      value={kortingPercentage}
-                      onChange={(e) =>
-                        setKortingPercentage(parseFloat(e.target.value) || 0)
-                      }
-                      className="flex h-9 w-full rounded-lg border border-gray-300 bg-white px-3 pr-7 py-1 text-sm text-gray-900 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:border-transparent"
-                    />
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm select-none">
-                      %
-                    </span>
-                  </div>
-                </div>
               </CardContent>
             )}
           </Card>
@@ -655,7 +799,9 @@ export default function NieuweFactuurPage() {
                 {totalen.kortingBedrag > 0 && (
                   <div className="flex justify-between text-sm">
                     <span className="text-gray-500">
-                      Korting ({kortingPercentage}%)
+                      {totaalKortingActief && totaalKortingType === "percentage"
+                        ? `Totaalkorting (${totaalKortingPercentage}%)`
+                        : "Totaalkorting"}
                     </span>
                     <span className="text-green-600">
                       -{formatBedrag(totalen.kortingBedrag)}
