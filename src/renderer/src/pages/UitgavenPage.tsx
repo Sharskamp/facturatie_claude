@@ -195,7 +195,7 @@ export default function UitgavenPagina() {
       btw,
       totaal: bedrag + btw,
       leverancier: formulier.leverancier || null,
-      categorieId: formulier.categorieId || null,
+      categorieId: formulier.categorieId && formulier.categorieId !== "geen" ? formulier.categorieId : null,
       zakelijk: formulier.zakelijk,
       zakelijkPercent: formulier.zakelijkPercent,
       notities: formulier.notities || null,
@@ -580,12 +580,13 @@ export default function UitgavenPagina() {
                 </SelectContent>
               </Select>
               <Select
-                value={formulier.categorieId}
+                value={formulier.categorieId || "geen"}
                 onValueChange={(v) => {
-                  const cat = categorieen.find((c) => c.id === v);
+                  const catId = v === "geen" ? "" : v;
+                  const cat = categorieen.find((c) => c.id === catId);
                   setFormulier((prev) => ({
                     ...prev,
-                    categorieId: v,
+                    categorieId: catId,
                     ...(cat?.standaardBtwTarief != null
                       ? { btwPercentage: String(cat.standaardBtwTarief) }
                       : {}),

@@ -14,6 +14,8 @@ files:
 extraResources:
   - from: prisma/migrations
     to: migrations
+  - from: prisma/schema.prisma
+    to: schema.prisma
 
 win:
   target:

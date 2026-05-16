@@ -15,12 +15,15 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return (localStorage.getItem('sf_theme') as ThemeModus) ?? 'systeem'
   })
 
-  const systeemDonker = window.matchMedia('(prefers-color-scheme: dark)').matches
+  const [systeemDonker, setSysteemDonker] = useState(
+    () => window.matchMedia('(prefers-color-scheme: dark)').matches
+  )
   const isDonker = modus === 'donker' || (modus === 'systeem' && systeemDonker)
 
   useEffect(() => {
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
     const update = () => {
+      setSysteemDonker(mediaQuery.matches)
       const donker = modus === 'donker' || (modus === 'systeem' && mediaQuery.matches)
       document.documentElement.classList.toggle('dark', donker)
     }

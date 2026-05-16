@@ -360,6 +360,10 @@ function setupIpcHandlers() {
     notities?: string
     betalingsCondities?: string
     status?: string
+    taal?: string
+    totaalKorting?: number
+    totaalKortingBedrag?: number
+    mollieBetaalLink?: string
     regels: Array<{
       omschrijving: string
       aantal: number
