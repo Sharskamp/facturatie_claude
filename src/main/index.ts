@@ -942,7 +942,7 @@ function setupIpcHandlers() {
         korActief: true, korDrempel: true, korWaarschuwing: true,
         standaardBetaalTermijn: true, standaardBtwTarief: true,
         betalingsherinneringen: true, herinneringDagen: true,
-        googleRefreshToken: true, googleClientId: true, kmVergoeding: true, anthropicApiKey: true,
+        googleRefreshToken: true, googleClientId: true, googleClientSecret: true, kmVergoeding: true, anthropicApiKey: true,
         donkerModus: true, autoStart: true, pdfMapPad: true, mollieApiKey: true,
         layoutPrimairKleur: true, layoutSecundairKleur: true, layoutLettertype: true,
         layoutKoptekst: true, layoutVoettekst: true, layoutLogoPositie: true,

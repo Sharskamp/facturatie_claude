@@ -77,6 +77,7 @@ interface Instellingen {
   googleGekoppeld?: boolean;
   googleEmail?: string;
   googleClientId?: string;
+  googleClientSecret?: string;
   // KOR
   korActief?: boolean;
   korDrempel?: number;
@@ -126,6 +127,8 @@ export default function InstellingenPagina() {
   const [googleLaden, setGoogleLaden] = useState(false);
   const [autoStart, setAutoStart] = useState(false);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const isGeladen = useRef(false);
+  const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const haalInstellingenOp = useCallback(async () => {
     try {
@@ -143,6 +146,24 @@ export default function InstellingenPagina() {
   }, [haalInstellingenOp]);
 
   useEffect(() => {
+    if (!laden) {
+      // Activeer auto-save na volledig laden om false-positive saves te voorkomen
+      const t = setTimeout(() => { isGeladen.current = true; }, 300);
+      return () => clearTimeout(t);
+    }
+  }, [laden]);
+
+  // Auto-save: sla instellingen 1.5s na elke wijziging op
+  useEffect(() => {
+    if (!isGeladen.current || Object.keys(instellingen).length === 0) return;
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current = setTimeout(() => {
+      window.api.instellingen.update(instellingen as Record<string, unknown>).catch(() => {});
+    }, 1500);
+    return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
+  }, [instellingen]);
+
+  useEffect(() => {
     window.api.app.getAutoStart().then(setAutoStart).catch(() => {});
   }, []);
 
@@ -154,8 +175,7 @@ export default function InstellingenPagina() {
   const slaOp = async (velden: Partial<Instellingen>) => {
     setOpslaan(true);
     try {
-      const data = await window.api.instellingen.update(velden);
-      setInstellingen((prev) => ({ ...prev, ...data }));
+      await window.api.instellingen.update(velden);
       toonMelding("succes", "Instellingen opgeslagen");
     } catch {
       toonMelding("fout", "Opslaan mislukt");
