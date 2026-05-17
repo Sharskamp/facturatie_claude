@@ -9,6 +9,8 @@ import {
   Loader2,
   Users,
   FileText,
+  Archive,
+  ArchiveRestore,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -53,6 +55,7 @@ interface Klant {
   notities?: string | null;
   betaalTermijn?: number | null;
   taal?: string;
+  actief: boolean;
   _count?: { facturen: number };
 }
 
@@ -183,6 +186,16 @@ export default function KlantenPage() {
     }
   }
 
+  async function archiveer(klant: Klant, e: React.MouseEvent) {
+    e.stopPropagation();
+    try {
+      await window.api.klanten.archiveer(klant.id);
+      laadKlanten(zoekterm);
+    } catch (e) {
+      console.error("Fout bij archiveren:", e);
+    }
+  }
+
   async function verwijder() {
     if (!geselecteerdeKlant) return;
     try {
@@ -202,7 +215,7 @@ export default function KlantenPage() {
     <div>
       <Header
         titel="Klanten"
-        subtitel={`${klanten.length} klant${klanten.length !== 1 ? "en" : ""}`}
+        subtitel={`${klanten.filter(k => k.actief).length} actieve klant${klanten.filter(k => k.actief).length !== 1 ? "en" : ""}`}
         acties={
           <Button onClick={openNieuw} className="gap-2">
             <Plus className="h-4 w-4" />
@@ -256,12 +269,19 @@ export default function KlantenPage() {
                   {klanten.map((klant) => (
                     <TableRow
                       key={klant.id}
-                      className="cursor-pointer"
+                      className={`cursor-pointer ${!klant.actief ? "opacity-60 bg-gray-50" : ""}`}
                       onClick={() => navigate(`/klanten/${klant.id}`)}
                       onContextMenu={(e) => handleContextMenu(e, klant)}
                     >
                       <TableCell className="font-medium text-gray-900">
-                        {klant.naam}
+                        <div className="flex items-center gap-2">
+                          {klant.naam}
+                          {!klant.actief && (
+                            <span className="text-xs bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded font-normal">
+                              Gearchiveerd
+                            </span>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell className="text-gray-500">
                         {klant.bedrijf ?? "-"}
@@ -288,6 +308,17 @@ export default function KlantenPage() {
                             title="Bekijken"
                           >
                             <Eye className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={(e) => archiveer(klant, e)}
+                            className={`p-1.5 rounded-lg transition-colors ${
+                              klant.actief
+                                ? "text-gray-400 hover:text-amber-600 hover:bg-amber-50"
+                                : "text-amber-500 hover:text-green-600 hover:bg-green-50"
+                            }`}
+                            title={klant.actief ? "Archiveren" : "Herstel"}
+                          >
+                            {klant.actief ? <Archive className="h-4 w-4" /> : <ArchiveRestore className="h-4 w-4" />}
                           </button>
                           <button
                             onClick={(e) => openBewerken(klant, e)}
@@ -340,6 +371,16 @@ export default function KlantenPage() {
           >
             <FileText className="h-4 w-4 text-gray-400" />
             Nieuwe factuur voor klant
+          </button>
+          <button
+            onClick={() => {
+              archiveer(contextMenu.klant, { stopPropagation: () => {} } as React.MouseEvent);
+              setContextMenu(null);
+            }}
+            className="w-full text-left px-4 py-2 text-sm text-amber-600 hover:bg-amber-50 flex items-center gap-2"
+          >
+            <Archive className="h-4 w-4" />
+            {contextMenu.klant.actief ? "Archiveren" : "Herstel klant"}
           </button>
           <div className="my-1 border-t border-gray-100" />
           <button

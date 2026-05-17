@@ -67,9 +67,24 @@ function createWindow() {
 }
 
 // ── Helper functies (inline, geen externe import nodig) ──
-function genereerNummer(prefix: string, volgNummer: number): string {
+async function genereerNummer(prefix: string, tabel: 'factuur' | 'offerte'): Promise<string> {
   const jaar = new Date().getFullYear()
-  return `${prefix}${jaar}-${String(volgNummer).padStart(4, '0')}`
+  const startsWith = `${prefix}${jaar}-`
+  let maxSeq = 0
+  if (tabel === 'factuur') {
+    const rows = await prisma.factuur.findMany({ where: { nummer: { startsWith } }, select: { nummer: true } })
+    for (const r of rows) {
+      const seq = parseInt(r.nummer.split('-').pop() ?? '0', 10)
+      if (seq > maxSeq) maxSeq = seq
+    }
+  } else {
+    const rows = await prisma.offerte.findMany({ where: { nummer: { startsWith } }, select: { nummer: true } })
+    for (const r of rows) {
+      const seq = parseInt(r.nummer.split('-').pop() ?? '0', 10)
+      if (seq > maxSeq) maxSeq = seq
+    }
+  }
+  return `${startsWith}${String(maxSeq + 1).padStart(4, '0')}`
 }
 
 function berekenVervaldatum(dagen: number): Date {
@@ -113,7 +128,7 @@ async function maakTermijnFacturen(): Promise<number> {
 
       if (dagSinds < dueNa) continue
 
-      const nieuweNummer = genereerNummer(user.factuurPrefix, user.factuurVolgNummer + aangemaakt)
+      const nieuweNummer = await genereerNummer(user.factuurPrefix, 'factuur')
 
       await prisma.factuur.create({
         data: {
@@ -140,10 +155,6 @@ async function maakTermijnFacturen(): Promise<number> {
         }
       })
       aangemaakt++
-    }
-
-    if (aangemaakt > 0) {
-      await prisma.user.updateMany({ data: { factuurVolgNummer: user.factuurVolgNummer + aangemaakt } })
     }
 
     return aangemaakt
@@ -306,7 +317,7 @@ function setupIpcHandlers() {
           { email: { contains: params.zoek } },
         ]
       } : undefined,
-      orderBy: { naam: 'asc' },
+      orderBy: [{ actief: 'desc' }, { naam: 'asc' }],
       include: { _count: { select: { facturen: true } } }
     })
   })
@@ -334,6 +345,12 @@ function setupIpcHandlers() {
   ipcMain.handle('klanten:delete', async (_, id: string) => {
     await prisma.klant.delete({ where: { id } })
     return { succes: true }
+  })
+
+  ipcMain.handle('klanten:archiveer', async (_, id: string) => {
+    const klant = await prisma.klant.findUnique({ where: { id } })
+    if (!klant) throw new Error('Klant niet gevonden')
+    return prisma.klant.update({ where: { id }, data: { actief: !klant.actief } })
   })
 
   // Facturen
@@ -392,7 +409,7 @@ function setupIpcHandlers() {
     const klant = await prisma.klant.findUnique({ where: { id: payload.klantId } })
     const effectieveBetaalTermijn = klant?.betaalTermijn ?? user.standaardBetaalTermijn
 
-    const nummer = genereerNummer(user.factuurPrefix, user.factuurVolgNummer)
+    const nummer = await genereerNummer(user.factuurPrefix, 'factuur')
 
     let subtotaal = 0
     let btwBedrag = 0
@@ -434,8 +451,6 @@ function setupIpcHandlers() {
       },
       include: { klant: true, regels: true }
     })
-
-    await prisma.user.updateMany({ data: { factuurVolgNummer: user.factuurVolgNummer + 1 } })
 
     return factuur
   })
@@ -491,6 +506,48 @@ function setupIpcHandlers() {
   ipcMain.handle('facturen:delete', async (_, id: string) => {
     await prisma.factuur.delete({ where: { id } })
     return { succes: true }
+  })
+
+  ipcMain.handle('facturen:duplicate', async (_, id: string) => {
+    const user = await prisma.user.findFirst()
+    if (!user) throw new Error('Geen gebruiker')
+    const orig = await prisma.factuur.findUnique({ where: { id }, include: { regels: true } })
+    if (!orig) throw new Error('Factuur niet gevonden')
+    const nummer = await genereerNummer(user.factuurPrefix, 'factuur')
+    const kopie = await prisma.factuur.create({
+      data: {
+        nummer,
+        klantId: orig.klantId,
+        datum: new Date(),
+        vervaldatum: berekenVervaldatum(user.standaardBetaalTermijn),
+        notities: orig.notities,
+        betalingsCondities: orig.betalingsCondities,
+        btwVerlegd: orig.btwVerlegd,
+        kortingPercentage: orig.kortingPercentage,
+        kortingBedrag: orig.kortingBedrag,
+        subtotaal: orig.subtotaal,
+        btwBedrag: orig.btwBedrag,
+        totaal: orig.totaal,
+        status: 'CONCEPT',
+        taal: orig.taal,
+        totaalKorting: orig.totaalKorting,
+        totaalKortingBedrag: orig.totaalKortingBedrag,
+        regels: {
+          create: orig.regels.map((r, i) => ({
+            omschrijving: r.omschrijving,
+            aantal: r.aantal,
+            eenheid: r.eenheid,
+            prijs: r.prijs,
+            btwPercentage: r.btwPercentage,
+            kortingPercentage: r.kortingPercentage,
+            totaal: r.totaal,
+            volgorde: i,
+          }))
+        }
+      },
+      include: { klant: true, regels: true }
+    })
+    return kopie
   })
 
   ipcMain.handle('facturen:verstuur', async (_, id: string, payload: { methode: 'email' | 'whatsapp'; naarEmail?: string; bericht?: string }) => {
@@ -565,7 +622,7 @@ function setupIpcHandlers() {
     const user = await prisma.user.findFirst()
     if (!user) throw new Error('Geen gebruiker')
 
-    const nummer = genereerNummer(user.offertePrefix, user.offerteVolgNummer)
+    const nummer = await genereerNummer(user.offertePrefix, 'offerte')
 
     let subtotaal = 0; let btwBedrag = 0
     const berekendeRegels = payload.regels.map((regel, index) => {
@@ -597,7 +654,6 @@ function setupIpcHandlers() {
       include: { klant: true, regels: true }
     })
 
-    await prisma.user.updateMany({ data: { offerteVolgNummer: user.offerteVolgNummer + 1 } })
     return offerte
   })
 
@@ -609,7 +665,7 @@ function setupIpcHandlers() {
       const user = await prisma.user.findFirst()
       if (!user) throw new Error('Geen gebruiker')
 
-      const factuurNummer = genereerNummer(user.factuurPrefix, user.factuurVolgNummer)
+      const factuurNummer = await genereerNummer(user.factuurPrefix, 'factuur')
 
       const factuur = await prisma.factuur.create({
         data: {
@@ -635,7 +691,6 @@ function setupIpcHandlers() {
         include: { klant: true, regels: true }
       })
 
-      await prisma.user.updateMany({ data: { factuurVolgNummer: user.factuurVolgNummer + 1 } })
       await prisma.offerte.update({ where: { id }, data: { status: 'GEACCEPTEERD' } })
 
       return { factuur }
@@ -683,6 +738,50 @@ function setupIpcHandlers() {
 
   ipcMain.handle('offertes:delete', async (_, id: string) => {
     await prisma.offerte.delete({ where: { id } })
+    return { succes: true }
+  })
+
+  ipcMain.handle('offertes:verstuur', async (_, id: string, payload: { email: string; onderwerp?: string; bericht?: string }) => {
+    const user = await prisma.user.findFirst()
+    if (!user) throw new Error('Geen gebruiker')
+    if (!user.emailSmtpHost || !user.emailSmtpUser) throw new Error('SMTP niet geconfigureerd')
+    const offerte = await prisma.offerte.findUnique({
+      where: { id },
+      include: { klant: true, regels: true }
+    })
+    if (!offerte) throw new Error('Offerte niet gevonden')
+
+    const bedrijfsnaam = user.bedrijfsnaam ?? user.naam
+    const klantNaam = offerte.klant.bedrijf ?? offerte.klant.naam
+    const totaalStr = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(offerte.totaal)
+
+    const onderwerp = payload.onderwerp ?? `Offerte ${offerte.nummer} van ${bedrijfsnaam}`
+    const aanheefTekst = (user as any).emailAanhef?.replace('{{naam}}', klantNaam) ?? `Geachte ${klantNaam},`
+    const afsluitingTekst = (user as any).emailAfsluitingsTekst ?? 'Met vriendelijke groet,'
+
+    const berichtHtml = payload.bericht
+      ? payload.bericht.replace(/\n/g, '<br>')
+      : `Hierbij sturen wij u offerte <strong>${offerte.nummer}</strong> toe met een totaalbedrag van <strong>${totaalStr}</strong>.<br><br>De offerte is geldig tot ${formatDatum(offerte.geldigTot.toISOString())}.`
+
+    const html = `<!DOCTYPE html><html lang="nl"><head><meta charset="UTF-8"></head>
+<body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; color: #333;">
+  <div style="background: #4f46e5; padding: 25px; border-radius: 8px 8px 0 0; text-align: center;">
+    <h1 style="color: white; margin: 0; font-size: 22px;">Offerte ${offerte.nummer}</h1>
+    <p style="color: #c7d2fe; margin: 4px 0 0;">${bedrijfsnaam}</p>
+  </div>
+  <div style="background: #f9fafb; padding: 25px; border: 1px solid #e5e7eb;">
+    <p>${aanheefTekst}</p>
+    <p>${berichtHtml}</p>
+    <p style="margin-top: 20px;">${afsluitingTekst}<br><strong>${bedrijfsnaam}</strong></p>
+  </div>
+</body></html>`
+
+    await verstuurEmail(
+      { host: user.emailSmtpHost, port: user.emailSmtpPort ?? 587, secure: user.emailSmtpSecure, user: user.emailSmtpUser, pass: user.emailSmtpPass ?? '' },
+      { naar: payload.email, van: `"${bedrijfsnaam}" <${user.emailSmtpUser}>`, onderwerp, html }
+    )
+
+    await prisma.offerte.update({ where: { id }, data: { verzondenOp: new Date(), status: offerte.status === 'CONCEPT' ? 'VERZONDEN' : offerte.status } })
     return { succes: true }
   })
 
@@ -837,6 +936,7 @@ function setupIpcHandlers() {
       'betalingsherinneringen', 'herinneringDagen',
       'kmVergoeding', 'anthropicApiKey', 'mollieApiKey',
       'donkerModus', 'autoStart', 'pdfMapPad',
+      'emailAanhef', 'emailAfsluitingsTekst',
     ])
     const updateData: Record<string, unknown> = {}
     for (const [sleutel, waarde] of Object.entries(data)) {
@@ -1131,7 +1231,7 @@ function setupIpcHandlers() {
     const urenRegistraties = await prisma.uurregistratie.findMany({ where: { id: { in: urenIds } } })
     if (urenRegistraties.length === 0) throw new Error('Geen urenregistraties gevonden')
 
-    const nummer = genereerNummer(user.factuurPrefix, user.factuurVolgNummer)
+    const nummer = await genereerNummer(user.factuurPrefix, 'factuur')
 
     const btwPercentage = user.standaardBtwTarief
 
@@ -1173,8 +1273,6 @@ function setupIpcHandlers() {
       },
       include: { klant: true, regels: true }
     })
-
-    await prisma.user.updateMany({ data: { factuurVolgNummer: user.factuurVolgNummer + 1 } })
 
     await prisma.uurregistratie.updateMany({
       where: { id: { in: urenIds } },

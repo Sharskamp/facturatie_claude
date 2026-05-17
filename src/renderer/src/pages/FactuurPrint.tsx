@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { Printer } from "lucide-react";
 import { formatBedrag, formatDatum } from "@/lib/utils";
+import QRCode from "qrcode";
 
 interface FactuurRegel {
   id: string;
@@ -63,6 +64,7 @@ export default function FactuurPrintPage() {
   const { id } = useParams<{ id: string }>();
   const [factuur, setFactuur] = useState<Factuur | null>(null);
   const [instellingen, setInstellingen] = useState<Instellingen | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([
@@ -73,6 +75,26 @@ export default function FactuurPrintPage() {
       setInstellingen(i);
     });
   }, [id]);
+
+  useEffect(() => {
+    if (!factuur || !instellingen?.iban) return;
+    const bedrijfsnaam = instellingen.bedrijfsnaam ?? instellingen.naam ?? '';
+    const iban = instellingen.iban.replace(/\s/g, '');
+    const bedrag = `EUR${factuur.totaal.toFixed(2)}`;
+    const epcData = [
+      'BCD', '002', '1', 'SCT',
+      '', // BIC (optional)
+      bedrijfsnaam,
+      iban,
+      bedrag,
+      '', // purpose (empty)
+      factuur.nummer,
+      '',
+    ].join('\n');
+    QRCode.toDataURL(epcData, { errorCorrectionLevel: 'M', width: 120 })
+      .then(url => setQrDataUrl(url))
+      .catch(() => {});
+  }, [factuur, instellingen]);
 
   if (!factuur || !instellingen) {
     return (
@@ -318,6 +340,16 @@ export default function FactuurPrintPage() {
             </p>
             {factuur.betalingsCondities && (
               <p className="text-gray-600 text-sm mt-1">{factuur.betalingsCondities}</p>
+            )}
+            {qrDataUrl && (
+              <div className="mt-4 flex items-center gap-4">
+                <img src={qrDataUrl} alt="SEPA betaal QR" className="w-28 h-28" />
+                <div className="text-xs text-gray-500">
+                  <p className="font-medium text-gray-700 mb-1">SEPA betaal QR</p>
+                  <p>Scan met je bank-app om</p>
+                  <p>direct te betalen</p>
+                </div>
+              </div>
             )}
           </div>
 

@@ -14,6 +14,7 @@ interface ElectronAPI {
     create: (data: unknown) => Promise<unknown>
     update: (id: string, data: unknown) => Promise<unknown>
     delete: (id: string) => Promise<{ succes: boolean }>
+    archiveer: (id: string) => Promise<unknown>
   }
   facturen: {
     list: (params?: { status?: string; klantId?: string; zoek?: string }) => Promise<unknown[]>
@@ -21,6 +22,7 @@ interface ElectronAPI {
     create: (data: unknown) => Promise<unknown>
     update: (id: string, data: unknown) => Promise<unknown>
     delete: (id: string) => Promise<{ succes: boolean }>
+    duplicate: (id: string) => Promise<unknown>
     verstuur: (id: string, data: unknown) => Promise<unknown>
     downloadPdf: (id: string) => Promise<unknown>
     maakTermijnFacturen: () => Promise<unknown>
@@ -33,6 +35,7 @@ interface ElectronAPI {
     create: (data: unknown) => Promise<unknown>
     update: (id: string, data: unknown) => Promise<unknown>
     delete: (id: string) => Promise<{ succes: boolean }>
+    verstuur: (id: string, data: { email: string; onderwerp?: string; bericht?: string }) => Promise<{ succes: boolean }>
   }
   inkomen: {
     list: (params?: { van?: string; tot?: string }) => Promise<unknown[]>

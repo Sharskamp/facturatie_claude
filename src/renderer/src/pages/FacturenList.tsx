@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Plus, FileText, Eye, Loader2, Search, Trash2 } from "lucide-react";
+import { Plus, FileText, Eye, Loader2, Search, Trash2, Copy } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -61,6 +61,8 @@ export default function FacturenPage() {
   const [teVerwijderen, setTeVerwijderen] = useState<Factuur | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
+  const [dupliceerLaden, setDuplceerLaden] = useState(false);
+  const [geselecteerd, setGeselecteerd] = useState<Set<string>>(new Set());
 
   const laadFacturen = useCallback(async (status: StatusFilter) => {
     setLaden(true);
@@ -96,6 +98,7 @@ export default function FacturenPage() {
   function wisselStatus(s: StatusFilter) {
     setStatusFilter(s);
     setZoekterm("");
+    setGeselecteerd(new Set());
     navigate(`/facturen${s !== "ALLES" ? `?status=${s}` : ""}`, { replace: true });
   }
 
@@ -145,6 +148,47 @@ export default function FacturenPage() {
   function contextKopieerNummer(f: Factuur) {
     setContextMenu(null);
     navigator.clipboard.writeText(f.nummer).catch(() => {});
+  }
+
+  async function contextDupliceenFactuur(f: Factuur) {
+    setContextMenu(null);
+    if (!confirm(`Factuur ${f.nummer} dupliceren als nieuwe concept factuur?`)) return;
+    try {
+      const kopie = await window.api.facturen.duplicate(f.id) as { id: string };
+      navigate(`/facturen/${kopie.id}`);
+    } catch (e) {
+      console.error("Fout bij dupliceren:", e);
+    }
+  }
+
+  function toggleSelectie(id: string) {
+    setGeselecteerd(prev => {
+      const n = new Set(prev);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
+  }
+
+  function selecteerAlles() {
+    if (geselecteerd.size === gefilterd.length) {
+      setGeselecteerd(new Set());
+    } else {
+      setGeselecteerd(new Set(gefilterd.map(f => f.id)));
+    }
+  }
+
+  async function bulkMarkeerBetaald() {
+    if (!confirm(`${geselecteerd.size} facturen markeren als betaald?`)) return;
+    await Promise.all([...geselecteerd].map(id => window.api.facturen.update(id, { status: 'BETAALD' })));
+    setGeselecteerd(new Set());
+    laadFacturen(statusFilter);
+  }
+
+  async function bulkVerwijder() {
+    if (!confirm(`${geselecteerd.size} facturen verwijderen? Dit kan niet ongedaan worden gemaakt.`)) return;
+    await Promise.all([...geselecteerd].map(id => window.api.facturen.delete(id)));
+    setGeselecteerd(new Set());
+    laadFacturen(statusFilter);
   }
 
   // Lokale zoekfilter
@@ -231,6 +275,34 @@ export default function FacturenPage() {
           />
         </div>
 
+        {geselecteerd.size > 0 && (
+          <div className="flex items-center gap-3 p-3 bg-indigo-50 border border-indigo-200 rounded-lg">
+            <span className="text-sm font-medium text-indigo-700">
+              {geselecteerd.size} geselecteerd
+            </span>
+            <div className="flex items-center gap-2 ml-auto">
+              <button
+                onClick={bulkMarkeerBetaald}
+                className="px-3 py-1.5 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+              >
+                Markeer betaald
+              </button>
+              <button
+                onClick={bulkVerwijder}
+                className="px-3 py-1.5 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+              >
+                Verwijderen
+              </button>
+              <button
+                onClick={() => setGeselecteerd(new Set())}
+                className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-gray-600"
+              >
+                Deselecteren
+              </button>
+            </div>
+          </div>
+        )}
+
         <Card>
           <CardContent className="p-0">
             {laden ? (
@@ -265,6 +337,14 @@ export default function FacturenPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-10">
+                      <input
+                        type="checkbox"
+                        checked={gefilterd.length > 0 && geselecteerd.size === gefilterd.length}
+                        onChange={selecteerAlles}
+                        className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                    </TableHead>
                     <TableHead>Nummer</TableHead>
                     <TableHead>Klant</TableHead>
                     <TableHead>Datum</TableHead>
@@ -285,6 +365,14 @@ export default function FacturenPage() {
                         onClick={() => navigate(`/facturen/${f.id}`)}
                         onContextMenu={(e) => handleContextMenu(e, f)}
                       >
+                        <TableCell className="w-10" onClick={e => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={geselecteerd.has(f.id)}
+                            onChange={() => toggleSelectie(f.id)}
+                            className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                          />
+                        </TableCell>
                         <TableCell className="font-mono text-sm font-medium text-indigo-700">
                           {f.nummer}
                         </TableCell>
@@ -378,6 +466,13 @@ export default function FacturenPage() {
           >
             <FileText className="h-4 w-4 text-gray-400" />
             PDF downloaden
+          </button>
+          <button
+            onClick={() => contextDupliceenFactuur(contextMenu.factuur)}
+            className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+          >
+            <Copy className="h-4 w-4 text-gray-400" />
+            Dupliceer als nieuw concept
           </button>
           <button
             onClick={() => contextMarkeerBetaald(contextMenu.factuur)}

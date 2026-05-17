@@ -47,6 +47,8 @@ model User {
   autoStart             Boolean   @default(false)
   pdfMapPad             String?
   mollieApiKey          String?
+  emailAanhef          String?
+  emailAfsluitingsTekst String?
   logoBase64            String?
   factuurNummerFormaat  String    @default("{PREFIX}{JAAR}-{NNNN}")
   korWaarschuwing       Boolean   @default(true)

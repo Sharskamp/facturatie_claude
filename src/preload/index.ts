@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('api', {
     create: (data: unknown) => ipcRenderer.invoke('klanten:create', data),
     update: (id: string, data: unknown) => ipcRenderer.invoke('klanten:update', id, data),
     delete: (id: string) => ipcRenderer.invoke('klanten:delete', id),
+    archiveer: (id: string) => ipcRenderer.invoke('klanten:archiveer', id),
   },
   facturen: {
     list: (params?: unknown) => ipcRenderer.invoke('facturen:list', params),
@@ -23,6 +24,7 @@ contextBridge.exposeInMainWorld('api', {
     create: (data: unknown) => ipcRenderer.invoke('facturen:create', data),
     update: (id: string, data: unknown) => ipcRenderer.invoke('facturen:update', id, data),
     delete: (id: string) => ipcRenderer.invoke('facturen:delete', id),
+    duplicate: (id: string) => ipcRenderer.invoke('facturen:duplicate', id),
     verstuur: (id: string, data: unknown) => ipcRenderer.invoke('facturen:verstuur', id, data),
     downloadPdf: (id: string) => ipcRenderer.invoke('facturen:downloadPdf', id),
     maakTermijnFacturen: () => ipcRenderer.invoke('facturen:maakTermijnFacturen'),
@@ -35,6 +37,7 @@ contextBridge.exposeInMainWorld('api', {
     create: (data: unknown) => ipcRenderer.invoke('offertes:create', data),
     update: (id: string, data: unknown) => ipcRenderer.invoke('offertes:update', id, data),
     delete: (id: string) => ipcRenderer.invoke('offertes:delete', id),
+    verstuur: (id: string, data: unknown) => ipcRenderer.invoke('offertes:verstuur', id, data),
   },
   inkomen: {
     list: (params?: unknown) => ipcRenderer.invoke('inkomen:list', params),

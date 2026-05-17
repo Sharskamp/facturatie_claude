@@ -18,6 +18,7 @@ import FactuurPrint from './pages/FactuurPrint'
 import Offertes from './pages/Offertes'
 import OfferteNieuw from './pages/OfferteNieuw'
 import OfferteDetail from './pages/OfferteDetail'
+import OffertePrint from './pages/OffertePrint'
 import InkomenPage from './pages/InkomenPage'
 import UitgavenPage from './pages/UitgavenPage'
 import Agenda from './pages/Agenda'
@@ -59,6 +60,7 @@ function AppRoutes() {
           <Route path="/offertes" element={<Offertes />} />
           <Route path="/offertes/nieuw" element={<OfferteNieuw />} />
           <Route path="/offertes/:id" element={<OfferteDetail />} />
+          <Route path="/offertes/:id/print" element={<OffertePrint />} />
           <Route path="/inkomen" element={<InkomenPage />} />
           <Route path="/uitgaven" element={<UitgavenPage />} />
           <Route path="/agenda" element={<Agenda />} />

@@ -10,6 +10,8 @@ import {
   Loader2,
   Save,
   X,
+  Mail,
+  Printer,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -32,6 +34,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatBedrag, formatDatum, statusKleur, statusLabel } from "@/lib/utils";
+import {
+  Modal,
+  ModalContent,
+  ModalHeader,
+  ModalTitle,
+  ModalFooter,
+  ModalClose,
+} from "@/components/ui/modal";
 
 interface OfferteRegel {
   id: string;
@@ -159,6 +169,10 @@ export default function OfferteDetailPage() {
   const [opslaanLaden, setOpslaanLaden] = useState(false);
   const [fout, setFout] = useState<string | null>(null);
   const [melding, setMelding] = useState<{ type: "succes" | "fout"; tekst: string } | null>(null);
+  const [emailModalOpen, setEmailModalOpen] = useState(false);
+  const [emailForm, setEmailForm] = useState({ email: '', onderwerp: '', bericht: '' });
+  const [emailLaden, setEmailLaden] = useState(false);
+  const [emailFout, setEmailFout] = useState<string | null>(null);
 
   // Edit form state
   const [klanten, setKlanten] = useState<Klant[]>([]);
@@ -327,6 +341,29 @@ export default function OfferteDetailPage() {
     }
   }
 
+  async function verstuurEmail() {
+    if (!offerte || !emailForm.email.trim()) {
+      setEmailFout('E-mailadres is verplicht');
+      return;
+    }
+    setEmailLaden(true);
+    setEmailFout(null);
+    try {
+      await window.api.offertes.verstuur(offerte.id, {
+        email: emailForm.email,
+        onderwerp: emailForm.onderwerp || undefined,
+        bericht: emailForm.bericht || undefined,
+      });
+      setEmailModalOpen(false);
+      toonMelding('succes', 'Offerte verstuurd per e-mail');
+      laadOfferte();
+    } catch (e: unknown) {
+      setEmailFout(e instanceof Error ? e.message : 'Versturen mislukt');
+    } finally {
+      setEmailLaden(false);
+    }
+  }
+
   if (laden) {
     return (
       <div>
@@ -406,6 +443,26 @@ export default function OfferteDetailPage() {
 
             {!bewerken && (
               <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setEmailForm({ email: offerte.klant.email ?? '', onderwerp: '', bericht: '' });
+                    setEmailFout(null);
+                    setEmailModalOpen(true);
+                  }}
+                >
+                  <Mail className="h-4 w-4" />
+                  E-mail versturen
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => navigate(`/offertes/${offerte.id}/print`)}
+                >
+                  <Printer className="h-4 w-4" />
+                  Afdrukken
+                </Button>
                 <Button
                   variant="outline"
                   size="sm"
@@ -1066,6 +1123,61 @@ export default function OfferteDetailPage() {
           </>
         )}
       </div>
+
+      <Modal open={emailModalOpen} onOpenChange={setEmailModalOpen}>
+        <ModalContent className="max-w-lg">
+          <ModalHeader>
+            <ModalTitle>Offerte versturen per e-mail</ModalTitle>
+          </ModalHeader>
+          <div className="space-y-4">
+            {emailFout && (
+              <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+                {emailFout}
+              </div>
+            )}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">E-mailadres ontvanger *</label>
+              <input
+                type="email"
+                value={emailForm.email}
+                onChange={(e) => setEmailForm(prev => ({ ...prev, email: e.target.value }))}
+                placeholder="klant@bedrijf.nl"
+                className="flex h-9 w-full rounded-lg border border-gray-300 bg-white px-3 py-1 text-sm text-gray-900 shadow-sm placeholder:text-gray-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:border-transparent"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Onderwerp (optioneel)</label>
+              <input
+                type="text"
+                value={emailForm.onderwerp}
+                onChange={(e) => setEmailForm(prev => ({ ...prev, onderwerp: e.target.value }))}
+                placeholder={`Offerte ${offerte?.nummer}`}
+                className="flex h-9 w-full rounded-lg border border-gray-300 bg-white px-3 py-1 text-sm text-gray-900 shadow-sm placeholder:text-gray-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:border-transparent"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Persoonlijk bericht (optioneel)</label>
+              <textarea
+                value={emailForm.bericht}
+                onChange={(e) => setEmailForm(prev => ({ ...prev, bericht: e.target.value }))}
+                placeholder="Laat leeg voor standaard tekst..."
+                rows={4}
+                className="flex w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm placeholder:text-gray-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:border-transparent resize-none"
+              />
+            </div>
+          </div>
+          <ModalFooter className="mt-4 gap-2">
+            <ModalClose asChild>
+              <Button variant="outline">Annuleren</Button>
+            </ModalClose>
+            <Button onClick={verstuurEmail} disabled={emailLaden} className="gap-2">
+              {emailLaden && <Loader2 className="h-4 w-4 animate-spin" />}
+              <Mail className="h-4 w-4" />
+              Versturen
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
     </div>
   );
 }
