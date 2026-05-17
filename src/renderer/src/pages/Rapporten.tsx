@@ -146,6 +146,125 @@ function getFactuurDatum(f: Factuur): string | undefined {
   return f.datum ?? f.aangemaakt;
 }
 
+function InkomensSchatting() {
+  const [omzet, setOmzet] = useState(0);
+  const [kosten, setKosten] = useState(0);
+  const [zelfstandigenaftrek, setZelfstandigenaftrek] = useState(3750); // 2025 bedrag
+  const [startersaftrek, setStartersaftrek] = useState(0);
+
+  const brutoWinst = Math.max(0, omzet - kosten);
+  const fiscaleWinst = Math.max(0, brutoWinst - zelfstandigenaftrek - startersaftrek);
+  const mkbVrijstelling = fiscaleWinst * 0.127;
+  const belastbaarInkomen = Math.max(0, fiscaleWinst - mkbVrijstelling);
+
+  // IB 2025 schijven (box 1)
+  const ib1 = Math.min(belastbaarInkomen, 75518) * 0.3697;
+  const ib2 = Math.max(0, belastbaarInkomen - 75518) * 0.495;
+  const ibTotaal = ib1 + ib2;
+
+  // Algemene heffingskorting (2025 ~€3068, afgebouwd boven €24813)
+  const ahk = belastbaarInkomen <= 24813
+    ? 3068
+    : Math.max(0, 3068 - (belastbaarInkomen - 24813) * 0.06392);
+
+  // Arbeidskorting (simpel, max ~€5158)
+  const arbeidskorting = Math.min(5158, belastbaarInkomen * 0.08);
+
+  const nettoIB = Math.max(0, ibTotaal - ahk - arbeidskorting);
+
+  // ZVW premie (5.32% over max €71628 grondslag = max ~€3809)
+  const zvwGrondslag = Math.min(brutoWinst, 71628);
+  const zvwPremie = zvwGrondslag * 0.0532;
+
+  const nettoInkomen = belastbaarInkomen + mkbVrijstelling + zelfstandigenaftrek + startersaftrek - nettoIB - zvwPremie;
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Verwachte omzet (excl. BTW)</label>
+          <div className="relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">€</span>
+            <input
+              type="number"
+              min="0"
+              step="100"
+              value={omzet}
+              onChange={(e) => setOmzet(parseFloat(e.target.value) || 0)}
+              className="flex h-9 w-full rounded-lg border border-gray-300 bg-white pl-7 pr-3 py-1 text-sm text-gray-900 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+            />
+          </div>
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Verwachte zakelijke kosten</label>
+          <div className="relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">€</span>
+            <input
+              type="number"
+              min="0"
+              step="100"
+              value={kosten}
+              onChange={(e) => setKosten(parseFloat(e.target.value) || 0)}
+              className="flex h-9 w-full rounded-lg border border-gray-300 bg-white pl-7 pr-3 py-1 text-sm text-gray-900 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+            />
+          </div>
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Zelfstandigenaftrek (2025)</label>
+          <div className="relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">€</span>
+            <input
+              type="number"
+              min="0"
+              value={zelfstandigenaftrek}
+              onChange={(e) => setZelfstandigenaftrek(parseFloat(e.target.value) || 0)}
+              className="flex h-9 w-full rounded-lg border border-gray-300 bg-white pl-7 pr-3 py-1 text-sm text-gray-900 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+            />
+          </div>
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">Startersaftrek (optioneel)</label>
+          <div className="relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">€</span>
+            <input
+              type="number"
+              min="0"
+              value={startersaftrek}
+              onChange={(e) => setStartersaftrek(parseFloat(e.target.value) || 0)}
+              className="flex h-9 w-full rounded-lg border border-gray-300 bg-white pl-7 pr-3 py-1 text-sm text-gray-900 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-gray-50 rounded-xl p-6 space-y-3">
+        <h3 className="font-semibold text-gray-900 mb-4">Berekening</h3>
+        {[
+          { label: 'Bruto winst', waarde: brutoWinst, bold: false },
+          { label: `Zelfstandigenaftrek`, waarde: -zelfstandigenaftrek, bold: false },
+          { label: `Startersaftrek`, waarde: -startersaftrek, bold: false, hide: startersaftrek === 0 },
+          { label: 'Fiscale winst', waarde: fiscaleWinst, bold: false },
+          { label: 'MKB-winstvrijstelling (12,7%)', waarde: -mkbVrijstelling, bold: false },
+          { label: 'Belastbaar inkomen', waarde: belastbaarInkomen, bold: true },
+          { label: 'Inkomstenbelasting (IB)', waarde: -nettoIB, bold: false },
+          { label: 'ZVW-premie (5,32%)', waarde: -zvwPremie, bold: false },
+          { label: '≈ Netto inkomen', waarde: nettoInkomen, bold: true },
+        ].filter(r => !(r as { hide?: boolean }).hide).map(({ label, waarde, bold }) => (
+          <div key={label} className={`flex justify-between text-sm ${bold ? 'font-bold text-gray-900 border-t border-gray-200 pt-3 mt-2' : 'text-gray-600'}`}>
+            <span>{label}</span>
+            <span className={waarde < 0 ? 'text-red-600' : waarde > 0 && bold ? 'text-green-700' : ''}>
+              {waarde < 0 ? '-' : ''}{new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(Math.abs(waarde))}
+            </span>
+          </div>
+        ))}
+      </div>
+      <p className="text-xs text-gray-400">
+        * Dit is een globale schatting op basis van belastingtarieven 2025. Geen belastingadvies. Raadpleeg een boekhouder voor uw aangifte.
+      </p>
+    </div>
+  );
+}
+
 export default function RapportenPagina() {
   const [actieveTab, setActieveTab] = useState<Tab>("btw");
   const [facturen, setFacturen] = useState<Factuur[]>([]);
@@ -1440,6 +1559,24 @@ export default function RapportenPagina() {
                   Gebaseerd op openstaande facturen en gemiddelde uitgaven van de afgelopen 3 maanden.
                 </p>
               </div>
+            )}
+
+            {/* ── Inkomensschatting ── */}
+            {actieveTab === "inkomensschatting" && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Calculator className="h-5 w-5" />
+                    Inkomensschatting ZZP/Freelancer {new Date().getFullYear()}
+                  </CardTitle>
+                  <CardDescription>
+                    Voer je verwachte omzet en kosten in voor een ruwe netto inkomenschatting. Geen belastingadvies.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <InkomensSchatting />
+                </CardContent>
+              </Card>
             )}
           </>
         )}
