@@ -52,6 +52,10 @@ export async function verstuurEmail(config: EmailConfig, opties: EmailOpties) {
   });
 }
 
+function htmlEscape(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
 export function maakFactuurEmailHtml(params: {
   klantNaam: string;
   bedrijfsnaam: string;
@@ -60,6 +64,7 @@ export function maakFactuurEmailHtml(params: {
   vervaldatum: string;
   factuurUrl: string;
   notities?: string;
+  mollieBetaalLink?: string | null;
 }): string {
   return `
 <!DOCTYPE html>
@@ -76,34 +81,37 @@ export function maakFactuurEmailHtml(params: {
   </div>
 
   <div style="background: #f9fafb; padding: 30px; border: 1px solid #e5e7eb;">
-    <p>Geachte ${params.klantNaam},</p>
+    <p>Geachte ${htmlEscape(params.klantNaam)},</p>
 
-    <p>Hierbij ontvangt u factuur <strong>${params.factuurNummer}</strong> met een totaalbedrag van <strong>${params.totaal}</strong>.</p>
+    <p>Hierbij ontvangt u factuur <strong>${htmlEscape(params.factuurNummer)}</strong> met een totaalbedrag van <strong>${htmlEscape(params.totaal)}</strong>.</p>
 
     <div style="background: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; margin: 20px 0;">
       <table style="width: 100%; border-collapse: collapse;">
         <tr>
           <td style="padding: 8px 0; color: #6b7280;">Factuurnummer</td>
-          <td style="padding: 8px 0; text-align: right; font-weight: bold;">${params.factuurNummer}</td>
+          <td style="padding: 8px 0; text-align: right; font-weight: bold;">${htmlEscape(params.factuurNummer)}</td>
         </tr>
         <tr>
           <td style="padding: 8px 0; color: #6b7280;">Vervaldatum</td>
-          <td style="padding: 8px 0; text-align: right; font-weight: bold;">${params.vervaldatum}</td>
+          <td style="padding: 8px 0; text-align: right; font-weight: bold;">${htmlEscape(params.vervaldatum)}</td>
         </tr>
         <tr style="border-top: 1px solid #e5e7eb;">
           <td style="padding: 12px 0; font-weight: bold;">Totaal bedrag</td>
-          <td style="padding: 12px 0; text-align: right; font-size: 20px; font-weight: bold; color: #4f46e5;">${params.totaal}</td>
+          <td style="padding: 12px 0; text-align: right; font-size: 20px; font-weight: bold; color: #4f46e5;">${htmlEscape(params.totaal)}</td>
         </tr>
       </table>
     </div>
 
-    ${params.notities ? `<p style="color: #6b7280; font-style: italic;">${params.notities}</p>` : ""}
+    ${params.notities ? `<p style="color: #6b7280; font-style: italic;">${htmlEscape(params.notities)}</p>` : ""}
 
+    ${params.mollieBetaalLink ? `
     <div style="text-align: center; margin: 30px 0;">
-      <a href="${params.factuurUrl}" style="background: #4f46e5; color: white; padding: 14px 28px; border-radius: 8px; text-decoration: none; font-weight: bold; display: inline-block;">
-        Factuur bekijken &amp; downloaden
+      <a href="${params.mollieBetaalLink}" style="background: #16a34a; color: white; padding: 14px 28px; border-radius: 8px; text-decoration: none; font-weight: bold; display: inline-block;">
+        ✓ Direct betalen via iDEAL
       </a>
+      <p style="font-size: 12px; color: #6b7280; margin-top: 8px;">Veilig betalen via Mollie</p>
     </div>
+    ` : ""}
 
     <p>Met vriendelijke groet,<br><strong>${params.bedrijfsnaam}</strong></p>
   </div>

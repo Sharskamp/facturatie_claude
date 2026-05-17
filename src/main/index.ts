@@ -218,7 +218,11 @@ async function stuurHerinneringen(): Promise<{ verstuurd: number; fouten: number
 
 function setupIpcHandlers() {
   // Shell
-  ipcMain.handle('shell:open-external', (_, url: string) => shell.openExternal(url))
+  ipcMain.handle('shell:open-external', (_, url: string) => {
+    const toegestaan = /^https?:\/\//i.test(url) || url.startsWith('mailto:') || url.startsWith('tel:') || url.startsWith('wa.me')
+    if (!toegestaan) { logSchrijven(`Geblokkeerde shell.openExternal URL: ${url}`); return }
+    return shell.openExternal(url)
+  })
 
   ipcMain.handle('shell:open-print', async (_, factuurId: string) => {
     const printWindow = new BrowserWindow({
@@ -507,8 +511,9 @@ function setupIpcHandlers() {
         factuurNummer: factuur.nummer,
         totaal: formatBedrag(factuur.totaal),
         vervaldatum: formatDatum(factuur.vervaldatum),
-        factuurUrl: `adminpro://factuur/${factuur.id}`,
+        factuurUrl: ``,
         notities: payload.bericht,
+        mollieBetaalLink: factuur.mollieBetaalLink,
       })
 
       await verstuurEmail(
@@ -596,7 +601,7 @@ function setupIpcHandlers() {
     return offerte
   })
 
-  ipcMain.handle('offertes:update', async (_, id: string, data: Record<string, unknown>) => {
+  ipcMain.handle('offertes:update', async (_, id: string, data: Record<string, unknown> & { regels?: Array<Record<string, unknown>> }) => {
     if (data.actie === 'naar-factuur') {
       const offerte = await prisma.offerte.findUnique({ where: { id }, include: { klant: true, regels: true } })
       if (!offerte) throw new Error('Niet gevonden')
@@ -636,14 +641,43 @@ function setupIpcHandlers() {
       return { factuur }
     }
 
+    const { regels, actie: _actie, ...velden } = data
+
+    if (regels) {
+      let subtotaal = 0; let btwBedrag = 0
+      const berekendeRegels = regels.map((r, index) => {
+        const bruto = (r.prijs as number) * (r.aantal as number)
+        const korting = (bruto * ((r.kortingPercentage as number) ?? 0)) / 100
+        const netto = bruto - korting
+        const btw = (netto * (r.btwPercentage as number)) / 100
+        subtotaal += netto; btwBedrag += btw
+        return { ...r, totaal: netto + btw, volgorde: index }
+      })
+      const kortingBedrag = (subtotaal * ((velden.kortingPercentage as number) ?? 0)) / 100
+      subtotaal -= kortingBedrag
+
+      await prisma.offerteRegel.deleteMany({ where: { offerteId: id } })
+      return prisma.offerte.update({
+        where: { id },
+        data: {
+          ...velden,
+          subtotaal, btwBedrag, kortingBedrag, totaal: subtotaal + btwBedrag,
+          datum: velden.datum ? new Date(velden.datum as string) : undefined,
+          geldigTot: velden.geldigTot ? new Date(velden.geldigTot as string) : undefined,
+          regels: { create: berekendeRegels as Parameters<typeof prisma.offerteRegel.create>[0]['data'][] }
+        },
+        include: { klant: true, regels: { orderBy: { volgorde: 'asc' } } }
+      })
+    }
+
     return prisma.offerte.update({
       where: { id },
       data: {
-        ...data,
-        datum: data.datum ? new Date(data.datum as string) : undefined,
-        geldigTot: data.geldigTot ? new Date(data.geldigTot as string) : undefined,
+        ...velden,
+        datum: velden.datum ? new Date(velden.datum as string) : undefined,
+        geldigTot: velden.geldigTot ? new Date(velden.geldigTot as string) : undefined,
       },
-      include: { klant: true }
+      include: { klant: true, regels: { orderBy: { volgorde: 'asc' } } }
     })
   })
 
@@ -792,10 +826,24 @@ function setupIpcHandlers() {
   })
 
   ipcMain.handle('instellingen:update', async (_, data: Record<string, unknown>) => {
-    const { emailSmtpPass, anthropicApiKey, ...rest } = data
-    const updateData: Record<string, unknown> = { ...rest }
-    if (emailSmtpPass) updateData.emailSmtpPass = emailSmtpPass
-    if (anthropicApiKey !== undefined) updateData.anthropicApiKey = anthropicApiKey || null
+    const toegestaneVelden = new Set([
+      'naam', 'email', 'bedrijfsnaam', 'kvkNummer', 'btwNummer', 'iban',
+      'adres', 'postcode', 'stad', 'telefoon', 'website', 'logo', 'logoBase64',
+      'factuurPrefix', 'offertePrefix', 'factuurVolgNummer', 'offerteVolgNummer',
+      'factuurNummerFormaat', 'standaardCreditnotaPrefix',
+      'emailSmtpHost', 'emailSmtpPort', 'emailSmtpUser', 'emailSmtpSecure', 'emailSmtpPass',
+      'korActief', 'korDrempel', 'korWaarschuwing',
+      'standaardBetaalTermijn', 'standaardBtwTarief', 'betalingsCondities',
+      'betalingsherinneringen', 'herinneringDagen',
+      'kmVergoeding', 'anthropicApiKey', 'mollieApiKey',
+      'donkerModus', 'autoStart', 'pdfMapPad',
+    ])
+    const updateData: Record<string, unknown> = {}
+    for (const [sleutel, waarde] of Object.entries(data)) {
+      if (toegestaneVelden.has(sleutel)) updateData[sleutel] = waarde
+    }
+    if (updateData.emailSmtpPass === '') delete updateData.emailSmtpPass
+    if (updateData.anthropicApiKey === '') updateData.anthropicApiKey = null
     await prisma.user.updateMany({ data: updateData })
     return { succes: true }
   })
@@ -915,9 +963,13 @@ function setupIpcHandlers() {
       const parentWindow = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
       if (!parentWindow) return { succes: false, fout: 'Geen actief venster' }
 
-      // Toon save dialog VOOR het aanmaken van de printpagina
+      const user = await prisma.user.findFirst({ select: { pdfMapPad: true } })
+      const pdfPad = user?.pdfMapPad
+        ? join(user.pdfMapPad, `factuur-${factuur.nummer}.pdf`)
+        : `factuur-${factuur.nummer}.pdf`
+
       const result = await dialog.showSaveDialog(parentWindow, {
-        defaultPath: `factuur-${factuur.nummer}.pdf`,
+        defaultPath: pdfPad,
         filters: [{ name: 'PDF bestanden', extensions: ['pdf'] }]
       })
       if (result.canceled || !result.filePath) return { succes: false }

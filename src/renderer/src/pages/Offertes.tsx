@@ -111,7 +111,7 @@ export default function OffertesPage() {
                   </TableRow>
                 ) : (
                   offertes.map((offerte) => (
-                    <TableRow key={offerte.id} className="cursor-pointer">
+                    <TableRow key={offerte.id} className="cursor-pointer" onClick={() => navigate(`/offertes/${offerte.id}`)}>
                       <TableCell className="font-medium text-indigo-600">{offerte.nummer}</TableCell>
                       <TableCell>
                         <div className="font-medium">{offerte.klant.naam}</div>
@@ -135,7 +135,7 @@ export default function OffertesPage() {
                             <Button
                               variant="ghost"
                               size="icon-sm"
-                              onClick={() => naarFactuur(offerte.id)}
+                              onClick={(e) => { e.stopPropagation(); naarFactuur(offerte.id) }}
                               title="Omzetten naar factuur"
                             >
                               <ArrowRight className="h-4 w-4" />
@@ -144,7 +144,7 @@ export default function OffertesPage() {
                           <Button
                             variant="ghost"
                             size="icon-sm"
-                            onClick={() => verwijder(offerte.id)}
+                            onClick={(e) => { e.stopPropagation(); verwijder(offerte.id) }}
                           >
                             <Trash2 className="h-4 w-4 text-red-500" />
                           </Button>

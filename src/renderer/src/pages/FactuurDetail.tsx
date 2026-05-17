@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
+  Pencil,
   Printer,
   Send,
   Loader2,
@@ -283,6 +284,16 @@ export default function FactuurDetailPage() {
               <ArrowLeft className="h-4 w-4" />
               Terug
             </Button>
+            {factuur.status === "CONCEPT" && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate(`/facturen/${id}/bewerken`)}
+              >
+                <Pencil className="h-4 w-4" />
+                Bewerken
+              </Button>
+            )}
             <Button
               variant="outline"
               size="sm"

@@ -1,8 +1,12 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import {
+  Plus,
+  Trash2,
   ArrowLeft,
   Loader2,
+  Save,
+  Send,
   ChevronDown,
   ChevronUp,
 } from "lucide-react";
@@ -18,9 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { berekenVervaldatum } from "@/lib/utils";
-import { FactuurRegelTabel, type Regel, type Product } from "@/components/facturen/FactuurRegelTabel";
-import { FactuurTotalenSidebar } from "@/components/facturen/FactuurTotalenSidebar";
+import { formatBedrag } from "@/lib/utils";
 
 interface Klant {
   id: string;
@@ -28,6 +30,43 @@ interface Klant {
   bedrijf?: string | null;
   email?: string | null;
 }
+
+interface Regel {
+  id: string;
+  omschrijving: string;
+  aantal: number;
+  eenheid: string;
+  prijs: number;
+  btwPercentage: number;
+  kortingPercentage: number;
+}
+
+interface FactuurRegel {
+  omschrijving: string;
+  aantal: number;
+  eenheid?: string;
+  prijs: number;
+  btwPercentage: number;
+  kortingPercentage: number;
+}
+
+interface Factuur {
+  id: string;
+  klantId: string;
+  datum: string;
+  vervaldatum: string;
+  status: string;
+  nummer?: string;
+  btwVerlegd: boolean;
+  kortingPercentage: number;
+  notities?: string;
+  betalingsCondities?: string;
+  taal?: string;
+  totaalKortingBedrag: number;
+  regels: FactuurRegel[];
+}
+
+const BTW_TARIEVEN = [0, 9, 21];
 
 const LEEG_REGEL = (): Regel => ({
   id: crypto.randomUUID(),
@@ -50,39 +89,29 @@ function berekenRegelTotalen(
   return { netto, btw, totaal: netto + btw };
 }
 
-function vandaagString() {
-  return new Date().toISOString().split("T")[0];
-}
-
-function vervaldatumString(dagen = 30) {
-  return berekenVervaldatum(dagen).toISOString().split("T")[0];
-}
-
-export default function NieuweFactuurPage() {
+export default function FactuurBewerkenPage() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const initieleKlantId = searchParams.get("klantId") ?? "";
+  const { id } = useParams<{ id: string }>();
 
   const [klanten, setKlanten] = useState<Klant[]>([]);
   const [klantLaden, setKlantLaden] = useState(true);
+  const [factuurLaden, setFactuurLaden] = useState(true);
+  const [factuurNummer, setFactuurNummer] = useState<string>("");
+  const [nietBewerkbaar, setNietBewerkbaar] = useState(false);
   const [opslaan, setOpslaan] = useState(false);
   const [fout, setFout] = useState<string | null>(null);
   const [foutenVelden, setFoutenVelden] = useState<Record<string, string>>({});
 
   // Formuliervelden
-  const [klantId, setKlantId] = useState(initieleKlantId);
-  const [datum, setDatum] = useState(vandaagString());
-  const [vervaldatum, setVervaldatum] = useState(vervaldatumString(30));
+  const [klantId, setKlantId] = useState("");
+  const [datum, setDatum] = useState("");
+  const [vervaldatum, setVervaldatum] = useState("");
   const [btwVerlegd, setBtwVerlegd] = useState(false);
   const [kortingPercentage, setKortingPercentage] = useState(0);
   const [notities, setNotities] = useState("");
-  const [betalingsCondities, setBetalingsCondities] = useState(
-    "Betaling binnen 30 dagen na factuurdatum."
-  );
+  const [betalingsCondities, setBetalingsCondities] = useState("");
   const [regels, setRegels] = useState<Regel[]>([LEEG_REGEL()]);
   const [geavanceerdOpen, setGeavanceerdOpen] = useState(false);
-  const [terugkerend, setTerugkerend] = useState(false);
-  const [terugkerendInterval, setTerugkerendInterval] = useState<"maandelijks" | "kwartaal" | "jaarlijks">("maandelijks");
 
   // Totaalkorting
   const [totaalKortingActief, setTotaalKortingActief] = useState(false);
@@ -92,12 +121,6 @@ export default function NieuweFactuurPage() {
 
   // Factuurtaal
   const [taal, setTaal] = useState<"nl" | "en">("nl");
-
-  // KOR
-  const [korActief, setKorActief] = useState(false);
-
-  // Productcatalogus
-  const [producten, setProducten] = useState<Product[]>([]);
 
   const laadKlanten = useCallback(async () => {
     try {
@@ -112,25 +135,54 @@ export default function NieuweFactuurPage() {
 
   useEffect(() => {
     laadKlanten();
-    window.api.producten.list().then(data => setProducten(Array.isArray(data) ? data : [])).catch(() => {});
-    window.api.instellingen.get().then((inst) => {
-      if (!inst) return;
-      if (inst.korActief) {
-        setKorActief(true);
-        setRegels((prev) => prev.map((r) => ({ ...r, btwPercentage: 0 })));
-      } else if (inst.standaardBtwTarief != null) {
-        setRegels((prev) => prev.map((r) => ({ ...r, btwPercentage: inst.standaardBtwTarief as number })));
-      }
-      if (inst.standaardBetaalTermijn) {
-        setVervaldatum(vervaldatumString(inst.standaardBetaalTermijn as number));
-      }
-    }).catch(() => {});
-  }, [laadKlanten]);
+
+    if (!id) return;
+
+    window.api.facturen.get(id)
+      .then((factuur: Factuur) => {
+        if (factuur.status !== "CONCEPT") {
+          setNietBewerkbaar(true);
+          setFactuurNummer(factuur.nummer ?? factuur.id);
+          return;
+        }
+
+        setFactuurNummer(factuur.nummer ?? factuur.id);
+        setKlantId(factuur.klantId);
+        setDatum(factuur.datum.split("T")[0]);
+        setVervaldatum(factuur.vervaldatum.split("T")[0]);
+        setBtwVerlegd(factuur.btwVerlegd);
+        setKortingPercentage(factuur.kortingPercentage);
+        setNotities(factuur.notities ?? "");
+        setBetalingsCondities(factuur.betalingsCondities ?? "");
+        setTaal((factuur.taal as "nl" | "en") ?? "nl");
+        setRegels(
+          factuur.regels.map((r) => ({
+            id: crypto.randomUUID(),
+            omschrijving: r.omschrijving,
+            aantal: r.aantal,
+            eenheid: r.eenheid ?? "stuks",
+            prijs: r.prijs,
+            btwPercentage: r.btwPercentage,
+            kortingPercentage: r.kortingPercentage,
+          }))
+        );
+        if (factuur.totaalKortingBedrag > 0) {
+          setTotaalKortingActief(true);
+          setTotaalKortingType("vastBedrag");
+          setTotaalKortingVastBedrag(factuur.totaalKortingBedrag);
+        }
+      })
+      .catch((e: unknown) => {
+        setFout(e instanceof Error ? e.message : "Factuur laden mislukt");
+      })
+      .finally(() => {
+        setFactuurLaden(false);
+      });
+  }, [id, laadKlanten]);
 
   // Totaalberekeningen
   const totalen = useMemo(() => {
     let subtotaalBruto = 0;
-    // Collect netto per BTW-tarief for proportional discount application
     const nettoPerTarief: Record<number, number> = {};
 
     for (const regel of regels) {
@@ -141,7 +193,6 @@ export default function NieuweFactuurPage() {
       }
     }
 
-    // Totaalkorting berekening
     let kortingBedrag = 0;
     if (totaalKortingActief) {
       if (totaalKortingType === "percentage") {
@@ -154,7 +205,6 @@ export default function NieuweFactuurPage() {
     const subtotaalNaKorting = subtotaalBruto - kortingBedrag;
     const kortingRatio = subtotaalBruto > 0 ? kortingBedrag / subtotaalBruto : 0;
 
-    // BTW berekenen over bedrag NA korting, evenredig per tarief
     const btwPerTarief: Record<string, number> = {};
     let totaalBtw = 0;
     if (!btwVerlegd) {
@@ -171,9 +221,6 @@ export default function NieuweFactuurPage() {
     }
 
     const totaal = subtotaalNaKorting + totaalBtw;
-
-    const totaalKortingResultaat =
-      totaalKortingType === "percentage" ? totaalKortingPercentage : 0;
     const totaalKortingBedrag = kortingBedrag;
 
     return {
@@ -183,25 +230,24 @@ export default function NieuweFactuurPage() {
       totaalBtw,
       btwPerTarief,
       totaal,
-      totaalKortingResultaat,
       totaalKortingBedrag,
     };
   }, [regels, btwVerlegd, totaalKortingActief, totaalKortingType, totaalKortingPercentage, totaalKortingVastBedrag]);
 
   function voegRegelToe() {
-    setRegels((prev) => [...prev, { ...LEEG_REGEL(), btwPercentage: korActief ? 0 : 21 }]);
+    setRegels((prev) => [...prev, LEEG_REGEL()]);
   }
 
-  function verwijderRegel(id: string) {
+  function verwijderRegel(regelId: string) {
     setRegels((prev) => {
       if (prev.length === 1) return prev;
-      return prev.filter((r) => r.id !== id);
+      return prev.filter((r) => r.id !== regelId);
     });
   }
 
-  function updateRegel<K extends keyof Regel>(id: string, veld: K, waarde: Regel[K]) {
+  function updateRegel<K extends keyof Regel>(regelId: string, veld: K, waarde: Regel[K]) {
     setRegels((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, [veld]: waarde } : r))
+      prev.map((r) => (r.id === regelId ? { ...r, [veld]: waarde } : r))
     );
   }
 
@@ -231,8 +277,6 @@ export default function NieuweFactuurPage() {
         betalingsCondities: betalingsCondities || null,
         regels: regels.map(({ id: _id, ...r }) => r),
         status,
-        terugkerend,
-        terugkerendInterval: terugkerend ? terugkerendInterval : null,
         totaalKorting: totaalKortingActief
           ? totaalKortingType === "percentage"
             ? totaalKortingPercentage
@@ -241,12 +285,12 @@ export default function NieuweFactuurPage() {
         totaalKortingBedrag: totalen.totaalKortingBedrag,
         taal,
       };
-      const factuur = await window.api.facturen.create(payload);
+      await window.api.facturen.update(id!, payload);
 
       if (status === "CONCEPT") {
-        navigate(`/facturen/${factuur.id}`);
+        navigate(`/facturen/${id}`);
       } else {
-        navigate(`/facturen/${factuur.id}?verstuur=1`);
+        navigate(`/facturen/${id}?verstuur=1`);
       }
     } catch (e: unknown) {
       setFout(e instanceof Error ? e.message : "Opslaan mislukt");
@@ -256,16 +300,66 @@ export default function NieuweFactuurPage() {
 
   const geselecteerdeKlant = klanten.find((k) => k.id === klantId);
 
+  if (factuurLaden) {
+    return (
+      <div>
+        <Header
+          titel="Factuur bewerken"
+          subtitel="Bezig met laden..."
+          acties={
+            <Button variant="outline" size="sm" onClick={() => navigate("/facturen")}>
+              <ArrowLeft className="h-4 w-4" />
+              Terug
+            </Button>
+          }
+        />
+        <div className="p-6 flex items-center gap-2 text-gray-500">
+          <Loader2 className="h-5 w-5 animate-spin" />
+          <span>Factuur laden...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (nietBewerkbaar) {
+    return (
+      <div>
+        <Header
+          titel={`Factuur bewerken${factuurNummer ? ` — ${factuurNummer}` : ""}`}
+          subtitel="Bewerken niet mogelijk"
+          acties={
+            <Button variant="outline" size="sm" onClick={() => navigate(`/facturen/${id}`)}>
+              <ArrowLeft className="h-4 w-4" />
+              Terug
+            </Button>
+          }
+        />
+        <div className="p-6 max-w-5xl mx-auto">
+          <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-4 text-sm text-amber-800 flex flex-col gap-3">
+            <p className="font-semibold">Alleen conceptfacturen kunnen worden bewerkt</p>
+            <p>Deze factuur heeft een status die bewerken niet toestaat. Alleen facturen met de status CONCEPT kunnen worden gewijzigd.</p>
+            <div>
+              <Button variant="outline" size="sm" onClick={() => navigate(`/facturen/${id}`)}>
+                <ArrowLeft className="h-4 w-4" />
+                Terug naar factuur
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div>
       <Header
-        titel="Nieuwe factuur"
-        subtitel="Maak een nieuwe factuur aan"
+        titel={`Factuur bewerken${factuurNummer ? ` — ${factuurNummer}` : ""}`}
+        subtitel="Wijzig de gegevens van deze conceptfactuur"
         acties={
           <Button
             variant="outline"
             size="sm"
-            onClick={() => navigate("/facturen")}
+            onClick={() => navigate(`/facturen/${id}`)}
           >
             <ArrowLeft className="h-4 w-4" />
             Terug
@@ -274,11 +368,6 @@ export default function NieuweFactuurPage() {
       />
 
       <div className="p-6 max-w-5xl mx-auto space-y-6">
-        {korActief && (
-          <div className="rounded-lg bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-800 flex items-center gap-2">
-            <span className="font-semibold">KOR actief</span> – Facturen worden aangemaakt zonder BTW (0%). Pas dit aan via Instellingen → KOR.
-          </div>
-        )}
         {fout && (
           <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
             {fout}
@@ -304,9 +393,7 @@ export default function NieuweFactuurPage() {
                   </div>
                 ) : (
                   <Select value={klantId} onValueChange={setKlantId}>
-                    <SelectTrigger
-                      fout={foutenVelden.klantId}
-                    >
+                    <SelectTrigger fout={foutenVelden.klantId}>
                       <SelectValue placeholder="Selecteer een klant..." />
                     </SelectTrigger>
                     <SelectContent>
@@ -336,9 +423,7 @@ export default function NieuweFactuurPage() {
                   )}
                   <button
                     type="button"
-                    onClick={() =>
-                      navigate(`/klanten/${geselecteerdeKlant.id}`)
-                    }
+                    onClick={() => navigate(`/klanten/${geselecteerdeKlant.id}`)}
                     className="text-indigo-600 hover:text-indigo-800 text-xs font-medium mt-1"
                   >
                     Klantprofiel bekijken →
@@ -440,26 +525,6 @@ export default function NieuweFactuurPage() {
                   className="grid grid-cols-1 lg:grid-cols-[1fr_80px_100px_110px_80px_80px_32px] gap-2 p-3 rounded-lg border border-gray-100 bg-gray-50/50 hover:bg-gray-50 transition-colors"
                 >
                   <div>
-                    {producten.length > 0 && (
-                      <select
-                        className="flex h-8 w-full rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-500 mb-1"
-                        value=""
-                        onChange={(e) => {
-                          if (!e.target.value) return;
-                          const product = producten.find(p => p.id === e.target.value);
-                          if (!product) return;
-                          updateRegel(regel.id, "omschrijving", product.naam + (product.omschrijving ? ` – ${product.omschrijving}` : ""));
-                          updateRegel(regel.id, "prijs", product.prijs);
-                          updateRegel(regel.id, "btwPercentage", korActief ? 0 : product.btwPercentage);
-                          if (product.eenheid) updateRegel(regel.id, "eenheid", product.eenheid);
-                        }}
-                      >
-                        <option value="">Kies uit catalogus...</option>
-                        {producten.map(p => (
-                          <option key={p.id} value={p.id}>{p.naam} — {formatBedrag(p.prijs)}</option>
-                        ))}
-                      </select>
-                    )}
                     <label className="lg:hidden text-xs font-medium text-gray-500 mb-1 block">
                       Omschrijving
                     </label>
@@ -552,18 +617,14 @@ export default function NieuweFactuurPage() {
                           parseInt(e.target.value)
                         )
                       }
-                      disabled={btwVerlegd || korActief}
+                      disabled={btwVerlegd}
                       className="flex h-9 w-full rounded-lg border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      {korActief ? (
-                        <option value={0}>0% (KOR)</option>
-                      ) : (
-                        BTW_TARIEVEN.map((t) => (
-                          <option key={t} value={t}>
-                            {t}%
-                          </option>
-                        ))
-                      )}
+                      {BTW_TARIEVEN.map((t) => (
+                        <option key={t} value={t}>
+                          {t}%
+                        </option>
+                      ))}
                     </select>
                   </div>
 
@@ -668,7 +729,6 @@ export default function NieuweFactuurPage() {
 
             {totaalKortingActief && (
               <div className="space-y-3 pl-1">
-                {/* Radio: percentage of vast bedrag */}
                 <div className="flex gap-6">
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input
@@ -774,44 +834,6 @@ export default function NieuweFactuurPage() {
                     rows={3}
                   />
                 </div>
-                {/* Terugkerende factuur */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between rounded-lg border border-gray-200 p-3">
-                    <div>
-                      <p className="text-sm font-medium text-gray-700">Terugkerende factuur</p>
-                      <p className="text-xs text-gray-400">Automatisch nieuwe factuur aanmaken op basis van interval</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setTerugkerend(!terugkerend)}
-                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                        terugkerend ? "bg-indigo-600" : "bg-gray-200"
-                      }`}
-                    >
-                      <span
-                        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
-                          terugkerend ? "translate-x-6" : "translate-x-1"
-                        }`}
-                      />
-                    </button>
-                  </div>
-                  {terugkerend && (
-                    <Select
-                      value={terugkerendInterval}
-                      onValueChange={(v) => setTerugkerendInterval(v as typeof terugkerendInterval)}
-                    >
-                      <SelectTrigger label="Interval">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="maandelijks">Maandelijks</SelectItem>
-                        <SelectItem value="kwartaal">Per kwartaal</SelectItem>
-                        <SelectItem value="jaarlijks">Jaarlijks</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  )}
-                </div>
-
               </CardContent>
             )}
           </Card>
