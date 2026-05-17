@@ -23,11 +23,158 @@ function logSchrijven(bericht: string) {
   try { fs.appendFileSync(logBestand, regel) } catch {}
 }
 
-function initPrisma() {
-  const dbPath = is.dev
+function getDbPath(): string {
+  return is.dev
     ? join(process.cwd(), 'dev.db')
     : join(app.getPath('userData'), 'adminpro.db')
+}
 
+function runMigratie(dbPath: string): void {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const Database = require('better-sqlite3')
+  const db = new Database(dbPath)
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS "Rit" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "datum" DATETIME NOT NULL,
+      "omschrijving" TEXT NOT NULL,
+      "van" TEXT NOT NULL,
+      "naar" TEXT NOT NULL,
+      "kilometers" REAL NOT NULL,
+      "retour" BOOLEAN NOT NULL DEFAULT false,
+      "zakelijk" BOOLEAN NOT NULL DEFAULT true,
+      "notities" TEXT,
+      "gefactureerd" BOOLEAN NOT NULL DEFAULT false,
+      "factuurId" TEXT,
+      "aangemaakt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "bijgewerkt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS "AuditLog" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "factuurId" TEXT,
+      "actie" TEXT NOT NULL,
+      "details" TEXT,
+      "aangemaakt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS "Product" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "naam" TEXT NOT NULL,
+      "omschrijving" TEXT,
+      "prijs" REAL NOT NULL DEFAULT 0,
+      "eenheid" TEXT DEFAULT 'stuks',
+      "btwPercentage" REAL NOT NULL DEFAULT 21,
+      "actief" BOOLEAN NOT NULL DEFAULT true,
+      "aangemaakt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "bijgewerkt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS "KlantNotitie" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "klantId" TEXT NOT NULL,
+      "tekst" TEXT NOT NULL,
+      "aangemaakt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "KlantNotitie_klantId_fkey" FOREIGN KEY ("klantId") REFERENCES "Klant" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS "Crediteur" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "leverancier" TEXT NOT NULL,
+      "factuurNummer" TEXT,
+      "factuurdatum" DATETIME NOT NULL,
+      "vervaldatum" DATETIME NOT NULL,
+      "bedrag" REAL NOT NULL,
+      "btwBedrag" REAL NOT NULL DEFAULT 0,
+      "btwPercentage" REAL NOT NULL DEFAULT 21,
+      "status" TEXT NOT NULL DEFAULT 'OPENSTAAND',
+      "betaaldOp" DATETIME,
+      "notities" TEXT,
+      "aangemaakt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "bijgewerkt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  `)
+
+  const kolomToevoegen = (tabel: string, kolom: string, definitie: string) => {
+    try { db.exec(`ALTER TABLE "${tabel}" ADD COLUMN "${kolom}" ${definitie}`) } catch {}
+  }
+
+  // User — nieuwe kolommen
+  kolomToevoegen('User', 'kmVergoeding', 'REAL NOT NULL DEFAULT 0.23')
+  kolomToevoegen('User', 'anthropicApiKey', 'TEXT')
+  kolomToevoegen('User', 'openaiApiKey', 'TEXT')
+  kolomToevoegen('User', 'aiModel', "TEXT NOT NULL DEFAULT 'claude'")
+  kolomToevoegen('User', 'donkerModus', "TEXT NOT NULL DEFAULT 'systeem'")
+  kolomToevoegen('User', 'autoStart', 'BOOLEAN NOT NULL DEFAULT false')
+  kolomToevoegen('User', 'pdfMapPad', 'TEXT')
+  kolomToevoegen('User', 'mollieApiKey', 'TEXT')
+  kolomToevoegen('User', 'emailAanhef', 'TEXT')
+  kolomToevoegen('User', 'emailAfsluitingsTekst', 'TEXT')
+  kolomToevoegen('User', 'logoBase64', 'TEXT')
+  kolomToevoegen('User', 'factuurNummerFormaat', "TEXT NOT NULL DEFAULT '{PREFIX}{JAAR}-{NNNN}'")
+  kolomToevoegen('User', 'korWaarschuwing', 'BOOLEAN NOT NULL DEFAULT true')
+  kolomToevoegen('User', 'standaardCreditnotaPrefix', "TEXT NOT NULL DEFAULT 'CN'")
+  kolomToevoegen('User', 'googleClientId', 'TEXT')
+  kolomToevoegen('User', 'googleClientSecret', 'TEXT')
+  kolomToevoegen('User', 'layoutPrimairKleur', "TEXT NOT NULL DEFAULT '#4f46e5'")
+  kolomToevoegen('User', 'layoutSecundairKleur', 'TEXT')
+  kolomToevoegen('User', 'layoutLettertype', "TEXT NOT NULL DEFAULT 'Arial, sans-serif'")
+  kolomToevoegen('User', 'layoutKoptekst', 'TEXT')
+  kolomToevoegen('User', 'layoutVoettekst', 'TEXT')
+  kolomToevoegen('User', 'layoutLogoPositie', "TEXT NOT NULL DEFAULT 'links'")
+  kolomToevoegen('User', 'layoutToonBtwNummer', 'BOOLEAN NOT NULL DEFAULT true')
+  kolomToevoegen('User', 'layoutToonKvkNummer', 'BOOLEAN NOT NULL DEFAULT true')
+  kolomToevoegen('User', 'layoutToonIban', 'BOOLEAN NOT NULL DEFAULT true')
+  kolomToevoegen('User', 'layoutToonQrCode', 'BOOLEAN NOT NULL DEFAULT true')
+  kolomToevoegen('User', 'layoutRegelSpacing', "TEXT NOT NULL DEFAULT 'normaal'")
+  kolomToevoegen('User', 'layoutLetterGrootte', "TEXT NOT NULL DEFAULT '14'")
+  kolomToevoegen('User', 'layoutLogoGrootte', "TEXT NOT NULL DEFAULT 'medium'")
+  kolomToevoegen('User', 'layoutMarges', "TEXT NOT NULL DEFAULT 'normaal'")
+  kolomToevoegen('User', 'layoutSectieVolgorde', "TEXT NOT NULL DEFAULT '[]'")
+  kolomToevoegen('User', 'onbetaaldeFactuurMelding', 'BOOLEAN NOT NULL DEFAULT true')
+  kolomToevoegen('User', 'factuurHtmlTemplate', 'TEXT')
+  kolomToevoegen('User', 'offerteGeldigheidDagen', 'INTEGER NOT NULL DEFAULT 30')
+
+  // Klant — nieuwe kolommen
+  kolomToevoegen('Klant', 'betaalTermijn', 'INTEGER')
+  kolomToevoegen('Klant', 'taal', "TEXT NOT NULL DEFAULT 'nl'")
+
+  // Factuur — nieuwe kolommen
+  kolomToevoegen('Factuur', 'creditNotaVoorId', 'TEXT')
+  kolomToevoegen('Factuur', 'totaalKorting', 'REAL NOT NULL DEFAULT 0')
+  kolomToevoegen('Factuur', 'totaalKortingBedrag', 'REAL NOT NULL DEFAULT 0')
+  kolomToevoegen('Factuur', 'taal', "TEXT NOT NULL DEFAULT 'nl'")
+  kolomToevoegen('Factuur', 'mollieBetaalLink', 'TEXT')
+  kolomToevoegen('Factuur', 'molliePaymentLinkId', 'TEXT')
+  kolomToevoegen('Factuur', 'historisch', 'BOOLEAN NOT NULL DEFAULT false')
+  kolomToevoegen('Factuur', 'handmatigBedrag', 'BOOLEAN NOT NULL DEFAULT false')
+
+  // Offerte — nieuwe kolommen
+  kolomToevoegen('Offerte', 'totaalKorting', 'REAL NOT NULL DEFAULT 0')
+  kolomToevoegen('Offerte', 'totaalKortingBedrag', 'REAL NOT NULL DEFAULT 0')
+
+  // Categorie — nieuwe kolommen
+  kolomToevoegen('Categorie', 'standaardBtwTarief', 'REAL')
+
+  // Indexes
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Rit_datum_idx" ON "Rit"("datum")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Rit_gefactureerd_idx" ON "Rit"("gefactureerd")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "KlantNotitie_klantId_idx" ON "KlantNotitie"("klantId")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Crediteur_status_idx" ON "Crediteur"("status")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Crediteur_vervaldatum_idx" ON "Crediteur"("vervaldatum")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Factuur_klantId_idx" ON "Factuur"("klantId")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Factuur_status_idx" ON "Factuur"("status")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Factuur_datum_idx" ON "Factuur"("datum")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Factuur_status_datum_idx" ON "Factuur"("status", "datum")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Offerte_klantId_idx" ON "Offerte"("klantId")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Offerte_status_idx" ON "Offerte"("status")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Inkomen_factuurId_idx" ON "Inkomen"("factuurId")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Inkomen_datum_idx" ON "Inkomen"("datum")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Uitgave_datum_idx" ON "Uitgave"("datum")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Uitgave_categorieId_idx" ON "Uitgave"("categorieId")') } catch {}
+
+  db.close()
+}
+
+function initPrisma() {
+  const dbPath = getDbPath()
   const adapter = new PrismaBetterSqlite3({ url: dbPath })
   prisma = new PrismaClient({ adapter })
 }
@@ -2470,27 +2617,14 @@ function setupIpcHandlers() {
 }
 
 app.whenReady().then(async () => {
-  initPrisma()
-
-  // Voer database migratie uit bij eerste start
+  const dbPath = getDbPath()
   try {
-    const { execSync } = require('child_process')
-    const prismaPath = is.dev
-      ? join(process.cwd(), 'node_modules/.bin/prisma')
-      : join(process.resourcesPath, 'node_modules/.bin/prisma')
-    // In productie: gebruik prisma migrate deploy
-    // In dev: skip (al gedaan door developer)
-    if (!is.dev) {
-      const migrationsPath = join(process.resourcesPath, 'migrations')
-      process.env.DATABASE_URL = `file:${join(app.getPath('userData'), 'adminpro.db')}`
-      execSync(`"${prismaPath}" migrate deploy --schema="${join(process.resourcesPath, 'schema.prisma')}"`, {
-        env: { ...process.env }
-      })
-    }
+    runMigratie(dbPath)
     logSchrijven('Database migratie succesvol')
   } catch (e) {
-    logSchrijven(`Database migratie fout (niet kritiek): ${e}`)
+    logSchrijven(`Database migratie fout: ${e}`)
   }
+  initPrisma()
 
   setupIpcHandlers()
   createWindow()
