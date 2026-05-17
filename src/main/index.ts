@@ -1365,6 +1365,127 @@ function setupIpcHandlers() {
     return result.filePaths[0] ?? null
   })
 
+  ipcMain.handle('app:exporteerData', async () => {
+    const result = await dialog.showOpenDialog({
+      title: 'Kies map voor data-export',
+      properties: ['openDirectory', 'createDirectory']
+    })
+    if (result.canceled) return { geannuleerd: true }
+
+    const doelMap = result.filePaths[0]
+    const bom = '﻿' // UTF-8 BOM voor Excel
+
+    function naarCsv(headers: string[], rijen: unknown[][]): string {
+      const esc = (v: unknown) => {
+        const s = v == null ? '' : String(v)
+        return s.includes(',') || s.includes('"') || s.includes('\n')
+          ? `"${s.replace(/"/g, '""')}"` : s
+      }
+      return [headers, ...rijen].map(r => (r as unknown[]).map(esc).join(',')).join('\r\n')
+    }
+
+    const user = await prisma.user.findFirst()
+    const kmVergoeding = user?.kmVergoeding ?? 0.23
+
+    const [klanten, facturen, factuurRegels, uren, ritten, inkomen, uitgaven, categorieën] = await Promise.all([
+      prisma.klant.findMany({ orderBy: { naam: 'asc' } }),
+      prisma.factuur.findMany({ include: { klant: true }, orderBy: { datum: 'desc' } }),
+      prisma.factuurRegel.findMany({ orderBy: { factuurId: 'asc' } }),
+      prisma.uurregistratie.findMany({ include: { klant: true }, orderBy: { startTijd: 'desc' } }),
+      prisma.rit.findMany({ orderBy: { datum: 'desc' } }),
+      prisma.inkomen.findMany({ orderBy: { datum: 'desc' } }),
+      prisma.uitgave.findMany({ include: { categorie: true }, orderBy: { datum: 'desc' } }),
+      prisma.categorie.findMany({ orderBy: { naam: 'asc' } }),
+    ])
+
+    const bestanden: Array<{ naam: string; inhoud: string }> = [
+      {
+        naam: 'klanten.csv',
+        inhoud: naarCsv(
+          ['ID', 'Naam', 'Bedrijf', 'Email', 'Telefoon', 'Adres', 'Postcode', 'Stad', 'Land', 'KvK', 'BTW-nummer', 'Betaaltermijn', 'Taal', 'Notities'],
+          klanten.map(k => [k.id, k.naam, k.bedrijf, k.email, k.telefoon, k.adres, k.postcode, k.stad, k.land, k.kvkNummer, k.btwNummer, k.betaalTermijn, k.taal, k.notities])
+        )
+      },
+      {
+        naam: 'facturen.csv',
+        inhoud: naarCsv(
+          ['ID', 'Nummer', 'Klant', 'Datum', 'Vervaldatum', 'Status', 'Subtotaal', 'BTW', 'Totaal', 'Taal', 'Notities'],
+          facturen.map(f => [f.id, f.nummer, f.klant.naam, f.datum.toISOString().split('T')[0], f.vervaldatum.toISOString().split('T')[0], f.status, f.subtotaal, f.btwBedrag, f.totaal, f.taal, f.notities])
+        )
+      },
+      {
+        naam: 'factuur_regels.csv',
+        inhoud: naarCsv(
+          ['Factuur ID', 'Omschrijving', 'Aantal', 'Eenheid', 'Prijs', 'BTW%', 'Korting%', 'Totaal'],
+          factuurRegels.map(r => [r.factuurId, r.omschrijving, r.aantal, r.eenheid, r.prijs, r.btwPercentage, r.kortingPercentage, r.totaal])
+        )
+      },
+      {
+        naam: 'uren.csv',
+        inhoud: naarCsv(
+          ['ID', 'Klant', 'Project', 'Start', 'Einde', 'Duur (min)', 'Uurtarief', 'Gefactureerd', 'Omschrijving', 'Notities'],
+          uren.map(u => [
+            u.id,
+            u.klant?.naam ?? '',
+            u.projectNaam ?? '',
+            u.startTijd.toISOString(),
+            u.eindTijd?.toISOString() ?? '',
+            u.duur ?? '',
+            u.uurtarief ?? '',
+            u.gefactureerd ? 'Ja' : 'Nee',
+            u.omschrijving,
+            u.notities ?? ''
+          ])
+        )
+      },
+      {
+        naam: 'kilometers.csv',
+        inhoud: naarCsv(
+          ['ID', 'Datum', 'Van', 'Naar', 'Kilometers', 'Retour', 'Zakelijk', 'Vergoeding (EUR)', 'Omschrijving', 'Notities'],
+          ritten.map(r => [
+            r.id,
+            r.datum.toISOString().split('T')[0],
+            r.van,
+            r.naar,
+            r.kilometers,
+            r.retour ? 'Ja' : 'Nee',
+            r.zakelijk ? 'Ja' : 'Nee',
+            (r.kilometers * kmVergoeding).toFixed(2),
+            r.omschrijving,
+            r.notities ?? ''
+          ])
+        )
+      },
+      {
+        naam: 'inkomen.csv',
+        inhoud: naarCsv(
+          ['ID', 'Datum', 'Omschrijving', 'Bedrag', 'Bron', 'Notities'],
+          inkomen.map(i => [i.id, i.datum.toISOString().split('T')[0], i.omschrijving, i.bedrag, i.bron ?? '', i.notities ?? ''])
+        )
+      },
+      {
+        naam: 'uitgaven.csv',
+        inhoud: naarCsv(
+          ['ID', 'Datum', 'Omschrijving', 'Bedrag', 'BTW%', 'BTW bedrag', 'Categorie', 'Leverancier', 'Zakelijk%', 'Notities'],
+          uitgaven.map(u => [u.id, u.datum.toISOString().split('T')[0], u.omschrijving, u.bedrag, u.btwPercentage, u.btwBedrag, u.categorie?.naam ?? '', u.leverancier ?? '', u.zakelijkPercent, u.notities ?? ''])
+        )
+      },
+      {
+        naam: 'categorieën.csv',
+        inhoud: naarCsv(
+          ['ID', 'Naam', 'Standaard BTW%'],
+          categorieën.map(c => [c.id, c.naam, c.standaardBtwTarief ?? ''])
+        )
+      },
+    ]
+
+    for (const bestand of bestanden) {
+      fs.writeFileSync(join(doelMap, bestand.naam), bom + bestand.inhoud, 'utf8')
+    }
+
+    return { succes: true, pad: doelMap }
+  })
+
   ipcMain.handle('mollie:maakBetaalLink', async (_, factuurId: string) => {
     const user = await prisma.user.findFirst()
     if (!user?.mollieApiKey) throw new Error('Geen Mollie API-sleutel geconfigureerd in Instellingen')

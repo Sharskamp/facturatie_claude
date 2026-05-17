@@ -107,6 +107,9 @@ export default function NieuweFactuurPage() {
   // Factuurtaal
   const [taal, setTaal] = useState<"nl" | "en">("nl");
 
+  // KOR
+  const [korActief, setKorActief] = useState(false);
+
   const laadKlanten = useCallback(async () => {
     try {
       const data = await window.api.klanten.list();
@@ -120,6 +123,18 @@ export default function NieuweFactuurPage() {
 
   useEffect(() => {
     laadKlanten();
+    window.api.instellingen.get().then((inst) => {
+      if (!inst) return;
+      if (inst.korActief) {
+        setKorActief(true);
+        setRegels((prev) => prev.map((r) => ({ ...r, btwPercentage: 0 })));
+      } else if (inst.standaardBtwTarief != null) {
+        setRegels((prev) => prev.map((r) => ({ ...r, btwPercentage: inst.standaardBtwTarief as number })));
+      }
+      if (inst.standaardBetaalTermijn) {
+        setVervaldatum(vervaldatumString(inst.standaardBetaalTermijn as number));
+      }
+    }).catch(() => {});
   }, [laadKlanten]);
 
   // Totaalberekeningen
@@ -184,7 +199,7 @@ export default function NieuweFactuurPage() {
   }, [regels, btwVerlegd, totaalKortingActief, totaalKortingType, totaalKortingPercentage, totaalKortingVastBedrag]);
 
   function voegRegelToe() {
-    setRegels((prev) => [...prev, LEEG_REGEL()]);
+    setRegels((prev) => [...prev, { ...LEEG_REGEL(), btwPercentage: korActief ? 0 : 21 }]);
   }
 
   function verwijderRegel(id: string) {
@@ -269,6 +284,11 @@ export default function NieuweFactuurPage() {
       />
 
       <div className="p-6 max-w-5xl mx-auto space-y-6">
+        {korActief && (
+          <div className="rounded-lg bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-800 flex items-center gap-2">
+            <span className="font-semibold">KOR actief</span> – Facturen worden aangemaakt zonder BTW (0%). Pas dit aan via Instellingen → KOR.
+          </div>
+        )}
         {fout && (
           <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
             {fout}
@@ -522,14 +542,18 @@ export default function NieuweFactuurPage() {
                           parseInt(e.target.value)
                         )
                       }
-                      disabled={btwVerlegd}
+                      disabled={btwVerlegd || korActief}
                       className="flex h-9 w-full rounded-lg border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      {BTW_TARIEVEN.map((t) => (
-                        <option key={t} value={t}>
-                          {t}%
-                        </option>
-                      ))}
+                      {korActief ? (
+                        <option value={0}>0% (KOR)</option>
+                      ) : (
+                        BTW_TARIEVEN.map((t) => (
+                          <option key={t} value={t}>
+                            {t}%
+                          </option>
+                        ))
+                      )}
                     </select>
                   </div>
 

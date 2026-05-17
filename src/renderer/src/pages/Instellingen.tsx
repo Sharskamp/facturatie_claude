@@ -1042,9 +1042,9 @@ export default function InstellingenPagina() {
             <Card>
               <CardHeader>
                 <CardTitle>Data &amp; beveiliging</CardTitle>
-                <CardDescription>Maak een backup van je gegevens</CardDescription>
+                <CardDescription>Maak een backup of exporteer al je gegevens naar CSV</CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="flex flex-wrap gap-3">
                 <Button
                   variant="outline"
                   onClick={async () => {
@@ -1061,8 +1061,32 @@ export default function InstellingenPagina() {
                   }}
                 >
                   <Download className="h-4 w-4 mr-2" />
-                  Database backup maken
+                  Database backup (.db)
                 </Button>
+                <div>
+                  <Button
+                    variant="outline"
+                    onClick={async () => {
+                      try {
+                        const result = await window.api.app.exporteerData() as { succes?: boolean; geannuleerd?: boolean; pad?: string };
+                        if (result.geannuleerd) return;
+                        if (result.succes) {
+                          toonMelding("succes", `Data geëxporteerd naar: ${result.pad}`);
+                        } else {
+                          toonMelding("fout", "Export mislukt");
+                        }
+                      } catch {
+                        toonMelding("fout", "Export mislukt");
+                      }
+                    }}
+                  >
+                    <Download className="h-4 w-4 mr-2" />
+                    Exporteer alles naar CSV
+                  </Button>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Klanten, facturen, uren, km, inkomen, uitgaven — te openen in Excel
+                  </p>
+                </div>
               </CardContent>
             </Card>
           </div>

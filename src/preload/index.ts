@@ -107,6 +107,7 @@ contextBridge.exposeInMainWorld('api', {
     setAutoStart: (enabled: boolean) => ipcRenderer.invoke('app:setAutoStart', enabled),
     backup: () => ipcRenderer.invoke('app:backup'),
     kiesPdfMap: () => ipcRenderer.invoke('app:kiesPdfMap'),
+    exporteerData: () => ipcRenderer.invoke('app:exporteerData'),
   },
   mollie: {
     maakBetaalLink: (factuurId: string) => ipcRenderer.invoke('mollie:maakBetaalLink', factuurId),

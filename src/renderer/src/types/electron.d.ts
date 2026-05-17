@@ -105,6 +105,7 @@ interface ElectronAPI {
     setAutoStart: (enabled: boolean) => Promise<{ succes: boolean }>
     backup: () => Promise<{ succes?: boolean; geannuleerd?: boolean; pad?: string }>
     kiesPdfMap: () => Promise<string | null>
+    exporteerData: () => Promise<{ succes?: boolean; geannuleerd?: boolean; pad?: string }>
   }
   mollie: {
     maakBetaalLink: (factuurId: string) => Promise<{ url: string }>
