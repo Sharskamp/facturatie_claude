@@ -282,6 +282,7 @@ export default function RapportenPagina() {
 
   // BTW-aangifte selectors
   const [aangiftePeriode, setAangiftePeriode] = useState<string>(`${huidigKwartaal()}_${new Date().getFullYear()}`);
+  const [btwExportMelding, setBtwExportMelding] = useState<{ type: "succes" | "fout"; tekst: string } | null>(null);
 
   const haalDataOp = useCallback(async () => {
     setLaden(true);
@@ -1160,6 +1161,50 @@ export default function RapportenPagina() {
             {/* ── BTW-aangifte ── */}
             {actieveTab === "btwAangifte" && (
               <div className="space-y-6">
+                {/* Export BTW CSV knop + melding */}
+                <div className="flex flex-wrap gap-3 items-center">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={async () => {
+                      setBtwExportMelding(null);
+                      try {
+                        // Bereken van/tot op basis van geselecteerde periode
+                        const vanMaand = aangifteMaanden[0] ?? 0;
+                        const totMaand = aangifteMaanden[aangifteMaanden.length - 1] ?? 11;
+                        const periodeVan = `${aangifteJaar}-${String(vanMaand + 1).padStart(2, "0")}-01`;
+                        const lastDay = new Date(aangifteJaar, totMaand + 1, 0).getDate();
+                        const periodeTot = `${aangifteJaar}-${String(totMaand + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+                        const gekozenKwartaal = aangifteKwartaal ?? null;
+                        const resultaat = await window.api.rapport.exportBtw({ van: periodeVan, tot: periodeTot, kwartaal: gekozenKwartaal });
+                        if (resultaat.geannuleerd) return;
+                        if (resultaat.succes) {
+                          setBtwExportMelding({ type: "succes", tekst: "Bestand opgeslagen" });
+                          setTimeout(() => setBtwExportMelding(null), 4000);
+                        } else {
+                          setBtwExportMelding({ type: "fout", tekst: "Exporteren mislukt" });
+                          setTimeout(() => setBtwExportMelding(null), 5000);
+                        }
+                      } catch (e: unknown) {
+                        setBtwExportMelding({ type: "fout", tekst: `Exporteren mislukt: ${e instanceof Error ? e.message : "onbekende fout"}` });
+                        setTimeout(() => setBtwExportMelding(null), 5000);
+                      }
+                    }}
+                  >
+                    <FileDown className="h-4 w-4" />
+                    Exporteer BTW CSV
+                  </Button>
+                  {btwExportMelding && (
+                    <span className={`text-sm font-medium px-3 py-1 rounded-lg border ${
+                      btwExportMelding.type === "succes"
+                        ? "bg-green-50 text-green-800 border-green-200"
+                        : "bg-red-50 text-red-800 border-red-200"
+                    }`}>
+                      {btwExportMelding.tekst}
+                    </span>
+                  )}
+                </div>
+
                 {/* Period selector */}
                 <div className="flex flex-wrap gap-3 items-center justify-between">
                   <div className="flex flex-wrap gap-3 items-center">

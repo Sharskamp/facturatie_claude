@@ -74,6 +74,8 @@ model User {
   layoutMarges          String    @default("normaal")
   layoutSectieVolgorde  String    @default("[]")
   onbetaaldeFactuurMelding Boolean @default(true)
+  factuurHtmlTemplate   String?
+  offerteGeldigheidDagen Int    @default(30)
   aangemaakt            DateTime  @default(now())
   bijgewerkt            DateTime  @updatedAt
 }
@@ -88,6 +90,8 @@ model Rit {
   retour       Boolean  @default(false)
   zakelijk     Boolean  @default(true)
   notities     String?
+  gefactureerd Boolean  @default(false)
+  factuurId    String?
   aangemaakt   DateTime @default(now())
   bijgewerkt   DateTime @updatedAt
 }
@@ -111,6 +115,7 @@ model Klant {
   taal          String    @default("nl")
   facturen      Factuur[]
   offertes      Offerte[]
+  klantNotities KlantNotitie[]
   aangemaakt    DateTime  @default(now())
   bijgewerkt    DateTime  @updatedAt
 }
@@ -293,4 +298,28 @@ model Product {
   actief        Boolean  @default(true)
   aangemaakt    DateTime @default(now())
   bijgewerkt    DateTime @updatedAt
+}
+
+model KlantNotitie {
+  id         String   @id @default(cuid())
+  klantId    String
+  klant      Klant    @relation(fields: [klantId], references: [id], onDelete: Cascade)
+  tekst      String
+  aangemaakt DateTime @default(now())
+}
+
+model Crediteur {
+  id             String    @id @default(cuid())
+  leverancier    String
+  factuurNummer  String?
+  factuurdatum   DateTime
+  vervaldatum    DateTime
+  bedrag         Float
+  btwBedrag      Float     @default(0)
+  btwPercentage  Float     @default(21)
+  status         String    @default("OPENSTAAND")
+  betaaldOp      DateTime?
+  notities       String?
+  aangemaakt     DateTime  @default(now())
+  bijgewerkt     DateTime  @updatedAt
 }

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Pencil, Trash2, Link, TrendingUp, Unlink } from "lucide-react";
+import { Plus, Pencil, Trash2, Link, TrendingUp, Unlink, Search, Loader2 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -48,6 +48,7 @@ interface Factuur {
   klant?: { naam: string } | null;
   totaal: number;
   status: string;
+  vervaldatum?: string | null;
 }
 
 const BRON_OPTIES = ["Bank", "Contant", "PayPal", "iDEAL", "Overig"];
@@ -68,6 +69,13 @@ export default function InkomenPagina() {
   const [koppelModalOpen, setKoppelModalOpen] = useState(false);
   const [koppelInkomenId, setKoppelInkomenId] = useState<string | null>(null);
   const [koppelFactuurId, setKoppelFactuurId] = useState("");
+
+  // Smart-match koppeling state
+  const [matchModalOpen, setMatchModalOpen] = useState(false);
+  const [matchInkomen, setMatchInkomen] = useState<Inkomen | null>(null);
+  const [matchResultaten, setMatchResultaten] = useState<Factuur[]>([]);
+  const [matchLaden, setMatchLaden] = useState(false);
+  const [matchGeselecteerdId, setMatchGeselecteerdId] = useState<string>("");
 
   const [formulier, setFormulier] = useState({
     datum: new Date().toISOString().split("T")[0],
@@ -194,6 +202,37 @@ export default function InkomenPagina() {
       haalInkomensOp();
     } catch {
       toonMelding("fout", "Verbindingsfout");
+    }
+  };
+
+  const openSmartKoppel = async (inkomen: Inkomen) => {
+    setMatchInkomen(inkomen);
+    setMatchGeselecteerdId("");
+    setMatchResultaten([]);
+    setMatchModalOpen(true);
+    setMatchLaden(true);
+    try {
+      const resultaten = await window.api.bank.zoekFactuurMatch({ bedrag: inkomen.bedrag, datum: inkomen.datum });
+      setMatchResultaten(Array.isArray(resultaten) ? (resultaten as Factuur[]) : []);
+    } catch {
+      setMatchResultaten([]);
+    } finally {
+      setMatchLaden(false);
+    }
+  };
+
+  const koppelViaMatch = async () => {
+    if (!matchInkomen || !matchGeselecteerdId) return;
+    try {
+      const resultaat = await window.api.bank.koppelAanFactuur({ inkomstenId: matchInkomen.id, factuurId: matchGeselecteerdId });
+      const gevondenFactuur = matchResultaten.find((f) => f.id === matchGeselecteerdId);
+      const nummer = resultaat.factuurNummer || gevondenFactuur?.factuurNummer || matchGeselecteerdId;
+      toonMelding("succes", `Factuur ${nummer} gemarkeerd als betaald`);
+      setMatchModalOpen(false);
+      haalInkomensOp();
+      haalFacturenOp();
+    } catch {
+      toonMelding("fout", "Koppelen mislukt");
     }
   };
 
@@ -356,7 +395,7 @@ export default function InkomenPagina() {
                             variant="ghost"
                             size="icon-sm"
                             title="Koppel aan factuur"
-                            onClick={() => openKoppel(inkomen.id)}
+                            onClick={() => openSmartKoppel(inkomen)}
                           >
                             <Link className="h-4 w-4 text-indigo-500" />
                           </Button>
@@ -490,6 +529,81 @@ export default function InkomenPagina() {
             </ModalClose>
             <Button onClick={slaKoppelOp} disabled={!koppelFactuurId}>
               Koppelen
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* Smart Match Modal */}
+      <Modal open={matchModalOpen} onOpenChange={setMatchModalOpen}>
+        <ModalContent className="max-w-lg">
+          <ModalHeader>
+            <ModalTitle className="flex items-center gap-2">
+              <Search className="h-5 w-5 text-indigo-500" />
+              Koppel aan factuur
+            </ModalTitle>
+          </ModalHeader>
+          {matchInkomen && (
+            <div className="space-y-4">
+              <div className="rounded-lg bg-gray-50 border border-gray-200 px-4 py-3 text-sm">
+                <p className="text-gray-500 mb-1">Inkomen</p>
+                <p className="font-medium text-gray-900">{matchInkomen.omschrijving}</p>
+                <p className="text-gray-500 mt-0.5">
+                  {formatBedrag(matchInkomen.bedrag)} &middot; {formatDatum(matchInkomen.datum)}
+                </p>
+              </div>
+
+              {matchLaden ? (
+                <div className="flex items-center justify-center py-6 gap-2 text-gray-500">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  <span className="text-sm">Zoeken naar overeenkomende facturen...</span>
+                </div>
+              ) : matchResultaten.length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-4">
+                  Geen open facturen gevonden die overeenkomen met dit bedrag.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-gray-700">Gevonden facturen:</p>
+                  {matchResultaten.map((f) => (
+                    <label
+                      key={f.id}
+                      className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors ${
+                        matchGeselecteerdId === f.id
+                          ? "border-indigo-400 bg-indigo-50"
+                          : "border-gray-200 hover:border-indigo-300 hover:bg-gray-50"
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="matchFactuur"
+                        value={f.id}
+                        checked={matchGeselecteerdId === f.id}
+                        onChange={() => setMatchGeselecteerdId(f.id)}
+                        className="mt-0.5 h-4 w-4 text-indigo-600 border-gray-300"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-gray-900">
+                          {f.factuurNummer}
+                          {f.klant ? ` — ${f.klant.naam}` : ""}
+                        </p>
+                        <p className="text-sm text-gray-500">
+                          {formatBedrag(f.totaal)}
+                          {f.vervaldatum ? ` · Vervalt ${formatDatum(f.vervaldatum)}` : ""}
+                        </p>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          <ModalFooter>
+            <ModalClose asChild>
+              <Button variant="outline">Annuleren</Button>
+            </ModalClose>
+            <Button onClick={koppelViaMatch} disabled={!matchGeselecteerdId || matchLaden}>
+              Koppelen &amp; markeer als betaald
             </Button>
           </ModalFooter>
         </ModalContent>

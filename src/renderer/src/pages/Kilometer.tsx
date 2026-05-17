@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Plus,
   Pencil,
@@ -7,6 +8,7 @@ import {
   Car,
   Loader2,
   MapPin,
+  Receipt,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -43,6 +45,14 @@ interface Rit {
   zakelijk: boolean;
   notities?: string | null;
   vergoeding: number;
+  gefactureerd: boolean;
+  factuurId?: string | null;
+}
+
+interface Klant {
+  id: string;
+  naam: string;
+  bedrijf?: string | null;
 }
 
 const huidigeMaand = () => {
@@ -62,6 +72,7 @@ const LEEG_FORMULIER = {
 };
 
 export default function KilometerPagina() {
+  const navigate = useNavigate();
   const [ritten, setRitten] = useState<Rit[]>([]);
   const [laden, setLaden] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
@@ -70,6 +81,11 @@ export default function KilometerPagina() {
   const [opslaan, setOpslaan] = useState(false);
   const [formulier, setFormulier] = useState(LEEG_FORMULIER);
   const [kmVergoeding, setKmVergoeding] = useState<number>(0.23);
+  const [geselecteerd, setGeselecteerd] = useState<string[]>([]);
+  const [doorbelastenModal, setDoorbelastenModal] = useState(false);
+  const [klanten, setKlanten] = useState<Klant[]>([]);
+  const [geselecteerdeKlantId, setGeselecteerdeKlantId] = useState<string>("");
+  const [doorbelasten, setDoorbelasten] = useState(false);
 
   useEffect(() => {
     window.api.instellingen.get().then((data: any) => {
@@ -95,6 +111,43 @@ export default function KilometerPagina() {
   const toonMelding = (type: "succes" | "fout", tekst: string) => {
     setMelding({ type, tekst });
     setTimeout(() => setMelding(null), 4000);
+  };
+
+  const toggleSelectie = (id: string) => {
+    setGeselecteerd((prev) =>
+      prev.includes(id) ? prev.filter((r) => r !== id) : [...prev, id]
+    );
+  };
+
+  const openDoorbelastenModal = async () => {
+    try {
+      const data = await window.api.klanten.list();
+      setKlanten(Array.isArray(data) ? data : []);
+      setGeselecteerdeKlantId("");
+      setDoorbelastenModal(true);
+    } catch {
+      toonMelding("fout", "Kon klanten niet laden");
+    }
+  };
+
+  const bevestigDoorbelasten = async () => {
+    if (!geselecteerdeKlantId) return;
+    setDoorbelasten(true);
+    try {
+      const result = await window.api.ritten.doorbelasten({
+        klantId: geselecteerdeKlantId,
+        ritIds: geselecteerd,
+      });
+      setDoorbelastenModal(false);
+      setGeselecteerd([]);
+      await haalRittenOp();
+      toonMelding("succes", `Factuur ${result.nummer} aangemaakt`);
+      navigate(`/facturen/${result.id}`);
+    } catch {
+      toonMelding("fout", "Doorbelasten mislukt");
+    } finally {
+      setDoorbelasten(false);
+    }
   };
 
   const resetFormulier = () => {
@@ -266,11 +319,25 @@ export default function KilometerPagina() {
           </Card>
         </div>
 
+        {/* Actie-bar selectie */}
+        {geselecteerd.length > 0 && (
+          <div className="flex items-center justify-between rounded-lg bg-indigo-50 border border-indigo-200 px-4 py-3">
+            <span className="text-sm font-medium text-indigo-800">
+              {geselecteerd.length} rit{geselecteerd.length !== 1 ? "ten" : ""} geselecteerd
+            </span>
+            <Button size="sm" onClick={openDoorbelastenModal} className="gap-2">
+              <Receipt className="h-4 w-4" />
+              Doorbelasten naar klant
+            </Button>
+          </div>
+        )}
+
         {/* Tabel */}
         <Card>
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-10"></TableHead>
                 <TableHead>Datum</TableHead>
                 <TableHead>Route</TableHead>
                 <TableHead>Omschrijving</TableHead>
@@ -283,27 +350,40 @@ export default function KilometerPagina() {
             <TableBody>
               {laden ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center py-8">
+                  <TableCell colSpan={8} className="text-center py-8">
                     <Loader2 className="h-6 w-6 animate-spin text-indigo-400 mx-auto" />
                   </TableCell>
                 </TableRow>
               ) : ritten.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center py-8 text-gray-400">
+                  <TableCell colSpan={8} className="text-center py-8 text-gray-400">
                     Geen ritten geregistreerd
                   </TableCell>
                 </TableRow>
               ) : (
                 ritten.map((rit) => (
-                  <TableRow key={rit.id}>
+                  <TableRow
+                    key={rit.id}
+                    className={rit.gefactureerd ? "opacity-60" : undefined}
+                  >
+                    <TableCell>
+                      {!rit.gefactureerd && (
+                        <input
+                          type="checkbox"
+                          checked={geselecteerd.includes(rit.id)}
+                          onChange={() => toggleSelectie(rit.id)}
+                          className="h-4 w-4 rounded border-gray-300 text-indigo-600 cursor-pointer"
+                        />
+                      )}
+                    </TableCell>
                     <TableCell className="whitespace-nowrap text-gray-500">
                       {formatDatum(rit.datum)}
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1 text-sm">
-                        <span className="font-medium text-gray-900">{rit.van}</span>
+                        <span className={`font-medium ${rit.gefactureerd ? "line-through text-gray-400" : "text-gray-900"}`}>{rit.van}</span>
                         <span className="text-gray-400">→</span>
-                        <span className="font-medium text-gray-900">{rit.naar}</span>
+                        <span className={`font-medium ${rit.gefactureerd ? "line-through text-gray-400" : "text-gray-900"}`}>{rit.naar}</span>
                         {rit.retour && (
                           <span className="ml-1 text-xs text-indigo-600 font-medium">(retour)</span>
                         )}
@@ -319,28 +399,45 @@ export default function KilometerPagina() {
                       {formatBedrag(rit.vergoeding)}
                     </TableCell>
                     <TableCell className="text-center">
-                      <Badge variant={rit.zakelijk ? "success" : "default"}>
-                        {rit.zakelijk ? "Zakelijk" : "Privé"}
-                      </Badge>
+                      {rit.gefactureerd ? (
+                        <Badge variant="default">Gefactureerd</Badge>
+                      ) : (
+                        <Badge variant={rit.zakelijk ? "success" : "default"}>
+                          {rit.zakelijk ? "Zakelijk" : "Privé"}
+                        </Badge>
+                      )}
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => openBewerken(rit)}
-                          title="Bewerken"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => verwijder(rit.id)}
-                          title="Verwijderen"
-                        >
-                          <Trash2 className="h-4 w-4 text-red-500" />
-                        </Button>
+                        {rit.gefactureerd ? (
+                          rit.factuurId && (
+                            <button
+                              onClick={() => navigate(`/facturen/${rit.factuurId}`)}
+                              className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                            >
+                              Bekijken
+                            </button>
+                          )
+                        ) : (
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              onClick={() => openBewerken(rit)}
+                              title="Bewerken"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              onClick={() => verwijder(rit.id)}
+                              title="Verwijderen"
+                            >
+                              <Trash2 className="h-4 w-4 text-red-500" />
+                            </Button>
+                          </>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -350,6 +447,78 @@ export default function KilometerPagina() {
           </Table>
         </Card>
       </div>
+
+      {/* Doorbelasten modal */}
+      <Modal open={doorbelastenModal} onOpenChange={setDoorbelastenModal}>
+        <ModalContent className="max-w-lg">
+          <ModalHeader>
+            <ModalTitle>Ritten doorbelasten naar klant</ModalTitle>
+          </ModalHeader>
+          <div className="space-y-4">
+            {/* Klant selectie */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Klant *
+              </label>
+              <select
+                value={geselecteerdeKlantId}
+                onChange={(e) => setGeselecteerdeKlantId(e.target.value)}
+                className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm"
+              >
+                <option value="">Selecteer een klant...</option>
+                {klanten.map((k) => (
+                  <option key={k.id} value={k.id}>
+                    {k.naam}{k.bedrijf ? ` — ${k.bedrijf}` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Overzicht geselecteerde ritten */}
+            <div>
+              <p className="text-sm font-medium text-gray-700 mb-2">
+                Geselecteerde ritten
+              </p>
+              <div className="rounded-lg border border-gray-200 divide-y divide-gray-100 max-h-48 overflow-y-auto">
+                {ritten
+                  .filter((r) => geselecteerd.includes(r.id))
+                  .map((r) => (
+                    <div key={r.id} className="flex items-center justify-between px-3 py-2 text-sm">
+                      <span className="text-gray-700">
+                        {r.van} → {r.naar}
+                      </span>
+                      <span className="font-mono font-medium text-gray-900">
+                        {r.kilometers.toLocaleString("nl-NL", { maximumFractionDigits: 1 })} km
+                      </span>
+                    </div>
+                  ))}
+              </div>
+              <div className="flex items-center justify-between mt-2 px-3 py-2 rounded-lg bg-indigo-50 border border-indigo-100 text-sm font-semibold text-indigo-800">
+                <span>Totaal</span>
+                <span>
+                  {ritten
+                    .filter((r) => geselecteerd.includes(r.id))
+                    .reduce((s, r) => s + r.kilometers, 0)
+                    .toLocaleString("nl-NL", { maximumFractionDigits: 1 })} km
+                </span>
+              </div>
+            </div>
+          </div>
+          <ModalFooter className="mt-6 gap-2">
+            <ModalClose asChild>
+              <Button variant="outline">Annuleren</Button>
+            </ModalClose>
+            <Button
+              onClick={bevestigDoorbelasten}
+              disabled={!geselecteerdeKlantId || doorbelasten}
+              className="gap-2"
+            >
+              {doorbelasten && <Loader2 className="h-4 w-4 animate-spin" />}
+              Factuur aanmaken
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
 
       {/* Modal */}
       <Modal

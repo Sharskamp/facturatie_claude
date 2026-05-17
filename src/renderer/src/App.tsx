@@ -30,6 +30,7 @@ import Kilometer from './pages/Kilometer'
 import BankImport from './pages/BankImport'
 import Producten from './pages/Producten'
 import VasteActiva from './pages/VasteActiva'
+import Crediteuren from './pages/Crediteuren'
 import DashboardLayout from './components/layout/DashboardLayout'
 import OnbetaaldeFactuurMelding from './components/facturen/OnbetaaldeFactuurMelding'
 
@@ -73,6 +74,7 @@ function AppRoutes() {
           <Route path="/bank-import" element={<BankImport />} />
           <Route path="/producten" element={<Producten />} />
           <Route path="/vaste-activa" element={<VasteActiva />} />
+          <Route path="/crediteuren" element={<Crediteuren />} />
           <Route path="/facturen/import-historisch" element={<FactuurImportHistorisch />} />
         </Route>
       ) : (

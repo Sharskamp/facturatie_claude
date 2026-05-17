@@ -115,6 +115,8 @@ interface Instellingen {
   layoutMarges?: string;
   layoutSectieVolgorde?: string;
   onbetaaldeFactuurMelding?: boolean;
+  factuurHtmlTemplate?: string;
+  offerteGeldigheidDagen?: number;
 }
 
 export default function InstellingenPagina() {
@@ -448,6 +450,17 @@ export default function InstellingenPagina() {
                   onBlur={() => slaOp({ standaardBetaalTermijn: instellingen.standaardBetaalTermijn })}
                 />
               </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <Input
+                  label="Standaard geldigheidsduur offerte (dagen)"
+                  type="number"
+                  min="1"
+                  max="365"
+                  value={instellingen.offerteGeldigheidDagen ?? 30}
+                  onChange={(e) => updateVeld("offerteGeldigheidDagen", parseInt(e.target.value))}
+                  onBlur={() => slaOp({ offerteGeldigheidDagen: instellingen.offerteGeldigheidDagen })}
+                />
+              </div>
               {!instellingen.korActief && (
               <div>
                 <Select
@@ -678,6 +691,94 @@ export default function InstellingenPagina() {
                     <Toggle veld="layoutToonIban" label="IBAN in betalingsblok" />
                     <Toggle veld="layoutToonQrCode" label="SEPA betaal-QR-code" />
                     <Toggle veld="onbetaaldeFactuurMelding" label="Popup bij vervallen facturen" />
+                  </CardContent>
+                </Card>
+
+                {/* Volledig maatwerk HTML-template */}
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base">Volledig maatwerk factuurtemplate (HTML/CSS)</CardTitle>
+                    <CardDescription className="text-xs">Gebruik eigen HTML/CSS in plaats van de standaard opmaak. Gebruik {"{{"}<span>variabele</span>{"}}"} placeholders.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <textarea
+                      rows={20}
+                      className="w-full font-mono text-xs rounded-md border border-gray-200 bg-white px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      placeholder="Laat leeg om de standaard opmaak te gebruiken..."
+                      value={instellingen.factuurHtmlTemplate ?? ""}
+                      onChange={(e) => updateVeld("factuurHtmlTemplate", e.target.value)}
+                      onBlur={() => slaOp({ factuurHtmlTemplate: instellingen.factuurHtmlTemplate })}
+                    />
+                    <details className="rounded-lg border border-gray-100 bg-gray-50">
+                      <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-gray-600 select-none">Beschikbare variabelen</summary>
+                      <div className="px-3 pb-3 pt-1 space-y-2 text-xs text-gray-600">
+                        <div>
+                          <p className="font-semibold text-gray-700 mb-1">Bedrijf</p>
+                          <ul className="space-y-0.5 font-mono text-gray-500">
+                            <li>{"{{bedrijfsnaam}}"}</li>
+                            <li>{"{{bedrijfAdres}}"}</li>
+                            <li>{"{{bedrijfPostcode}}"}</li>
+                            <li>{"{{bedrijfStad}}"}</li>
+                            <li>{"{{bedrijfEmail}}"}</li>
+                            <li>{"{{bedrijfTelefoon}}"}</li>
+                            <li>{"{{bedrijfWebsite}}"}</li>
+                            <li>{"{{kvkNummer}}"}</li>
+                            <li>{"{{btwNummer}}"}</li>
+                            <li>{"{{iban}}"}</li>
+                            <li>{"{{logo}}"}</li>
+                          </ul>
+                        </div>
+                        <div>
+                          <p className="font-semibold text-gray-700 mb-1">Factuur</p>
+                          <ul className="space-y-0.5 font-mono text-gray-500">
+                            <li>{"{{factuurNummer}}"}</li>
+                            <li>{"{{factuurDatum}}"}</li>
+                            <li>{"{{vervaldatum}}"}</li>
+                            <li>{"{{notities}}"}</li>
+                            <li>{"{{betalingsCondities}}"}</li>
+                          </ul>
+                        </div>
+                        <div>
+                          <p className="font-semibold text-gray-700 mb-1">Klant</p>
+                          <ul className="space-y-0.5 font-mono text-gray-500">
+                            <li>{"{{klantNaam}}"}</li>
+                            <li>{"{{klantBedrijf}}"}</li>
+                            <li>{"{{klantAdres}}"}</li>
+                            <li>{"{{klantPostcode}}"}</li>
+                            <li>{"{{klantStad}}"}</li>
+                            <li>{"{{klantBtwNummer}}"}</li>
+                          </ul>
+                        </div>
+                        <div>
+                          <p className="font-semibold text-gray-700 mb-1">Totalen</p>
+                          <ul className="space-y-0.5 font-mono text-gray-500">
+                            <li>{"{{subtotaal}}"}</li>
+                            <li>{"{{kortingBedrag}}"}</li>
+                            <li>{"{{btwBedrag}}"}</li>
+                            <li>{"{{totaalBedrag}}"}</li>
+                          </ul>
+                        </div>
+                        <div>
+                          <p className="font-semibold text-gray-700 mb-1">Regels &amp; logo</p>
+                          <ul className="space-y-0.5 font-mono text-gray-500">
+                            <li>{"{{regelsHtml}}"} <span className="font-sans text-gray-400">(pre-rendered HTML tabel)</span></li>
+                            <li>{"{{logo}}"} <span className="font-sans text-gray-400">({"<img src=\"...\">"}  of leeg)</span></li>
+                          </ul>
+                        </div>
+                      </div>
+                    </details>
+                    <div className="flex items-center gap-2 justify-end pt-1">
+                      <button
+                        type="button"
+                        className="text-xs text-gray-500 hover:text-gray-700 underline"
+                        onClick={() => updateVeld("factuurHtmlTemplate", "")}
+                      >
+                        Reset naar standaard
+                      </button>
+                      <Button onClick={() => slaOp({ factuurHtmlTemplate: instellingen.factuurHtmlTemplate })} loading={opslaan}>
+                        Opslaan
+                      </Button>
+                    </div>
                   </CardContent>
                 </Card>
 

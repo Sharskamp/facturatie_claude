@@ -75,6 +75,21 @@ contextBridge.exposeInMainWorld('api', {
     update: (id: string, data: unknown) => ipcRenderer.invoke('ritten:update', id, data),
     delete: (id: string) => ipcRenderer.invoke('ritten:delete', id),
     exportCsv: (csv: string) => ipcRenderer.invoke('ritten:exportCsv', csv),
+    doorbelasten: (data: unknown) => ipcRenderer.invoke('ritten:doorbelasten', data),
+  },
+  crediteuren: {
+    list: (params?: unknown) => ipcRenderer.invoke('crediteuren:list', params),
+    create: (data: unknown) => ipcRenderer.invoke('crediteuren:create', data),
+    update: (id: string, data: unknown) => ipcRenderer.invoke('crediteuren:update', id, data),
+    delete: (id: string) => ipcRenderer.invoke('crediteuren:delete', id),
+  },
+  klantNotities: {
+    list: (klantId: string) => ipcRenderer.invoke('klanten:notities:list', klantId),
+    create: (data: unknown) => ipcRenderer.invoke('klanten:notities:create', data),
+    delete: (id: string) => ipcRenderer.invoke('klanten:notities:delete', id),
+  },
+  rapport: {
+    exportBtw: (params: unknown) => ipcRenderer.invoke('rapport:exportBtw', params),
   },
   bank: {
     openBestandDialog: () => ipcRenderer.invoke('bank:openBestandDialog'),
@@ -82,6 +97,11 @@ contextBridge.exposeInMainWorld('api', {
     leesRuweData: (filePath: string) => ipcRenderer.invoke('bank:leesRuweData', filePath),
     importeerMetMapping: (data: unknown) => ipcRenderer.invoke('bank:importeerMetMapping', data),
     controleerDuplicaten: () => ipcRenderer.invoke('bank:controleerDuplicaten'),
+    zoekFactuurMatch: (params: unknown) => ipcRenderer.invoke('bank:zoekFactuurMatch', params),
+    koppelAanFactuur: (params: unknown) => ipcRenderer.invoke('bank:koppelAanFactuur', params),
+  },
+  offertes_extra: {
+    checkVerlopen: () => ipcRenderer.invoke('offertes:checkVerlopen'),
   },
   instellingen: {
     get: () => ipcRenderer.invoke('instellingen:get'),

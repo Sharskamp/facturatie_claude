@@ -18,6 +18,7 @@ import {
   Landmark,
   Package,
   Cpu,
+  Receipt,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
@@ -32,6 +33,7 @@ const navigatie = [
   { naam: "Agenda", href: "/agenda", icoon: Calendar, uitleg: "Bekijk je Google Calendar afspraken en maak direct een factuur van een afspraak." },
   { naam: "Inkomen", href: "/inkomen", icoon: TrendingUp, uitleg: "Registreer en beheer al je inkomsten. Koppel betalingen aan facturen." },
   { naam: "Uitgaven", href: "/uitgaven", icoon: TrendingDown, uitleg: "Houd je zakelijke uitgaven bij per categorie. Koppel bonnen voor de belasting." },
+  { naam: "Crediteuren", href: "/crediteuren", icoon: Receipt, uitleg: "Beheer inkomende leveranciersfacturen. Houd bij wat je nog moet betalen." },
   { naam: "Uren", href: "/uren", icoon: Clock, uitleg: "Registreer gewerkte uren per klant of project. Gebruik de timer of voer handmatig in." },
   { naam: "Kilometer", href: "/kilometer", icoon: Car, uitleg: "Registreer zakelijke ritten voor de kilometervergoeding (€0,23/km fiscaal aftrekbaar)." },
   { naam: "Bankimport", href: "/bank-import", icoon: Landmark, uitleg: "Importeer bankafschriften (CSV) van ABN AMRO, ING of Rabobank om transacties te matchen." },

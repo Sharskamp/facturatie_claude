@@ -942,7 +942,8 @@ function setupIpcHandlers() {
         korActief: true, korDrempel: true, korWaarschuwing: true,
         standaardBetaalTermijn: true, standaardBtwTarief: true,
         betalingsherinneringen: true, herinneringDagen: true,
-        googleRefreshToken: true, googleClientId: true, googleClientSecret: true, kmVergoeding: true, anthropicApiKey: true, openaiApiKey: true, aiModel: true,
+        googleRefreshToken: true, googleClientId: true, googleClientSecret: true, kmVergoeding: true,
+        anthropicApiKey: true, openaiApiKey: true, aiModel: true, factuurHtmlTemplate: true, offerteGeldigheidDagen: true,
         donkerModus: true, autoStart: true, pdfMapPad: true, mollieApiKey: true,
         layoutPrimairKleur: true, layoutSecundairKleur: true, layoutLettertype: true,
         layoutKoptekst: true, layoutVoettekst: true, layoutLogoPositie: true,
@@ -966,6 +967,7 @@ function setupIpcHandlers() {
       'standaardBetaalTermijn', 'standaardBtwTarief', 'betalingsCondities',
       'betalingsherinneringen', 'herinneringDagen',
       'kmVergoeding', 'anthropicApiKey', 'openaiApiKey', 'aiModel', 'mollieApiKey',
+      'factuurHtmlTemplate', 'offerteGeldigheidDagen',
       'donkerModus', 'autoStart', 'pdfMapPad',
       'emailAanhef', 'emailAfsluitingsTekst',
       'googleClientId', 'googleClientSecret',
@@ -1178,13 +1180,16 @@ function setupIpcHandlers() {
   // ── PDF download ──
   ipcMain.handle('facturen:downloadPdf', async (_, factuurId: string) => {
     try {
-      const factuur = await prisma.factuur.findUnique({ where: { id: factuurId } })
+      const factuur = await prisma.factuur.findUnique({
+        where: { id: factuurId },
+        include: { regels: true, klant: true }
+      })
       if (!factuur) return { succes: false, fout: 'Factuur niet gevonden' }
 
       const parentWindow = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
       if (!parentWindow) return { succes: false, fout: 'Geen actief venster' }
 
-      const user = await prisma.user.findFirst({ select: { pdfMapPad: true } })
+      const user = await prisma.user.findFirst({ select: { pdfMapPad: true, factuurHtmlTemplate: true, logoBase64: true, naam: true, bedrijfsnaam: true, adres: true, postcode: true, stad: true, email: true, telefoon: true, website: true, kvkNummer: true, btwNummer: true, iban: true, korActief: true } })
       const pdfPad = user?.pdfMapPad
         ? join(user.pdfMapPad, `factuur-${factuur.nummer}.pdf`)
         : `factuur-${factuur.nummer}.pdf`
@@ -1195,7 +1200,6 @@ function setupIpcHandlers() {
       })
       if (result.canceled || !result.filePath) return { succes: false }
 
-      // Maak een verborgen venster met de printlayout (zelfde patroon als shell:open-print)
       const pdfWindow = new BrowserWindow({
         show: false,
         width: 900,
@@ -1208,7 +1212,43 @@ function setupIpcHandlers() {
       })
       pdfWindow.setMenuBarVisibility(false)
 
-      if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+      if (user?.factuurHtmlTemplate?.trim()) {
+        // Render custom HTML template met variabelen
+        const f = factuur as typeof factuur & { klant: { naam: string; bedrijf?: string | null; adres?: string | null; postcode?: string | null; stad?: string | null; btwNummer?: string | null }; regels: Array<{ omschrijving: string; aantal: number; eenheid?: string | null; prijs: number; btwPercentage: number; kortingPercentage: number; totaal: number }> }
+        const regelsHtml = `<table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:4px 8px;border-bottom:1px solid #ddd">Omschrijving</th><th style="text-align:center;padding:4px 8px;border-bottom:1px solid #ddd">Aantal</th><th style="text-align:right;padding:4px 8px;border-bottom:1px solid #ddd">Prijs</th><th style="text-align:right;padding:4px 8px;border-bottom:1px solid #ddd">Totaal</th></tr></thead><tbody>${f.regels.map(r => `<tr><td style="padding:4px 8px;border-bottom:1px solid #eee">${r.omschrijving}${r.eenheid ? ` / ${r.eenheid}` : ''}</td><td style="text-align:center;padding:4px 8px;border-bottom:1px solid #eee">${r.aantal}</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid #eee">€${r.prijs.toFixed(2)}</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid #eee">€${r.totaal.toFixed(2)}</td></tr>`).join('')}</tbody></table>`
+        const logoHtml = user.logoBase64 ? `<img src="${user.logoBase64}" style="max-height:80px" />` : ''
+        const vars: Record<string, string> = {
+          bedrijfsnaam: user.bedrijfsnaam ?? user.naam ?? '',
+          bedrijfAdres: user.adres ?? '',
+          bedrijfPostcode: user.postcode ?? '',
+          bedrijfStad: user.stad ?? '',
+          bedrijfEmail: user.email ?? '',
+          bedrijfTelefoon: user.telefoon ?? '',
+          bedrijfWebsite: user.website ?? '',
+          kvkNummer: user.kvkNummer ?? '',
+          btwNummer: user.btwNummer ?? '',
+          iban: user.iban ?? '',
+          logo: logoHtml,
+          factuurNummer: f.nummer,
+          factuurDatum: f.datum.toISOString().split('T')[0],
+          vervaldatum: f.vervaldatum.toISOString().split('T')[0],
+          notities: f.notities ?? '',
+          betalingsCondities: f.betalingsCondities ?? '',
+          klantNaam: f.klant.naam,
+          klantBedrijf: f.klant.bedrijf ?? '',
+          klantAdres: f.klant.adres ?? '',
+          klantPostcode: f.klant.postcode ?? '',
+          klantStad: f.klant.stad ?? '',
+          klantBtwNummer: f.klant.btwNummer ?? '',
+          subtotaal: `€${f.subtotaal.toFixed(2)}`,
+          kortingBedrag: `€${f.kortingBedrag.toFixed(2)}`,
+          btwBedrag: `€${f.btwBedrag.toFixed(2)}`,
+          totaalBedrag: `€${f.totaal.toFixed(2)}`,
+          regelsHtml,
+        }
+        const html = user.factuurHtmlTemplate.replace(/\{\{(\w+)\}\}/g, (_, k) => vars[k] ?? '')
+        await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+      } else if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
         await pdfWindow.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/#/facturen/${factuurId}/print`)
       } else {
         await pdfWindow.loadFile(join(__dirname, '../renderer/index.html'), {
@@ -1216,9 +1256,7 @@ function setupIpcHandlers() {
         })
       }
 
-      // Wacht op volledige render (fonts, afbeeldingen)
       await new Promise(resolve => setTimeout(resolve, 1500))
-
       const pdfBuffer = await pdfWindow.webContents.printToPDF({ printBackground: true, pageSize: 'A4' })
       pdfWindow.destroy()
 
@@ -2035,6 +2073,213 @@ function setupIpcHandlers() {
 
     await prisma.factuur.update({ where: { id: factuurId }, data: { mollieBetaalLink: betaalLink } })
     return { url: betaalLink }
+  })
+
+  // ── Crediteuren ──
+  ipcMain.handle('crediteuren:list', async (_, params?: { status?: string }) => {
+    return prisma.crediteur.findMany({
+      where: params?.status ? { status: params.status } : undefined,
+      orderBy: { vervaldatum: 'asc' }
+    })
+  })
+
+  ipcMain.handle('crediteuren:create', async (_, data: Record<string, unknown>) => {
+    return prisma.crediteur.create({
+      data: {
+        ...data,
+        factuurdatum: new Date(data.factuurdatum as string),
+        vervaldatum: new Date(data.vervaldatum as string),
+      } as Parameters<typeof prisma.crediteur.create>[0]['data']
+    })
+  })
+
+  ipcMain.handle('crediteuren:update', async (_, id: string, data: Record<string, unknown>) => {
+    return prisma.crediteur.update({
+      where: { id },
+      data: {
+        ...data,
+        factuurdatum: data.factuurdatum ? new Date(data.factuurdatum as string) : undefined,
+        vervaldatum: data.vervaldatum ? new Date(data.vervaldatum as string) : undefined,
+        betaaldOp: data.betaaldOp ? new Date(data.betaaldOp as string) : (data.betaaldOp === null ? null : undefined),
+      } as Parameters<typeof prisma.crediteur.update>[0]['data']
+    })
+  })
+
+  ipcMain.handle('crediteuren:delete', async (_, id: string) => {
+    await prisma.crediteur.delete({ where: { id } })
+    return { succes: true }
+  })
+
+  // ── Klant Notities ──
+  ipcMain.handle('klanten:notities:list', async (_, klantId: string) => {
+    return prisma.klantNotitie.findMany({
+      where: { klantId },
+      orderBy: { aangemaakt: 'desc' }
+    })
+  })
+
+  ipcMain.handle('klanten:notities:create', async (_, data: { klantId: string; tekst: string }) => {
+    return prisma.klantNotitie.create({ data })
+  })
+
+  ipcMain.handle('klanten:notities:delete', async (_, id: string) => {
+    await prisma.klantNotitie.delete({ where: { id } })
+    return { succes: true }
+  })
+
+  // ── Ritten doorbelasten ──
+  ipcMain.handle('ritten:doorbelasten', async (_, payload: { klantId: string; ritIds: string[] }) => {
+    const user = await prisma.user.findFirst()
+    const klant = await prisma.klant.findUnique({ where: { id: payload.klantId } })
+    if (!user || !klant) throw new Error('Gebruiker of klant niet gevonden')
+
+    const ritten = await prisma.rit.findMany({ where: { id: { in: payload.ritIds } }, orderBy: { datum: 'asc' } })
+    if (!ritten.length) throw new Error('Geen ritten geselecteerd')
+
+    const kmVergoeding = user.kmVergoeding ?? 0.23
+    const regels = ritten.map(r => {
+      const km = r.retour ? r.kilometers * 2 : r.kilometers
+      return {
+        omschrijving: `${r.van} → ${r.naar}${r.retour ? ' (retour)' : ''} — ${r.omschrijving}`,
+        aantal: km,
+        eenheid: 'km',
+        prijs: kmVergoeding,
+        btwPercentage: 0,
+        kortingPercentage: 0,
+        totaal: km * kmVergoeding,
+        volgorde: 0,
+      }
+    })
+
+    const subtotaal = regels.reduce((s, r) => s + r.totaal, 0)
+    const volgNummer = user.factuurVolgNummer
+    const jaar = new Date().getFullYear()
+    const nummerFormaat = user.factuurNummerFormaat ?? '{PREFIX}{JAAR}-{NNNN}'
+    const nummer = nummerFormaat
+      .replace('{PREFIX}', user.factuurPrefix ?? 'F')
+      .replace('{JAAR}', String(jaar))
+      .replace('{NNNN}', String(volgNummer).padStart(4, '0'))
+      .replace('{NN}', String(volgNummer).padStart(2, '0'))
+
+    const vervaldatum = new Date()
+    vervaldatum.setDate(vervaldatum.getDate() + (klant.betaalTermijn ?? user.standaardBetaalTermijn ?? 30))
+
+    const factuur = await prisma.factuur.create({
+      data: {
+        nummer,
+        klantId: payload.klantId,
+        status: 'CONCEPT',
+        datum: new Date(),
+        vervaldatum,
+        subtotaal,
+        kortingBedrag: 0,
+        kortingPercentage: 0,
+        btwBedrag: 0,
+        totaal: subtotaal,
+        regels: { create: regels },
+      }
+    })
+
+    await prisma.user.update({ where: { id: user.id }, data: { factuurVolgNummer: volgNummer + 1 } })
+    await prisma.rit.updateMany({ where: { id: { in: payload.ritIds } }, data: { gefactureerd: true, factuurId: factuur.id } })
+
+    return { factuurId: factuur.id, nummer: factuur.nummer }
+  })
+
+  // ── Offertes auto-verlopen ──
+  ipcMain.handle('offertes:checkVerlopen', async () => {
+    const nu = new Date()
+    const resultaat = await prisma.offerte.updateMany({
+      where: { status: 'VERZONDEN', geldigTot: { lt: nu } },
+      data: { status: 'VERLOPEN' }
+    })
+    return { bijgewerkt: resultaat.count }
+  })
+
+  // ── Rapport: BTW export ──
+  ipcMain.handle('rapport:exportBtw', async (_, params: { van: string; tot: string; kwartaal?: string }) => {
+    const van = new Date(params.van)
+    const tot = new Date(params.tot)
+    tot.setHours(23, 59, 59, 999)
+
+    const [facturen, uitgaven] = await Promise.all([
+      prisma.factuur.findMany({
+        where: { status: { in: ['BETAALD', 'VERZONDEN'] }, datum: { gte: van, lte: tot } },
+        include: { regels: true }
+      }),
+      prisma.uitgave.findMany({
+        where: { datum: { gte: van, lte: tot }, zakelijk: true },
+        include: { categorie: true }
+      })
+    ])
+
+    const bom = '﻿'
+    const sep = ';'
+    const esc = (v: unknown) => {
+      const s = String(v ?? '')
+      return s.includes(sep) || s.includes('"') ? `"${s.replace(/"/g, '""')}"` : s
+    }
+
+    const factuurRijen = facturen.map(f => {
+      const btwBedrag = f.btwVerlegd ? 0 : f.btwBedrag
+      return [
+        f.datum.toISOString().split('T')[0],
+        f.nummer,
+        `Omzet`,
+        f.subtotaal.toFixed(2).replace('.', ','),
+        btwBedrag.toFixed(2).replace('.', ','),
+        f.totaal.toFixed(2).replace('.', ','),
+        f.status,
+      ].map(esc).join(sep)
+    })
+
+    const uitgaveRijen = uitgaven.map(u => [
+      u.datum.toISOString().split('T')[0],
+      u.leverancier ?? u.omschrijving,
+      u.categorie?.naam ?? 'Kosten',
+      (-(u.bedrag - u.btwBedrag)).toFixed(2).replace('.', ','),
+      (-u.btwBedrag).toFixed(2).replace('.', ','),
+      (-u.bedrag).toFixed(2).replace('.', ','),
+      '',
+    ].map(esc).join(sep))
+
+    const headers = ['Datum', 'Omschrijving', 'Type', 'Bedrag excl. BTW', 'BTW bedrag', 'Bedrag incl. BTW', 'Status'].join(sep)
+    const csv = bom + [headers, ...factuurRijen, ...uitgaveRijen].join('\n')
+
+    const periode = params.kwartaal ?? `${van.toISOString().slice(0,10)}_${tot.toISOString().slice(0,10)}`
+    const result = await dialog.showSaveDialog({
+      defaultPath: `btw-aangifte-${periode}.csv`,
+      filters: [{ name: 'CSV', extensions: ['csv'] }]
+    })
+    if (result.canceled || !result.filePath) return { geannuleerd: true }
+    fs.writeFileSync(result.filePath, csv, 'utf8')
+    return { succes: true, pad: result.filePath }
+  })
+
+  // ── Bank: koppel transactie aan factuur ──
+  ipcMain.handle('bank:zoekFactuurMatch', async (_, params: { bedrag: number; datum: string }) => {
+    const datum = new Date(params.datum)
+    const beginZoek = new Date(datum)
+    beginZoek.setDate(beginZoek.getDate() - 60)
+
+    return prisma.factuur.findMany({
+      where: {
+        status: { in: ['VERZONDEN', 'VERLOPEN'] },
+        totaal: { gte: params.bedrag * 0.99, lte: params.bedrag * 1.01 },
+        datum: { gte: beginZoek }
+      },
+      include: { klant: { select: { naam: true, bedrijf: true } } },
+      orderBy: { vervaldatum: 'asc' },
+      take: 5
+    })
+  })
+
+  ipcMain.handle('bank:koppelAanFactuur', async (_, params: { inkomstenId: string; factuurId: string }) => {
+    const [factuur] = await Promise.all([
+      prisma.factuur.update({ where: { id: params.factuurId }, data: { status: 'BETAALD' } }),
+      prisma.inkomen.update({ where: { id: params.inkomstenId }, data: { factuurId: params.factuurId } })
+    ])
+    return { succes: true, factuurNummer: factuur.nummer }
   })
 }
 

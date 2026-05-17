@@ -71,10 +71,33 @@ interface ElectronAPI {
     update: (id: string, data: unknown) => Promise<unknown>
     delete: (id: string) => Promise<{ succes: boolean }>
     exportCsv: (csv: string) => Promise<unknown>
+    doorbelasten: (data: unknown) => Promise<{ factuurId: string; nummer: string }>
+  }
+  crediteuren: {
+    list: (params?: unknown) => Promise<unknown[]>
+    create: (data: unknown) => Promise<unknown>
+    update: (id: string, data: unknown) => Promise<unknown>
+    delete: (id: string) => Promise<{ succes: boolean }>
+  }
+  klantNotities: {
+    list: (klantId: string) => Promise<unknown[]>
+    create: (data: unknown) => Promise<unknown>
+    delete: (id: string) => Promise<{ succes: boolean }>
+  }
+  rapport: {
+    exportBtw: (params: unknown) => Promise<{ succes?: boolean; geannuleerd?: boolean; pad?: string }>
+  }
+  offertes_extra: {
+    checkVerlopen: () => Promise<{ bijgewerkt: number }>
   }
   bank: {
     openBestandDialog: () => Promise<string | null>
     importeerCsv: (data: unknown) => Promise<unknown[]>
+    leesRuweData: (filePath: string) => Promise<unknown>
+    importeerMetMapping: (data: unknown) => Promise<unknown[]>
+    controleerDuplicaten: () => Promise<{ latesteDatum: string | null }>
+    zoekFactuurMatch: (params: unknown) => Promise<unknown[]>
+    koppelAanFactuur: (params: unknown) => Promise<{ succes: boolean; factuurNummer: string }>
   }
   instellingen: {
     get: () => Promise<unknown>

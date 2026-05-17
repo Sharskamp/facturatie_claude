@@ -13,6 +13,7 @@ import {
   CreditCard,
   Globe,
   MessageSquare,
+  X,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -63,6 +64,12 @@ interface Factuur {
   totaal: number;
 }
 
+interface KlantNotitie {
+  id: string;
+  tekst: string;
+  aangemaakt: string;
+}
+
 const LEEG_FORMULIER: Partial<Klant> = {
   naam: "",
   bedrijf: "",
@@ -90,6 +97,8 @@ export default function KlantDetailPage() {
   const [formulier, setFormulier] = useState<Partial<Klant>>(LEEG_FORMULIER);
   const [opslaan, setOpslaan] = useState(false);
   const [fout, setFout] = useState<string | null>(null);
+  const [notities, setNotities] = useState<KlantNotitie[]>([]);
+  const [nieuweNotitie, setNieuweNotitie] = useState("");
 
   const laadKlant = useCallback(async () => {
     if (!id) return;
@@ -113,14 +122,45 @@ export default function KlantDetailPage() {
     }
   }, [id]);
 
+  const laadNotities = useCallback(async () => {
+    if (!id) return;
+    try {
+      const data = await window.api.klantNotities.list(id);
+      setNotities(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error("Fout bij laden notities:", e);
+      setNotities([]);
+    }
+  }, [id]);
+
   useEffect(() => {
     async function laadAlles() {
       setLaden(true);
-      await Promise.all([laadKlant(), laadFacturen()]);
+      await Promise.all([laadKlant(), laadFacturen(), laadNotities()]);
       setLaden(false);
     }
     laadAlles();
-  }, [laadKlant, laadFacturen]);
+  }, [laadKlant, laadFacturen, laadNotities]);
+
+  async function voegNotitieТoe() {
+    if (!nieuweNotitie.trim() || !id) return;
+    try {
+      await window.api.klantNotities.create({ klantId: id, tekst: nieuweNotitie.trim() });
+      setNieuweNotitie("");
+      await laadNotities();
+    } catch (e) {
+      console.error("Fout bij aanmaken notitie:", e);
+    }
+  }
+
+  async function verwijderNotitie(notitieId: string) {
+    try {
+      await window.api.klantNotities.delete(notitieId);
+      await laadNotities();
+    } catch (e) {
+      console.error("Fout bij verwijderen notitie:", e);
+    }
+  }
 
   function openBewerken() {
     if (!klant) return;
@@ -444,6 +484,61 @@ export default function KlantDetailPage() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Notities & Activiteit */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle>Notities &amp; Activiteit</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Nieuwe notitie invoer */}
+            <div className="flex gap-2 items-start">
+              <Textarea
+                className="flex-1"
+                placeholder="Nieuwe notitie toevoegen..."
+                value={nieuweNotitie}
+                onChange={(e) => setNieuweNotitie(e.target.value)}
+                rows={2}
+              />
+              <Button
+                size="sm"
+                onClick={voegNotitieТое}
+                disabled={!nieuweNotitie.trim()}
+                className="shrink-0"
+              >
+                Toevoegen
+              </Button>
+            </div>
+
+            {/* Lijst van notities */}
+            {notities.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-4">Nog geen notities</p>
+            ) : (
+              <div className="space-y-2">
+                {[...notities].sort(
+                  (a, b) => new Date(b.aangemaakt).getTime() - new Date(a.aangemaakt).getTime()
+                ).map((notitie) => (
+                  <div
+                    key={notitie.id}
+                    className="flex items-start gap-3 rounded-lg border border-gray-100 bg-gray-50 px-4 py-3"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-gray-800 whitespace-pre-wrap">{notitie.tekst}</p>
+                      <p className="text-xs text-gray-400 mt-1">{formatDatum(notitie.aangemaakt)}</p>
+                    </div>
+                    <button
+                      onClick={() => verwijderNotitie(notitie.id)}
+                      className="shrink-0 text-gray-300 hover:text-red-500 transition-colors"
+                      title="Verwijderen"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
 
       {/* Bewerken modal */}
