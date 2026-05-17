@@ -131,11 +131,13 @@ export default function AgendaPagina() {
   const [urenMelding, setUrenMelding] = useState<string | null>(null);
   const [klanten, setKlanten] = useState<Klant[]>([]);
 
-  const haalAfsprakenOp = useCallback(async () => {
+  const haalAfsprakenOp = useCallback(async (j: number, m: number) => {
     setLaden(true);
     setFout(null);
     try {
-      const data: AgendaResponse = await window.api.agenda.haalAfspraken();
+      const van = new Date(j, m, 1).toISOString();
+      const tot = new Date(j, m + 1, 0, 23, 59, 59).toISOString();
+      const data: AgendaResponse = await window.api.agenda.haalAfspraken({ van, tot });
       if (data.googleNietGekoppeld || (data.fout && data.fout.includes("niet gekoppeld"))) {
         setGoogleNietGekoppeld(true);
         setAfspraken([]);
@@ -154,8 +156,8 @@ export default function AgendaPagina() {
   }, []);
 
   useEffect(() => {
-    haalAfsprakenOp();
-  }, [haalAfsprakenOp]);
+    haalAfsprakenOp(jaar, maand);
+  }, [haalAfsprakenOp, jaar, maand]);
 
   useEffect(() => {
     window.api.klanten.list().then((data: unknown) => {

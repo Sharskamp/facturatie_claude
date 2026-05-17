@@ -108,7 +108,7 @@ interface ElectronAPI {
     googleOntkoppelen: () => Promise<{ succes: boolean }>
   }
   agenda: {
-    haalAfspraken: (params?: { van?: string; tot?: string }) => Promise<unknown[]>
+    haalAfspraken: (params?: { van?: string; tot?: string }) => Promise<unknown>
   }
   producten: {
     list: () => Promise<unknown[]>

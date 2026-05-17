@@ -1239,16 +1239,25 @@ function setupIpcHandlers() {
       return { afspraken: [], fout: 'Google OAuth-gegevens ontbreken. Vul Client ID en Client Secret in bij Instellingen → Google Agenda.' }
     }
 
+    // Vernieuw het access token als: geen token, verlopen, of geen verlooptijd bekend
+    const tokenVerlopen = !user.googleAccessToken
+      || !user.googleTokenExpiry
+      || new Date() >= new Date(user.googleTokenExpiry.getTime() - 60_000) // 1 min marge
     let accessToken = user.googleAccessToken
-    if (!accessToken || (user.googleTokenExpiry && new Date() >= user.googleTokenExpiry)) {
+    if (tokenVerlopen) {
       try {
         const nieuwTokens = await vernieuwAccessToken(user.googleRefreshToken, user.googleClientId, user.googleClientSecret)
         accessToken = nieuwTokens.access_token
         await prisma.user.updateMany({
-          data: { googleAccessToken: accessToken, googleTokenExpiry: new Date(Date.now() + nieuwTokens.expires_in * 1000) }
+          data: {
+            googleAccessToken: accessToken,
+            googleTokenExpiry: nieuwTokens.expires_in
+              ? new Date(Date.now() + nieuwTokens.expires_in * 1000)
+              : new Date(Date.now() + 3600_000),
+          }
         })
       } catch (e) {
-        return { afspraken: [], fout: `Token vernieuwen mislukt: ${e instanceof Error ? e.message : 'Onbekende fout'}` }
+        return { afspraken: [], fout: `Token vernieuwen mislukt: ${e instanceof Error ? e.message : 'Onbekende fout'}. Koppel Google Agenda opnieuw via Instellingen.` }
       }
     }
 

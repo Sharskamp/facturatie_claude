@@ -97,7 +97,15 @@ export async function haalAgendaAfspraken(
     }
   );
 
-  if (!response.ok) throw new Error("Google Calendar ophalen mislukt");
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    let detail = body;
+    try {
+      const json = JSON.parse(body);
+      detail = json?.error?.message ?? body;
+    } catch {}
+    throw new Error(`Google Calendar fout ${response.status}: ${detail}`);
+  }
 
   const data = await response.json();
   return (data.items ?? []).map((item: Record<string, unknown>) => {
