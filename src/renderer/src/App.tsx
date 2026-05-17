@@ -15,6 +15,7 @@ import FactuurNieuw from './pages/FactuurNieuw'
 import FactuurBewerken from './pages/FactuurBewerken'
 import FactuurDetail from './pages/FactuurDetail'
 import FactuurPrint from './pages/FactuurPrint'
+import FactuurImportHistorisch from './pages/FactuurImportHistorisch'
 import Offertes from './pages/Offertes'
 import OfferteNieuw from './pages/OfferteNieuw'
 import OfferteDetail from './pages/OfferteDetail'
@@ -30,6 +31,7 @@ import BankImport from './pages/BankImport'
 import Producten from './pages/Producten'
 import VasteActiva from './pages/VasteActiva'
 import DashboardLayout from './components/layout/DashboardLayout'
+import OnbetaaldeFactuurMelding from './components/facturen/OnbetaaldeFactuurMelding'
 
 function AppRoutes() {
   const { user, laden } = useAuth()
@@ -71,6 +73,7 @@ function AppRoutes() {
           <Route path="/bank-import" element={<BankImport />} />
           <Route path="/producten" element={<Producten />} />
           <Route path="/vaste-activa" element={<VasteActiva />} />
+          <Route path="/facturen/import-historisch" element={<FactuurImportHistorisch />} />
         </Route>
       ) : (
         <Route path="*" element={<Navigate to="/login" replace />} />
@@ -85,6 +88,7 @@ export default function App() {
       <HelpProvider>
         <AuthProvider>
           <AppRoutes />
+          <OnbetaaldeFactuurMelding />
         </AuthProvider>
       </HelpProvider>
     </ThemeProvider>

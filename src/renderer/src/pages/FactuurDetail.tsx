@@ -86,6 +86,7 @@ interface Instellingen {
   kvkNummer?: string;
   btwNummer?: string;
   iban?: string;
+  korActief?: boolean;
 }
 
 type VerstuurTab = "email" | "whatsapp";
@@ -233,10 +234,12 @@ export default function FactuurDetailPage() {
     }
   }
 
+  const korActief = instellingen?.korActief ?? false;
+
   // Bereken BTW per tarief
   const btwGroepen = factuur?.regels.reduce(
     (acc, regel) => {
-      if (factuur.btwVerlegd) return acc;
+      if (factuur.btwVerlegd || korActief) return acc;
       const bruto = regel.prijs * regel.aantal;
       const korting = (bruto * regel.kortingPercentage) / 100;
       const netto = bruto - korting;
@@ -518,8 +521,14 @@ export default function FactuurDetailPage() {
               )}
             </div>
 
+            {/* KOR melding */}
+            {korActief && (
+              <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+                KOR actief — deze factuur is verstuurd zonder BTW
+              </div>
+            )}
             {/* BTW verlegd melding */}
-            {factuur.btwVerlegd && (
+            {!korActief && factuur.btwVerlegd && (
               <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
                 BTW verlegd — de BTW wordt aangegeven door de afnemer
               </div>
@@ -542,9 +551,11 @@ export default function FactuurDetailPage() {
                     <th className="text-right py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
                       Prijs
                     </th>
-                    <th className="text-right py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                      BTW%
-                    </th>
+                    {!korActief && (
+                      <th className="text-right py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                        BTW%
+                      </th>
+                    )}
                     {factuur.regels.some((r) => r.kortingPercentage > 0) && (
                       <th className="text-right py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
                         Korting%
@@ -578,9 +589,11 @@ export default function FactuurDetailPage() {
                         <td className="py-3 text-sm text-gray-600 text-right">
                           {formatBedrag(regel.prijs)}
                         </td>
-                        <td className="py-3 text-sm text-gray-600 text-right">
-                          {factuur.btwVerlegd ? "Verlegd" : `${regel.btwPercentage}%`}
-                        </td>
+                        {!korActief && (
+                          <td className="py-3 text-sm text-gray-600 text-right">
+                            {factuur.btwVerlegd ? "Verlegd" : `${regel.btwPercentage}%`}
+                          </td>
+                        )}
                         {factuur.regels.some(
                           (r) => r.kortingPercentage > 0
                         ) && (
@@ -628,21 +641,20 @@ export default function FactuurDetailPage() {
                     {formatBedrag(factuur.subtotaal)}
                   </span>
                 </div>
-                {factuur.btwVerlegd ? (
+                {!korActief && factuur.btwVerlegd && (
                   <div className="flex justify-between text-sm">
                     <span className="text-gray-500">BTW (verlegd)</span>
                     <span className="text-gray-400">€ 0,00</span>
                   </div>
-                ) : (
-                  Object.entries(btwGroepen).map(([tarief, bedrag]) => (
-                    <div key={tarief} className="flex justify-between text-sm">
-                      <span className="text-gray-500">BTW {tarief}</span>
-                      <span className="text-gray-900">
-                        {formatBedrag(bedrag)}
-                      </span>
-                    </div>
-                  ))
                 )}
+                {!korActief && !factuur.btwVerlegd && Object.entries(btwGroepen).map(([tarief, bedrag]) => (
+                  <div key={tarief} className="flex justify-between text-sm">
+                    <span className="text-gray-500">BTW {tarief}</span>
+                    <span className="text-gray-900">
+                      {formatBedrag(bedrag)}
+                    </span>
+                  </div>
+                ))}
                 <div className="flex justify-between pt-3 border-t-2 border-gray-900">
                   <span className="font-bold text-gray-900 text-base">
                     Totaal

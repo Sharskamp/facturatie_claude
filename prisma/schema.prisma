@@ -52,6 +52,22 @@ model User {
   logoBase64            String?
   factuurNummerFormaat  String    @default("{PREFIX}{JAAR}-{NNNN}")
   korWaarschuwing       Boolean   @default(true)
+  // Google OAuth credentials (stored by user in settings)
+  googleClientId        String?
+  googleClientSecret    String?
+  // Invoice layout settings
+  layoutPrimairKleur    String    @default("#4f46e5")
+  layoutSecundairKleur  String?
+  layoutLettertype      String    @default("Arial, sans-serif")
+  layoutKoptekst        String?
+  layoutVoettekst       String?
+  layoutLogoPositie     String    @default("links")
+  layoutToonBtwNummer   Boolean   @default(true)
+  layoutToonKvkNummer   Boolean   @default(true)
+  layoutToonIban        Boolean   @default(true)
+  layoutToonQrCode      Boolean   @default(true)
+  layoutRegelSpacing    String    @default("normaal")
+  onbetaaldeFactuurMelding Boolean @default(true)
   aangemaakt            DateTime  @default(now())
   bijgewerkt            DateTime  @updatedAt
 }
@@ -124,6 +140,8 @@ model Factuur {
   totaalKortingBedrag Float        @default(0)
   taal              String         @default("nl")
   mollieBetaalLink  String?
+  historisch        Boolean        @default(false)
+  handmatigBedrag   Boolean        @default(false)
   aangemaakt        DateTime       @default(now())
   bijgewerkt        DateTime       @updatedAt
 }

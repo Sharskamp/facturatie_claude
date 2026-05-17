@@ -16,6 +16,7 @@ import {
   Car,
   Download,
   Settings,
+  Palette,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -30,11 +31,12 @@ import {
 } from "@/components/ui/select";
 import { useTheme } from "@/context/theme";
 
-type Tab = "bedrijf" | "facturen" | "email" | "google" | "kor" | "ai" | "overig" | "geavanceerd";
+type Tab = "bedrijf" | "facturen" | "layout" | "email" | "google" | "kor" | "ai" | "overig" | "geavanceerd";
 
 const TAB_CONFIG: Array<{ id: Tab; label: string; icon: React.ElementType }> = [
   { id: "bedrijf", label: "Bedrijfsgegevens", icon: Building2 },
   { id: "facturen", label: "Facturen", icon: FileText },
+  { id: "layout", label: "Factuurlayout", icon: Palette },
   { id: "email", label: "Email", icon: Mail },
   { id: "google", label: "Google Agenda", icon: Calendar },
   { id: "kor", label: "KOR", icon: Calculator },
@@ -71,6 +73,7 @@ interface Instellingen {
   // Google
   googleGekoppeld?: boolean;
   googleEmail?: string;
+  googleClientId?: string;
   // KOR
   korActief?: boolean;
   korDrempel?: number;
@@ -89,6 +92,19 @@ interface Instellingen {
   factuurVolgNummer?: number;
   donkerModus?: string;
   autoStart?: boolean;
+  // Layout
+  layoutPrimairKleur?: string;
+  layoutSecundairKleur?: string;
+  layoutLettertype?: string;
+  layoutKoptekst?: string;
+  layoutVoettekst?: string;
+  layoutLogoPositie?: string;
+  layoutToonBtwNummer?: boolean;
+  layoutToonKvkNummer?: boolean;
+  layoutToonIban?: boolean;
+  layoutToonQrCode?: boolean;
+  layoutRegelSpacing?: string;
+  onbetaaldeFactuurMelding?: boolean;
 }
 
 export default function InstellingenPagina() {
@@ -100,6 +116,9 @@ export default function InstellingenPagina() {
   const [melding, setMelding] = useState<{ type: "succes" | "fout"; tekst: string } | null>(null);
   const [emailTestStatus, setEmailTestStatus] = useState<"idle" | "laden" | "succes" | "fout">("idle");
   const [googleLaden, setGoogleLaden] = useState(false);
+  const [googleAuthCode, setGoogleAuthCode] = useState("");
+  const [googleAuthUrl, setGoogleAuthUrl] = useState<string | null>(null);
+  const [googleKoppelenStap, setGoogleKoppelenStap] = useState<"idle" | "url" | "code">("idle");
   const [autoStart, setAutoStart] = useState(false);
 
   const haalInstellingenOp = useCallback(async () => {
@@ -163,17 +182,41 @@ export default function InstellingenPagina() {
     }
   };
 
-  const koppelGoogle = async () => {
+  const startGoogleAuth = async () => {
     setGoogleLaden(true);
     try {
-      const data = await window.api.instellingen.update({ actie: "google-koppelen" } as any);
-      if ((data as any).redirectUrl) {
-        window.api.shell.openExternal((data as any).redirectUrl);
+      const result = await window.api.instellingen.googleAuthUrl();
+      if ((result as any).url) {
+        setGoogleAuthUrl((result as any).url);
+        setGoogleKoppelenStap("url");
+        window.api.shell.openExternal((result as any).url);
       } else {
-        toonMelding("fout", "Kon Google OAuth niet starten");
+        toonMelding("fout", "Kon Google OAuth URL niet genereren");
       }
-    } catch {
-      toonMelding("fout", "Verbindingsfout");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Verbindingsfout";
+      toonMelding("fout", msg);
+    } finally {
+      setGoogleLaden(false);
+    }
+  };
+
+  const koppelGoogleMetCode = async () => {
+    if (!googleAuthCode.trim()) {
+      toonMelding("fout", "Voer eerst de autorisatiecode in");
+      return;
+    }
+    setGoogleLaden(true);
+    try {
+      await window.api.instellingen.googleKoppelen(googleAuthCode.trim());
+      setInstellingen((prev) => ({ ...prev, googleGekoppeld: true }));
+      setGoogleKoppelenStap("idle");
+      setGoogleAuthCode("");
+      setGoogleAuthUrl(null);
+      toonMelding("succes", "Google Agenda succesvol gekoppeld!");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Koppelen mislukt";
+      toonMelding("fout", msg);
     } finally {
       setGoogleLaden(false);
     }
@@ -183,7 +226,7 @@ export default function InstellingenPagina() {
     if (!confirm("Weet je zeker dat je Google Agenda wilt ontkoppelen?")) return;
     setGoogleLaden(true);
     try {
-      await window.api.instellingen.update({ actie: "google-ontkoppelen" } as any);
+      await window.api.instellingen.googleOntkoppelen();
       setInstellingen((prev) => ({ ...prev, googleGekoppeld: false, googleEmail: undefined }));
       toonMelding("succes", "Google Agenda ontkoppeld");
     } catch {
@@ -466,6 +509,143 @@ export default function InstellingenPagina() {
           </Card>
         )}
 
+        {/* ── Factuurlayout ── */}
+        {actieveTab === "layout" && (
+          <div className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Kleuren &amp; Typografie</CardTitle>
+                <CardDescription>Pas de huisstijl van je facturen aan</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Primaire kleur</label>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="color"
+                        value={instellingen.layoutPrimairKleur ?? "#4f46e5"}
+                        onChange={(e) => updateVeld("layoutPrimairKleur", e.target.value)}
+                        onBlur={() => slaOp({ layoutPrimairKleur: instellingen.layoutPrimairKleur })}
+                        className="h-10 w-20 rounded border border-gray-300 cursor-pointer"
+                      />
+                      <span className="text-sm text-gray-500">{instellingen.layoutPrimairKleur ?? "#4f46e5"}</span>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1">Kleur voor titel, scheidingslijnen en totaalbedrag</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Lettertype</label>
+                    <select
+                      value={instellingen.layoutLettertype ?? "Arial, sans-serif"}
+                      onChange={(e) => { updateVeld("layoutLettertype", e.target.value); slaOp({ layoutLettertype: e.target.value }); }}
+                      className="w-full h-9 rounded-lg border border-gray-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    >
+                      <option value="Arial, sans-serif">Arial (standaard)</option>
+                      <option value="'Times New Roman', serif">Times New Roman</option>
+                      <option value="'Georgia', serif">Georgia</option>
+                      <option value="'Helvetica Neue', Helvetica, sans-serif">Helvetica</option>
+                      <option value="'Calibri', sans-serif">Calibri</option>
+                    </select>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Kop- en voettekst</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Koptekst (boven factuur)</label>
+                  <textarea
+                    rows={2}
+                    value={instellingen.layoutKoptekst ?? ""}
+                    onChange={(e) => updateVeld("layoutKoptekst", e.target.value)}
+                    onBlur={() => slaOp({ layoutKoptekst: instellingen.layoutKoptekst })}
+                    placeholder="Optionele tekst bovenaan de factuur..."
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Voettekst (onder betalingsinformatie)</label>
+                  <textarea
+                    rows={2}
+                    value={instellingen.layoutVoettekst ?? ""}
+                    onChange={(e) => updateVeld("layoutVoettekst", e.target.value)}
+                    onBlur={() => slaOp({ layoutVoettekst: instellingen.layoutVoettekst })}
+                    placeholder="Bijv. bankgegevens, algemene voorwaarden, bedankt voor uw opdracht..."
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Zichtbaarheid van blokken</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {[
+                  { veld: "layoutToonBtwNummer", label: "BTW-nummer tonen" },
+                  { veld: "layoutToonKvkNummer", label: "KvK-nummer tonen" },
+                  { veld: "layoutToonIban", label: "IBAN tonen in betalingsinformatie" },
+                  { veld: "layoutToonQrCode", label: "SEPA betaal-QR-code tonen" },
+                ].map(({ veld, label }) => (
+                  <div key={veld} className="flex items-center justify-between rounded-lg border border-gray-200 p-3">
+                    <span className="text-sm font-medium text-gray-700">{label}</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const huidig = (instellingen as Record<string, unknown>)[veld] !== false;
+                        const nieuw = !huidig;
+                        updateVeld(veld as keyof typeof instellingen, nieuw as never);
+                        slaOp({ [veld]: nieuw });
+                      }}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                        (instellingen as Record<string, unknown>)[veld] !== false ? "bg-indigo-600" : "bg-gray-200"
+                      }`}
+                    >
+                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                        (instellingen as Record<string, unknown>)[veld] !== false ? "translate-x-6" : "translate-x-1"
+                      }`} />
+                    </button>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Meldingen voor onbetaalde facturen</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center justify-between rounded-lg border border-gray-200 p-3">
+                  <div>
+                    <p className="text-sm font-medium text-gray-700">Popup tonen bij vervallen facturen</p>
+                    <p className="text-xs text-gray-400 mt-0.5">Melding bij opstarten als er facturen zijn die (bijna) verlopen</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nieuw = !(instellingen.onbetaaldeFactuurMelding ?? true);
+                      updateVeld("onbetaaldeFactuurMelding", nieuw);
+                      slaOp({ onbetaaldeFactuurMelding: nieuw });
+                    }}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      instellingen.onbetaaldeFactuurMelding !== false ? "bg-indigo-600" : "bg-gray-200"
+                    }`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                      instellingen.onbetaaldeFactuurMelding !== false ? "translate-x-6" : "translate-x-1"
+                    }`} />
+                  </button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
         {/* ── Email / SMTP ── */}
         {actieveTab === "email" && (
           <div className="space-y-6">
@@ -617,64 +797,153 @@ export default function InstellingenPagina() {
 
         {/* ── Google Agenda ── */}
         {actieveTab === "google" && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Google Agenda</CardTitle>
-              <CardDescription>Synchroniseer je afspraken met Google Calendar</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {instellingen.googleGekoppeld ? (
-                /* Verbonden */
-                <div className="space-y-4">
-                  <div className="flex items-center gap-3 rounded-lg bg-green-50 border border-green-200 p-4">
-                    <CheckCircle className="h-6 w-6 text-green-600 shrink-0" />
-                    <div>
-                      <p className="font-semibold text-green-800">Verbonden met Google</p>
-                      {instellingen.googleEmail && (
-                        <p className="text-sm text-green-700">{instellingen.googleEmail}</p>
-                      )}
-                    </div>
-                  </div>
-                  <p className="text-sm text-gray-600">
-                    Je Google Agenda is gekoppeld. Afspraken worden automatisch gesynchroniseerd en
-                    zijn zichtbaar in het Agenda-overzicht.
-                  </p>
-                  <Button
-                    variant="destructive"
-                    onClick={ontkoppelGoogle}
-                    loading={googleLaden}
+          <div className="space-y-4">
+            {/* Stap 1: Credentials */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Google OAuth-gegevens</CardTitle>
+                <CardDescription>
+                  Vereist om Google Agenda te koppelen. Maak een OAuth 2.0 client aan via de{" "}
+                  <button
+                    className="text-indigo-600 underline"
+                    onClick={() => window.api.shell.openExternal("https://console.cloud.google.com/apis/credentials")}
                   >
-                    <Unlink className="h-4 w-4" />
-                    Google Agenda ontkoppelen
-                  </Button>
+                    Google Cloud Console
+                  </button>.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-sm text-blue-800 space-y-1">
+                  <p className="font-semibold">Instructies:</p>
+                  <ol className="list-decimal list-inside space-y-1 text-blue-700">
+                    <li>Ga naar Google Cloud Console → APIs & Services → Credentials</li>
+                    <li>Maak een "OAuth 2.0 Client ID" aan van type "Desktop application"</li>
+                    <li>Kopieer de Client ID en Client Secret hieronder</li>
+                    <li>Activeer de "Google Calendar API" in je project</li>
+                  </ol>
                 </div>
-              ) : (
-                /* Niet verbonden */
-                <div className="space-y-4">
-                  <div className="rounded-lg bg-gray-50 border border-gray-200 p-4 space-y-3">
-                    <h3 className="font-semibold text-gray-900">Koppel je Google Agenda</h3>
+                <div className="grid gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Google Client ID</label>
+                    <Input
+                      value={instellingen.googleClientId ?? ""}
+                      onChange={(e) => updateVeld("googleClientId", e.target.value)}
+                      placeholder="123456789-abc....apps.googleusercontent.com"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Google Client Secret</label>
+                    <Input
+                      type="password"
+                      value={""}
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          slaOp({ googleClientSecret: e.target.value } as any);
+                        }
+                      }}
+                      placeholder="Voer nieuw secret in om te wijzigen"
+                    />
+                    <p className="text-xs text-gray-400 mt-1">Het secret wordt veilig opgeslagen en nooit getoond.</p>
+                  </div>
+                </div>
+                <Button
+                  onClick={() => slaOp({ googleClientId: instellingen.googleClientId } as any)}
+                  loading={opslaan}
+                >
+                  Gegevens opslaan
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* Stap 2: Koppelen */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Google Agenda</CardTitle>
+                <CardDescription>Synchroniseer je afspraken met Google Calendar</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {instellingen.googleGekoppeld ? (
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-3 rounded-lg bg-green-50 border border-green-200 p-4">
+                      <CheckCircle className="h-6 w-6 text-green-600 shrink-0" />
+                      <div>
+                        <p className="font-semibold text-green-800">Verbonden met Google</p>
+                        {instellingen.googleEmail && (
+                          <p className="text-sm text-green-700">{instellingen.googleEmail}</p>
+                        )}
+                      </div>
+                    </div>
                     <p className="text-sm text-gray-600">
-                      Door je Google Agenda te koppelen kun je al je afspraken bekijken in AdminPro
-                      en direct facturen aanmaken vanuit een afspraak.
+                      Je Google Agenda is gekoppeld. Afspraken zijn zichtbaar in het Agenda-overzicht.
                     </p>
+                    <Button variant="destructive" onClick={ontkoppelGoogle} loading={googleLaden}>
+                      <Unlink className="h-4 w-4" />
+                      Google Agenda ontkoppelen
+                    </Button>
+                  </div>
+                ) : googleKoppelenStap === "idle" ? (
+                  <div className="space-y-4">
+                    {!instellingen.googleClientId && (
+                      <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800">
+                        ⚠ Vul eerst de Google Client ID en Client Secret in (bovenstaande kaart) voordat je koppelt.
+                      </div>
+                    )}
                     <ul className="text-sm text-gray-600 space-y-1 list-disc list-inside">
                       <li>Bekijk afspraken in het maandoverzicht</li>
                       <li>Maak facturen vanuit een afspraak</li>
                       <li>Zie reistijden en locaties</li>
                     </ul>
+                    <Button
+                      onClick={startGoogleAuth}
+                      loading={googleLaden}
+                      disabled={!instellingen.googleClientId}
+                    >
+                      <Link className="h-4 w-4" />
+                      Koppel Google Agenda
+                    </Button>
                   </div>
-                  <Button onClick={koppelGoogle} loading={googleLaden} className="gap-2">
-                    <Link className="h-4 w-4" />
-                    Koppel Google Agenda
-                  </Button>
-                  <p className="text-xs text-gray-400">
-                    Je wordt doorgestuurd naar Google om toestemming te geven. AdminPro krijgt
-                    alleen leestoegang tot je agenda.
-                  </p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="rounded-lg bg-indigo-50 border border-indigo-200 p-4 text-sm text-indigo-800 space-y-2">
+                      <p className="font-semibold">Stap 1 voltooid: Open de autorisatiepagina</p>
+                      <p>Er is een browservenster geopend met Google. Log in en geef toestemming.</p>
+                      <p>Kopieer daarna de autorisatiecode die Google toont en plak die hieronder.</p>
+                      {googleAuthUrl && (
+                        <button
+                          className="text-indigo-600 underline text-xs break-all"
+                          onClick={() => window.api.shell.openExternal(googleAuthUrl)}
+                        >
+                          URL opnieuw openen
+                        </button>
+                      )}
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Autorisatiecode van Google
+                      </label>
+                      <Input
+                        value={googleAuthCode}
+                        onChange={(e) => setGoogleAuthCode(e.target.value)}
+                        placeholder="4/0AX4XfW..."
+                      />
+                    </div>
+                    <div className="flex gap-3">
+                      <Button onClick={koppelGoogleMetCode} loading={googleLaden}>
+                        <CheckCircle className="h-4 w-4" />
+                        Koppel met deze code
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => { setGoogleKoppelenStap("idle"); setGoogleAuthCode(""); setGoogleAuthUrl(null); }}
+                      >
+                        Annuleren
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
         )}
 
         {/* ── KOR ── */}

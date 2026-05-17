@@ -58,6 +58,18 @@ interface Instellingen {
   kvkNummer?: string;
   btwNummer?: string;
   iban?: string;
+  korActief?: boolean;
+  layoutPrimairKleur?: string;
+  layoutLettertype?: string;
+  layoutKoptekst?: string;
+  layoutVoettekst?: string;
+  layoutLogoPositie?: string;
+  layoutToonBtwNummer?: boolean;
+  layoutToonKvkNummer?: boolean;
+  layoutToonIban?: boolean;
+  layoutToonQrCode?: boolean;
+  layoutRegelSpacing?: string;
+  logoBase64?: string;
 }
 
 export default function FactuurPrintPage() {
@@ -125,10 +137,20 @@ export default function FactuurPrintPage() {
     payOnline: isEn ? "Pay online via" : "Betaal online via",
   };
 
-  // Groepeer BTW per tarief
+  const korActief = instellingen.korActief ?? false;
+  const primairKleur = instellingen.layoutPrimairKleur ?? "#4f46e5";
+  const lettertype = instellingen.layoutLettertype ?? "Arial, sans-serif";
+  const toonIban = instellingen.layoutToonIban !== false;
+  const toonQrCode = instellingen.layoutToonQrCode !== false;
+  const toonKvk = instellingen.layoutToonKvkNummer !== false;
+  const toonBtwNummer = instellingen.layoutToonBtwNummer !== false;
+  const koptekst = instellingen.layoutKoptekst;
+  const voettekst = instellingen.layoutVoettekst;
+
+  // Groepeer BTW per tarief (verborgen als KOR actief of BTW verlegd)
   const btwGroepen = factuur.regels.reduce(
     (acc, regel) => {
-      if (regel.btwPercentage > 0 && !factuur.btwVerlegd) {
+      if (regel.btwPercentage > 0 && !factuur.btwVerlegd && !korActief) {
         const key = regel.btwPercentage;
         if (!acc[key]) acc[key] = 0;
         const netto = regel.prijs * regel.aantal * (1 - regel.kortingPercentage / 100);
@@ -168,16 +190,16 @@ export default function FactuurPrintPage() {
               )}
               {instellingen.email && <p className="text-gray-600">{instellingen.email}</p>}
               {instellingen.telefoon && <p className="text-gray-600">{instellingen.telefoon}</p>}
-              {instellingen.kvkNummer && (
+              {toonKvk && instellingen.kvkNummer && (
                 <p className="text-gray-600">KvK: {instellingen.kvkNummer}</p>
               )}
-              {instellingen.btwNummer && (
+              {toonBtwNummer && !korActief && instellingen.btwNummer && (
                 <p className="text-gray-600">BTW: {instellingen.btwNummer}</p>
               )}
             </div>
 
             <div className="text-right">
-              <div className="text-3xl font-bold text-indigo-600">{labels.title}</div>
+              <div className="text-3xl font-bold" style={{ color: primairKleur }}>{labels.title}</div>
               <div className="mt-2">
                 <span className="text-gray-500">{labels.invoiceNumber}: </span>
                 <span className="font-semibold">{factuur.nummer}</span>
@@ -194,7 +216,7 @@ export default function FactuurPrintPage() {
           </div>
 
           {/* Divider */}
-          <div className="border-t-2 border-indigo-600 mb-8" />
+          <div className="border-t-2 mb-8" style={{ borderColor: primairKleur }} />
 
           {/* Bill to */}
           <div className="mb-8">
@@ -231,7 +253,7 @@ export default function FactuurPrintPage() {
                 <th className="text-right py-2 text-xs font-semibold uppercase tracking-wider text-gray-500 w-24">
                   {labels.price}
                 </th>
-                {!factuur.btwVerlegd && (
+                {!factuur.btwVerlegd && !korActief && (
                   <th className="text-right py-2 text-xs font-semibold uppercase tracking-wider text-gray-500 w-16">
                     {labels.tax}
                   </th>
@@ -257,7 +279,7 @@ export default function FactuurPrintPage() {
                   </td>
                   <td className="py-3 text-center text-gray-700">{regel.aantal}</td>
                   <td className="py-3 text-right text-gray-700">{formatBedrag(regel.prijs)}</td>
-                  {!factuur.btwVerlegd && (
+                  {!factuur.btwVerlegd && !korActief && (
                     <td className="py-3 text-right text-gray-500 text-sm">{regel.btwPercentage}%</td>
                   )}
                   {factuur.regels.some((r) => r.kortingPercentage > 0) && (
@@ -284,22 +306,21 @@ export default function FactuurPrintPage() {
                   <span>- {formatBedrag(factuur.kortingBedrag)}</span>
                 </div>
               )}
-              {factuur.btwVerlegd ? (
+              {!korActief && factuur.btwVerlegd && (
                 <div className="flex justify-between py-1.5 text-gray-500 text-sm italic">
                   <span>BTW verlegd</span>
                   <span>€ 0,00</span>
                 </div>
-              ) : (
-                Object.entries(btwGroepen).map(([tarief, bedrag]) => (
-                  <div key={tarief} className="flex justify-between py-1.5 text-gray-600">
-                    <span>BTW {tarief}%</span>
-                    <span>{formatBedrag(bedrag)}</span>
-                  </div>
-                ))
               )}
+              {!korActief && !factuur.btwVerlegd && Object.entries(btwGroepen).map(([tarief, bedrag]) => (
+                <div key={tarief} className="flex justify-between py-1.5 text-gray-600">
+                  <span>BTW {tarief}%</span>
+                  <span>{formatBedrag(bedrag)}</span>
+                </div>
+              ))}
               <div className="flex justify-between py-3 border-t-2 border-gray-900 mt-1">
                 <span className="font-bold text-lg">{labels.total}</span>
-                <span className="font-bold text-lg text-indigo-600">
+                <span className="font-bold text-lg" style={{ color: primairKleur }}>
                   {formatBedrag(factuur.totaal)}
                 </span>
               </div>
@@ -307,7 +328,7 @@ export default function FactuurPrintPage() {
           </div>
 
           {/* BTW verlegd notice */}
-          {factuur.btwVerlegd && (
+          {!korActief && factuur.btwVerlegd && (
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-6 text-sm text-amber-800">
               {labels.btwReversed}
             </div>
@@ -323,12 +344,19 @@ export default function FactuurPrintPage() {
             </div>
           )}
 
+          {/* Custom footer text */}
+          {voettekst && (
+            <div className="border-t border-gray-200 pt-4 mt-4">
+              <p className="text-sm text-gray-600 whitespace-pre-wrap">{voettekst}</p>
+            </div>
+          )}
+
           {/* Payment info */}
           <div className="border-t border-gray-200 pt-6 mt-auto">
             <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">
               {labels.paymentInfo}
             </p>
-            {instellingen.iban && (
+            {toonIban && instellingen.iban && (
               <p className="text-gray-700">
                 <span className="text-gray-500">IBAN:</span>{" "}
                 <span className="font-mono font-medium">{instellingen.iban}</span>
@@ -341,7 +369,7 @@ export default function FactuurPrintPage() {
             {factuur.betalingsCondities && (
               <p className="text-gray-600 text-sm mt-1">{factuur.betalingsCondities}</p>
             )}
-            {qrDataUrl && (
+            {qrDataUrl && toonQrCode && (
               <div className="mt-4 flex items-center gap-4">
                 <img src={qrDataUrl} alt="SEPA betaal QR" className="w-28 h-28" />
                 <div className="text-xs text-gray-500">

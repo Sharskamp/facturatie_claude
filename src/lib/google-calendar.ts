@@ -13,9 +13,10 @@ export interface GoogleAfspraak {
   kleur?: string;
 }
 
-export function maakGoogleAuthUrl(redirectUri: string): string {
+export function maakGoogleAuthUrl(clientId: string, redirectUri: string): string {
+  if (!clientId) throw new Error("Google Client ID ontbreekt. Vul dit in bij Instellingen → Google Agenda.");
   const params = new URLSearchParams({
-    client_id: process.env.GOOGLE_CLIENT_ID ?? "",
+    client_id: clientId,
     redirect_uri: redirectUri,
     response_type: "code",
     scope: "https://www.googleapis.com/auth/calendar.readonly",
@@ -25,31 +26,49 @@ export function maakGoogleAuthUrl(redirectUri: string): string {
   return `${GOOGLE_AUTH_URL}?${params.toString()}`;
 }
 
-export async function wisselCodeVoorTokens(code: string, redirectUri: string) {
+export async function wisselCodeVoorTokens(
+  code: string,
+  redirectUri: string,
+  clientId: string,
+  clientSecret: string
+) {
+  if (!clientId || !clientSecret) {
+    throw new Error("Google OAuth-gegevens ontbreken. Vul Client ID en Client Secret in bij Instellingen → Google Agenda.");
+  }
   const response = await fetch(GOOGLE_TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       code,
-      client_id: process.env.GOOGLE_CLIENT_ID ?? "",
-      client_secret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+      client_id: clientId,
+      client_secret: clientSecret,
       redirect_uri: redirectUri,
       grant_type: "authorization_code",
     }),
   });
 
-  if (!response.ok) throw new Error("Google token uitwisseling mislukt");
+  if (!response.ok) {
+    const err = await response.text().catch(() => "");
+    throw new Error(`Google token uitwisseling mislukt: ${err || response.statusText}`);
+  }
   return response.json();
 }
 
-export async function vernieuwAccessToken(refreshToken: string) {
+export async function vernieuwAccessToken(
+  refreshToken: string,
+  clientId: string,
+  clientSecret: string
+) {
+  if (!clientId || !clientSecret) {
+    throw new Error("Google OAuth-gegevens ontbreken.");
+  }
   const response = await fetch(GOOGLE_TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       refresh_token: refreshToken,
-      client_id: process.env.GOOGLE_CLIENT_ID ?? "",
-      client_secret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+      client_id: clientId,
+      client_secret: clientSecret,
       grant_type: "refresh_token",
     }),
   });

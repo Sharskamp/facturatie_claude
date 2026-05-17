@@ -220,10 +220,15 @@ export default function FacturenPage() {
         titel="Facturen"
         subtitel={`${facturen.length} factuur${facturen.length !== 1 ? "en" : ""}`}
         acties={
-          <Button onClick={() => navigate("/facturen/nieuw")}>
-            <Plus className="h-4 w-4" />
-            Nieuwe factuur
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => navigate("/facturen/import-historisch")}>
+              Historisch importeren
+            </Button>
+            <Button onClick={() => navigate("/facturen/nieuw")}>
+              <Plus className="h-4 w-4" />
+              Nieuwe factuur
+            </Button>
+          </div>
         }
       />
 

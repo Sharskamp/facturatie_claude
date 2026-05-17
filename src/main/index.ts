@@ -573,10 +573,22 @@ function setupIpcHandlers() {
         mollieBetaalLink: factuur.mollieBetaalLink,
       })
 
-      await verstuurEmail(
-        { host: user.emailSmtpHost, port: user.emailSmtpPort ?? 587, secure: user.emailSmtpSecure, user: user.emailSmtpUser, pass: user.emailSmtpPass ?? '' },
-        { van: `${user.bedrijfsnaam ?? user.naam} <${user.emailSmtpUser}>`, naar: payload.naarEmail ?? factuur.klant.email ?? '', onderwerp: `Factuur ${factuur.nummer} - ${user.bedrijfsnaam ?? user.naam}`, html: emailHtml }
-      )
+      try {
+        await verstuurEmail(
+          { host: user.emailSmtpHost, port: user.emailSmtpPort ?? 587, secure: user.emailSmtpSecure, user: user.emailSmtpUser, pass: user.emailSmtpPass ?? '' },
+          { van: `${user.bedrijfsnaam ?? user.naam} <${user.emailSmtpUser}>`, naar: payload.naarEmail ?? factuur.klant.email ?? '', onderwerp: `Factuur ${factuur.nummer} - ${user.bedrijfsnaam ?? user.naam}`, html: emailHtml }
+        )
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : 'Onbekende fout'
+        if (msg.includes('ETIMEDOUT') || msg.includes('connect')) {
+          const poort = user.emailSmtpPort ?? 587
+          throw new Error(`Verbinding met SMTP-server mislukt (${user.emailSmtpHost}:${poort}). Controleer de host, poort en firewall. Poort 25 wordt vaak geblokkeerd — gebruik poort 587 (STARTTLS) of 465 (SSL). Details: ${msg}`)
+        }
+        if (msg.includes('EAUTH') || msg.includes('535') || msg.includes('auth')) {
+          throw new Error(`SMTP-authenticatie mislukt. Controleer gebruikersnaam en wachtwoord. Details: ${msg}`)
+        }
+        throw new Error(`E-mail versturen mislukt: ${msg}`)
+      }
 
       await prisma.factuur.update({ where: { id }, data: { status: 'VERZONDEN', verzondenOp: new Date() } })
       return { succes: true, methode: 'email' }
@@ -917,11 +929,16 @@ function setupIpcHandlers() {
         korActief: true, korDrempel: true, korWaarschuwing: true,
         standaardBetaalTermijn: true, standaardBtwTarief: true,
         betalingsherinneringen: true, herinneringDagen: true,
-        googleRefreshToken: true, kmVergoeding: true, anthropicApiKey: true,
+        googleRefreshToken: true, googleClientId: true, kmVergoeding: true, anthropicApiKey: true,
         donkerModus: true, autoStart: true, pdfMapPad: true, mollieApiKey: true,
+        layoutPrimairKleur: true, layoutSecundairKleur: true, layoutLettertype: true,
+        layoutKoptekst: true, layoutVoettekst: true, layoutLogoPositie: true,
+        layoutToonBtwNummer: true, layoutToonKvkNummer: true, layoutToonIban: true,
+        layoutToonQrCode: true, layoutRegelSpacing: true,
+        onbetaaldeFactuurMelding: true,
       }
     })
-    return { ...user, googleGekoppeld: !!user?.googleRefreshToken }
+    return { ...user, googleGekoppeld: !!user?.googleRefreshToken, googleClientId: user?.googleClientId ?? '' }
   })
 
   ipcMain.handle('instellingen:update', async (_, data: Record<string, unknown>) => {
@@ -937,6 +954,12 @@ function setupIpcHandlers() {
       'kmVergoeding', 'anthropicApiKey', 'mollieApiKey',
       'donkerModus', 'autoStart', 'pdfMapPad',
       'emailAanhef', 'emailAfsluitingsTekst',
+      'googleClientId', 'googleClientSecret',
+      'layoutPrimairKleur', 'layoutSecundairKleur', 'layoutLettertype',
+      'layoutKoptekst', 'layoutVoettekst', 'layoutLogoPositie',
+      'layoutToonBtwNummer', 'layoutToonKvkNummer', 'layoutToonIban',
+      'layoutToonQrCode', 'layoutRegelSpacing',
+      'onbetaaldeFactuurMelding',
     ])
     const updateData: Record<string, unknown> = {}
     for (const [sleutel, waarde] of Object.entries(data)) {
@@ -949,24 +972,45 @@ function setupIpcHandlers() {
   })
 
   ipcMain.handle('instellingen:test-email', async (_, config: { host: string; port: number; secure: boolean; user: string; pass: string; naar: string }) => {
-    await verstuurEmail(
-      { host: config.host, port: config.port, secure: config.secure, user: config.user, pass: config.pass },
-      { van: config.user, naar: config.naar, onderwerp: 'AdminPro - Test e-mail', html: '<p>Dit is een test e-mail van AdminPro. Uw SMTP-instellingen werken correct!</p>' }
-    )
-    return { succes: true }
+    try {
+      await verstuurEmail(
+        { host: config.host, port: config.port, secure: config.secure, user: config.user, pass: config.pass },
+        { van: config.user, naar: config.naar, onderwerp: 'AdminPro - Test e-mail', html: '<p>Dit is een test e-mail van AdminPro. Uw SMTP-instellingen werken correct!</p>' }
+      )
+      return { succes: true }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Onbekende fout'
+      if (msg.includes('ETIMEDOUT') || msg.includes('connect')) {
+        throw new Error(`Verbinding mislukt (${config.host}:${config.port}). Controleer host, poort en firewall. Poort 25 is vaak geblokkeerd — gebruik 587 (STARTTLS) of 465 (SSL). Details: ${msg}`)
+      }
+      if (msg.includes('EAUTH') || msg.includes('535') || msg.includes('auth')) {
+        throw new Error(`Authenticatie mislukt. Controleer gebruikersnaam en wachtwoord. Details: ${msg}`)
+      }
+      throw new Error(`Test e-mail mislukt: ${msg}`)
+    }
   })
 
   ipcMain.handle('instellingen:google-auth-url', async () => {
-    return maakGoogleAuthUrl()
+    const user = await prisma.user.findFirst()
+    if (!user?.googleClientId) {
+      throw new Error('Google Client ID ontbreekt. Vul dit in bij Instellingen → Google Agenda.')
+    }
+    const redirectUri = 'urn:ietf:wg:oauth:2.0:oob'
+    const url = maakGoogleAuthUrl(user.googleClientId, redirectUri)
+    return { url }
   })
 
   ipcMain.handle('instellingen:google-koppelen', async (_, code: string) => {
-    const tokens = await wisselCodeVoorTokens(code, 'urn:ietf:wg:oauth:2.0:oob')
+    const user = await prisma.user.findFirst()
+    if (!user?.googleClientId || !user?.googleClientSecret) {
+      throw new Error('Google OAuth-gegevens ontbreken. Vul Client ID en Client Secret in bij Instellingen → Google Agenda.')
+    }
+    const tokens = await wisselCodeVoorTokens(code, 'urn:ietf:wg:oauth:2.0:oob', user.googleClientId, user.googleClientSecret)
     await prisma.user.updateMany({
       data: {
         googleRefreshToken: tokens.refresh_token,
         googleAccessToken: tokens.access_token,
-        googleTokenExpiry: new Date(Date.now() + tokens.expires_in * 1000),
+        googleTokenExpiry: tokens.expires_in ? new Date(Date.now() + tokens.expires_in * 1000) : null,
       }
     })
     return { succes: true }
@@ -980,18 +1024,36 @@ function setupIpcHandlers() {
   // Agenda
   ipcMain.handle('agenda:haal-afspraken', async (_, params?: { van?: string; tot?: string }) => {
     const user = await prisma.user.findFirst()
-    if (!user?.googleRefreshToken) return []
+    if (!user?.googleRefreshToken) {
+      return { afspraken: [], googleNietGekoppeld: true }
+    }
+    if (!user.googleClientId || !user.googleClientSecret) {
+      return { afspraken: [], fout: 'Google OAuth-gegevens ontbreken. Vul Client ID en Client Secret in bij Instellingen → Google Agenda.' }
+    }
 
     let accessToken = user.googleAccessToken
     if (!accessToken || (user.googleTokenExpiry && new Date() >= user.googleTokenExpiry)) {
-      const nieuwTokens = await vernieuwAccessToken(user.googleRefreshToken)
-      accessToken = nieuwTokens.access_token
-      await prisma.user.updateMany({
-        data: { googleAccessToken: accessToken, googleTokenExpiry: new Date(Date.now() + nieuwTokens.expires_in * 1000) }
-      })
+      try {
+        const nieuwTokens = await vernieuwAccessToken(user.googleRefreshToken, user.googleClientId, user.googleClientSecret)
+        accessToken = nieuwTokens.access_token
+        await prisma.user.updateMany({
+          data: { googleAccessToken: accessToken, googleTokenExpiry: new Date(Date.now() + nieuwTokens.expires_in * 1000) }
+        })
+      } catch (e) {
+        return { afspraken: [], fout: `Token vernieuwen mislukt: ${e instanceof Error ? e.message : 'Onbekende fout'}` }
+      }
     }
 
-    return haalAgendaAfspraken(accessToken!, params?.van, params?.tot)
+    const nu = new Date()
+    const vanDatum = params?.van ? new Date(params.van) : new Date(nu.getFullYear(), nu.getMonth(), 1)
+    const totDatum = params?.tot ? new Date(params.tot) : new Date(nu.getFullYear(), nu.getMonth() + 2, 0)
+
+    try {
+      const afspraken = await haalAgendaAfspraken(accessToken!, vanDatum, totDatum)
+      return { afspraken }
+    } catch (e) {
+      return { afspraken: [], fout: e instanceof Error ? e.message : 'Agenda ophalen mislukt' }
+    }
   })
 
   // ── Ritten (Kilometerregistratie) ──
@@ -1220,7 +1282,189 @@ function setupIpcHandlers() {
       }
     }
 
+    return { transacties, headers: header, autoHerkend: transacties.length > 0 }
+  })
+
+  // Lees ruwe CSV-data terug voor handmatige kolomkoppeling
+  ipcMain.handle('bank:leesRuweData', async (_, filePath: string) => {
+    const inhoud = fs.readFileSync(filePath, 'utf-8')
+    const regels = inhoud.split('\n').map(r => r.trim()).filter(r => r.length > 0)
+
+    function parseerCsvRij(rij: string): string[] {
+      const velden: string[] = []
+      let huidig = ''
+      let inQuotes = false
+      for (let i = 0; i < rij.length; i++) {
+        const c = rij[i]
+        if (c === '"') { inQuotes = !inQuotes }
+        else if ((c === ',' || c === ';') && !inQuotes) { velden.push(huidig.trim()); huidig = '' }
+        else { huidig += c }
+      }
+      velden.push(huidig.trim())
+      return velden.map(v => v.replace(/^"|"$/g, '').trim())
+    }
+
+    const headers = regels[0] ? parseerCsvRij(regels[0]) : []
+    const preview = regels.slice(1, 6).map(r => parseerCsvRij(r))
+    const alleRijen = regels.slice(1).map(r => parseerCsvRij(r)).filter(r => r.some(v => v))
+    return { headers, preview, alleRijen }
+  })
+
+  // Importeer transacties met handmatige kolomkoppeling
+  ipcMain.handle('bank:importeerMetMapping', async (_, { alleRijen, mapping, datumFormaat }: {
+    alleRijen: string[][]
+    mapping: { datum: number; omschrijving: number; bedrag: number; afBij?: number; debitCredit?: number }
+    datumFormaat?: string
+  }) => {
+    function parseerDatum(raw: string): string {
+      const s = raw.trim()
+      if (/^\d{8}$/.test(s)) return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`
+      if (/^\d{2}-\d{2}-\d{4}$/.test(s)) { const [d, m, y] = s.split('-'); return `${y}-${m}-${d}` }
+      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s
+      if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) { const [d, m, y] = s.split('/'); return `${y}-${m}-${d}` }
+      if (/^\d{2}-\d{2}-\d{2}$/.test(s) && datumFormaat === 'DD-MM-YY') {
+        const [d, m, y] = s.split('-')
+        return `20${y}-${m}-${d}`
+      }
+      return s
+    }
+
+    const transacties: Array<{ datum: string; omschrijving: string; bedrag: number; type: 'inkomen' | 'uitgave' }> = []
+    for (const rij of alleRijen) {
+      try {
+        const datum = parseerDatum(rij[mapping.datum] ?? '')
+        const omschrijving = (rij[mapping.omschrijving] ?? '').trim() || 'Onbekend'
+        const bedragStr = (rij[mapping.bedrag] ?? '').replace(/\./g, '').replace(',', '.')
+        let bedrag = parseFloat(bedragStr) || 0
+
+        if (mapping.afBij !== undefined) {
+          const afBijWaarde = (rij[mapping.afBij] ?? '').toLowerCase().trim()
+          if (afBijWaarde === 'af' || afBijWaarde === 'd' || afBijWaarde === 'debet') {
+            bedrag = -Math.abs(bedrag)
+          } else {
+            bedrag = Math.abs(bedrag)
+          }
+        } else if (mapping.debitCredit !== undefined) {
+          const dc = (rij[mapping.debitCredit] ?? '').toLowerCase().trim()
+          if (dc === 'debit' || dc === 'd') bedrag = -Math.abs(bedrag)
+          else bedrag = Math.abs(bedrag)
+        }
+
+        if (!datum) continue
+        transacties.push({ datum, omschrijving, bedrag, type: bedrag < 0 ? 'uitgave' : 'inkomen' })
+      } catch { continue }
+    }
     return transacties
+  })
+
+  // ── Historische facturen importeren ──
+  ipcMain.handle('facturen:importeerHistorisch', async (_, payload: {
+    nummer: string
+    klantId: string
+    datum: string
+    vervaldatum: string
+    status: string
+    subtotaal: number
+    btwBedrag: number
+    totaal: number
+    notities?: string
+    betalingsCondities?: string
+    btwVerlegd?: boolean
+    verzondenOp?: string
+    betaaldOp?: string
+    handmatigBedrag: boolean
+    regels: Array<{
+      omschrijving: string
+      aantal: number
+      prijs: number
+      btwPercentage: number
+      kortingPercentage?: number
+      totaal: number
+    }>
+  }) => {
+    const bestaand = await prisma.factuur.findUnique({ where: { nummer: payload.nummer } })
+    if (bestaand) throw new Error(`Factuurnummer ${payload.nummer} bestaat al in het systeem.`)
+
+    const factuur = await prisma.factuur.create({
+      data: {
+        nummer: payload.nummer,
+        klantId: payload.klantId,
+        datum: new Date(payload.datum),
+        vervaldatum: new Date(payload.vervaldatum),
+        status: payload.status,
+        subtotaal: payload.subtotaal,
+        btwBedrag: payload.btwBedrag,
+        kortingBedrag: 0,
+        kortingPercentage: 0,
+        totaal: payload.totaal,
+        notities: payload.notities,
+        betalingsCondities: payload.betalingsCondities,
+        btwVerlegd: payload.btwVerlegd ?? false,
+        historisch: true,
+        handmatigBedrag: payload.handmatigBedrag,
+        verzondenOp: payload.verzondenOp ? new Date(payload.verzondenOp) : undefined,
+        regels: {
+          create: payload.regels.map((r, i) => ({
+            omschrijving: r.omschrijving,
+            aantal: r.aantal,
+            prijs: r.prijs,
+            btwPercentage: r.btwPercentage,
+            kortingPercentage: r.kortingPercentage ?? 0,
+            totaal: r.totaal,
+            volgorde: i,
+          }))
+        }
+      },
+      include: { klant: true, regels: true }
+    })
+
+    if (payload.status === 'BETAALD' && payload.betaaldOp) {
+      await prisma.inkomen.create({
+        data: {
+          datum: new Date(payload.betaaldOp),
+          omschrijving: `Betaling factuur ${payload.nummer}`,
+          bedrag: payload.totaal,
+          factuurId: factuur.id,
+          bron: 'Historisch',
+        }
+      })
+    }
+
+    return factuur
+  })
+
+  // Haal onbetaalde facturen op voor meldingen
+  ipcMain.handle('facturen:onbetaaldeMeldingen', async () => {
+    const user = await prisma.user.findFirst({ select: { onbetaaldeFactuurMelding: true } })
+    if (!user?.onbetaaldeFactuurMelding) return { facturen: [] }
+
+    const nu = new Date()
+    const over7Dagen = new Date(nu.getTime() + 7 * 24 * 60 * 60 * 1000)
+
+    const facturen = await prisma.factuur.findMany({
+      where: {
+        status: { in: ['VERZONDEN', 'VERLOPEN'] },
+        OR: [
+          { vervaldatum: { lt: nu } }, // al vervallen
+          { vervaldatum: { lte: over7Dagen, gte: nu } }, // vervalt binnen 7 dagen
+        ]
+      },
+      include: { klant: true },
+      orderBy: { vervaldatum: 'asc' },
+    })
+
+    return {
+      facturen: facturen.map(f => ({
+        id: f.id,
+        nummer: f.nummer,
+        klantNaam: f.klant.bedrijf ?? f.klant.naam,
+        totaal: f.totaal,
+        vervaldatum: f.vervaldatum.toISOString(),
+        status: f.status,
+        dagenTeLaat: f.vervaldatum < nu ? Math.floor((nu.getTime() - f.vervaldatum.getTime()) / 86400000) : 0,
+        dagenTotVervaldatum: f.vervaldatum >= nu ? Math.ceil((f.vervaldatum.getTime() - nu.getTime()) / 86400000) : 0,
+      }))
+    }
   })
 
   // ── Uren → Factuur ──

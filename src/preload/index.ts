@@ -30,6 +30,8 @@ contextBridge.exposeInMainWorld('api', {
     maakTermijnFacturen: () => ipcRenderer.invoke('facturen:maakTermijnFacturen'),
     maakCreditnota: (id: string) => ipcRenderer.invoke('facturen:maakCreditnota', id),
     stuurHerinneringen: () => ipcRenderer.invoke('facturen:stuurHerinneringen'),
+    importeerHistorisch: (data: unknown) => ipcRenderer.invoke('facturen:importeerHistorisch', data),
+    onbetaaldeMeldingen: () => ipcRenderer.invoke('facturen:onbetaaldeMeldingen'),
   },
   offertes: {
     list: (params?: unknown) => ipcRenderer.invoke('offertes:list', params),
@@ -77,6 +79,8 @@ contextBridge.exposeInMainWorld('api', {
   bank: {
     openBestandDialog: () => ipcRenderer.invoke('bank:openBestandDialog'),
     importeerCsv: (data: unknown) => ipcRenderer.invoke('bank:importeerCsv', data),
+    leesRuweData: (filePath: string) => ipcRenderer.invoke('bank:leesRuweData', filePath),
+    importeerMetMapping: (data: unknown) => ipcRenderer.invoke('bank:importeerMetMapping', data),
   },
   instellingen: {
     get: () => ipcRenderer.invoke('instellingen:get'),
