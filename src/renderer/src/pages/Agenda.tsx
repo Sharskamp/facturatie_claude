@@ -330,7 +330,7 @@ export default function AgendaPagina() {
                 const isHuidigeMaand = dag.getMonth() === maand;
                 const isVandaag = isSameDag(dag, nu);
                 const isWeekend = dag.getDay() === 0 || dag.getDay() === 6;
-                const dagKey = dag.toISOString().split("T")[0];
+                const dagKey = `${dag.getFullYear()}-${String(dag.getMonth() + 1).padStart(2, "0")}-${String(dag.getDate()).padStart(2, "0")}`;
                 const dagAfspraken = afsprakenPerDag.get(dagKey) ?? [];
 
                 return (

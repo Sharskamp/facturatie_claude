@@ -7,8 +7,8 @@ export interface GoogleAfspraak {
   samenvatting: string;
   omschrijving?: string;
   locatie?: string;
-  start: Date;
-  einde: Date;
+  start: string;
+  einde: string;
   geheledag: boolean;
   kleur?: string;
 }
@@ -112,8 +112,8 @@ export async function haalAgendaAfspraken(
     const startObj = item.start as Record<string, string>;
     const eindObj = item.end as Record<string, string>;
     const geheledag = !!startObj?.date;
-    const start = new Date(startObj?.dateTime ?? startObj?.date ?? "");
-    const einde = new Date(eindObj?.dateTime ?? eindObj?.date ?? "");
+    const start = startObj?.dateTime ?? startObj?.date ?? "";
+    const einde = eindObj?.dateTime ?? eindObj?.date ?? "";
     return {
       id: item.id as string,
       samenvatting: (item.summary as string) ?? "(Geen titel)",
