@@ -1447,6 +1447,17 @@ function setupIpcHandlers() {
     return transacties
   })
 
+  ipcMain.handle('bank:controleerDuplicaten', async () => {
+    const [latestInkomen, latestUitgave] = await Promise.all([
+      prisma.inkomen.findFirst({ orderBy: { datum: 'desc' }, select: { datum: true } }),
+      prisma.uitgave.findFirst({ orderBy: { datum: 'desc' }, select: { datum: true } }),
+    ])
+    const dates = [latestInkomen?.datum, latestUitgave?.datum].filter(Boolean) as Date[]
+    if (dates.length === 0) return { latesteDatum: null }
+    const max = new Date(Math.max(...dates.map(d => d.getTime())))
+    return { latesteDatum: max.toISOString().split('T')[0] }
+  })
+
   // ── Historische facturen importeren ──
   ipcMain.handle('facturen:importeerHistorisch', async (_, payload: {
     nummer: string

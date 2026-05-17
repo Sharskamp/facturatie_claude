@@ -125,6 +125,7 @@ export default function InstellingenPagina() {
   const [emailTestStatus, setEmailTestStatus] = useState<"idle" | "laden" | "succes" | "fout">("idle");
   const [googleLaden, setGoogleLaden] = useState(false);
   const [autoStart, setAutoStart] = useState(false);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
 
   const haalInstellingenOp = useCallback(async () => {
     try {
@@ -345,6 +346,7 @@ export default function InstellingenPagina() {
                   onBlur={() => slaOp({ kvkNummer: instellingen.kvkNummer })}
                   placeholder="12345678"
                 />
+                {!instellingen.korActief && (
                 <Input
                   label="BTW-nummer"
                   value={instellingen.btwNummer ?? ""}
@@ -352,6 +354,7 @@ export default function InstellingenPagina() {
                   onBlur={() => slaOp({ btwNummer: instellingen.btwNummer })}
                   placeholder="NL123456789B01"
                 />
+                )}
                 <Input
                   label="IBAN"
                   value={instellingen.iban ?? ""}
@@ -423,6 +426,7 @@ export default function InstellingenPagina() {
                   onBlur={() => slaOp({ standaardBetaalTermijn: instellingen.standaardBetaalTermijn })}
                 />
               </div>
+              {!instellingen.korActief && (
               <div>
                 <Select
                   value={String(instellingen.standaardBtwTarief ?? 21)}
@@ -442,6 +446,7 @@ export default function InstellingenPagina() {
                   </SelectContent>
                 </Select>
               </div>
+              )}
 
               {/* Herinneringen toggle */}
               <div className="rounded-lg border border-gray-200 p-4 space-y-3">
@@ -498,6 +503,14 @@ export default function InstellingenPagina() {
             factuurInfo: "Factuurnummer & datum", regels: "Regeloverzicht", totalen: "Totalen",
             betaling: "Betalingsgegevens", voettekst: "Voettekst (vrije tekst)",
           };
+          const SECTIE_VELDEN: Record<string, string> = {
+            bedrijf: "Naam, adres, BTW-nr, KvK-nr, e-mail",
+            klant: "Klantnaam, contactpersoon, adres, BTW-nr",
+            factuurInfo: "Factuurnummer, datum, vervaldatum, referentie",
+            regels: "Omschrijving, aantal, prijs, BTW, totaal",
+            totalen: "Subtotaal, BTW-bedrag, totaal te betalen",
+            betaling: "IBAN, tenaamstelling, kenmerk, QR-code",
+          };
           const secties: string[] = (() => {
             try { const p = JSON.parse(instellingen.layoutSectieVolgorde ?? "[]"); return Array.isArray(p) && p.length ? p : DEFAULT_SECTIES; }
             catch { return DEFAULT_SECTIES; }
@@ -524,7 +537,7 @@ export default function InstellingenPagina() {
           return (
             <div className="flex gap-6 items-start">
               {/* Links: instellingen */}
-              <div className="w-[400px] shrink-0 space-y-4">
+              <div className="w-[380px] shrink-0 space-y-4">
 
                 {/* Kleur & typografie */}
                 <Card>
@@ -572,16 +585,53 @@ export default function InstellingenPagina() {
 
                 {/* Blokken & volgorde */}
                 <Card>
-                  <CardHeader className="pb-3"><CardTitle className="text-base">Blokken &amp; volgorde</CardTitle><CardDescription className="text-xs">Verberg blokken of verander hun volgorde. Koptekst en voettekst zijn vrij in te vullen.</CardDescription></CardHeader>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base">Blokken &amp; volgorde</CardTitle>
+                    <CardDescription className="text-xs">Sleep blokken om de volgorde te wijzigen, of gebruik de pijltjes. Koptekst en voettekst zijn vrij in te vullen.</CardDescription>
+                  </CardHeader>
                   <CardContent className="space-y-1">
                     {secties.map((sectie, i) => {
-                      const isKop = sectie === "koptekst"; const isVoet = sectie === "voettekst";
+                      const isKop = sectie === "koptekst";
+                      const isVoet = sectie === "voettekst";
                       const heeftTekst = isKop || isVoet;
+                      const veldInfo = SECTIE_VELDEN[sectie];
+                      const isDragging = dragIndex === i;
+                      const isDragTarget = dragIndex !== null && dragIndex !== i;
                       return (
-                        <div key={sectie} className="rounded-lg border border-gray-100 bg-gray-50 overflow-hidden">
+                        <div
+                          key={sectie}
+                          draggable
+                          onDragStart={() => setDragIndex(i)}
+                          onDragOver={(e) => { e.preventDefault(); }}
+                          onDrop={() => {
+                            if (dragIndex === null || dragIndex === i) return;
+                            const nieuw = [...secties];
+                            const [verwijderd] = nieuw.splice(dragIndex, 1);
+                            nieuw.splice(i, 0, verwijderd);
+                            const json = JSON.stringify(nieuw);
+                            updateVeld("layoutSectieVolgorde", json);
+                            slaOp({ layoutSectieVolgorde: json });
+                            setDragIndex(null);
+                          }}
+                          onDragEnd={() => setDragIndex(null)}
+                          className={`rounded-lg border overflow-hidden transition-all ${
+                            isDragging
+                              ? "opacity-50 border-indigo-300 bg-indigo-50"
+                              : isDragTarget
+                              ? "border-indigo-200 bg-gray-50"
+                              : "border-gray-100 bg-gray-50"
+                          } cursor-grab active:cursor-grabbing`}
+                        >
                           <div className="flex items-center gap-2 px-3 py-2">
-                            <span className="text-sm text-gray-700 flex-1 font-medium">{SECTIE_LABELS[sectie] ?? sectie}</span>
-                            <div className="flex gap-1">
+                            {/* Drag handle */}
+                            <span className="text-gray-300 select-none text-base leading-none" style={{ cursor: "grab" }}>⠿</span>
+                            <div className="flex-1 min-w-0">
+                              <span className="text-sm text-gray-700 font-medium">{SECTIE_LABELS[sectie] ?? sectie}</span>
+                              {veldInfo && (
+                                <p className="text-xs text-gray-400 mt-0.5 truncate">{veldInfo}</p>
+                              )}
+                            </div>
+                            <div className="flex gap-1 shrink-0">
                               <button type="button" onClick={() => verplaatsSectie(i, -1)} disabled={i === 0} className="p-1 rounded hover:bg-white disabled:opacity-30 text-gray-400"><ChevronUp className="h-3.5 w-3.5" /></button>
                               <button type="button" onClick={() => verplaatsSectie(i, 1)} disabled={i === secties.length - 1} className="p-1 rounded hover:bg-white disabled:opacity-30 text-gray-400"><ChevronDown className="h-3.5 w-3.5" /></button>
                             </div>
@@ -601,7 +651,7 @@ export default function InstellingenPagina() {
                 <Card>
                   <CardHeader className="pb-3"><CardTitle className="text-base">Velden tonen / verbergen</CardTitle></CardHeader>
                   <CardContent className="space-y-1">
-                    <Toggle veld="layoutToonBtwNummer" label="BTW-nummer" />
+                    {!instellingen.korActief && <Toggle veld="layoutToonBtwNummer" label="BTW-nummer" />}
                     <Toggle veld="layoutToonKvkNummer" label="KvK-nummer" />
                     <Toggle veld="layoutToonIban" label="IBAN in betalingsblok" />
                     <Toggle veld="layoutToonQrCode" label="SEPA betaal-QR-code" />
@@ -614,9 +664,18 @@ export default function InstellingenPagina() {
               {/* Rechts: live preview sticky */}
               <div className="flex-1 sticky top-6 min-w-0">
                 <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Live voorbeeld — wijzigingen zie je direct</p>
-                {/* De preview is 794px breed; we schalen naar de beschikbare breedte */}
-                <div style={{ overflow: "hidden", borderRadius: "8px", border: "1px solid #e5e7eb", boxShadow: "0 4px 16px rgba(0,0,0,0.10)" }}>
-                  <div style={{ width: "794px", transformOrigin: "top left", transform: "scale(0.52)", marginBottom: `${1123 * 0.52 - 1123}px` }}>
+                {/* Outer wrapper clips to the scaled dimensions so layout doesn't overflow */}
+                <div
+                  style={{
+                    height: `${Math.round(1123 * 0.58)}px`,
+                    width: `${Math.round(794 * 0.58)}px`,
+                    overflow: "hidden",
+                    borderRadius: "8px",
+                    border: "1px solid #e5e7eb",
+                    boxShadow: "0 4px 16px rgba(0,0,0,0.10)",
+                  }}
+                >
+                  <div style={{ width: "794px", transformOrigin: "top left", transform: "scale(0.58)" }}>
                     <FactuurLayoutPreview inst={instellingen} />
                   </div>
                 </div>
@@ -816,10 +875,15 @@ export default function InstellingenPagina() {
                       type="password"
                       value={googleSecretInput}
                       onChange={(e) => setGoogleSecretInput(e.target.value)}
-                      onBlur={() => {
+                      onBlur={async () => {
                         if (googleSecretInput.trim()) {
-                          slaOp({ googleClientSecret: googleSecretInput.trim() } as any);
-                          setGoogleSecretInput("");
+                          try {
+                            await window.api.instellingen.update({ googleClientSecret: googleSecretInput.trim() } as Record<string, unknown>);
+                            setGoogleSecretInput("");
+                            toonMelding("succes", "Client secret opgeslagen");
+                          } catch (e: unknown) {
+                            toonMelding("fout", `Client secret opslaan mislukt: ${e instanceof Error ? e.message : "onbekend"}`);
+                          }
                         }
                       }}
                       placeholder="Plak of typ het client secret (wordt opgeslagen bij verlaten veld)"

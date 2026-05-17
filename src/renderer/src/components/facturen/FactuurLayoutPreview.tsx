@@ -47,9 +47,17 @@ export function FactuurLayoutPreview({ inst }: { inst: PreviewInstellingen }) {
   const toonQr = inst.layoutToonQrCode !== false;
   const korActief = inst.korActief ?? false;
 
-  const bedrijf = inst.bedrijfsnaam ?? inst.naam ?? "Bedrijfsnaam";
-  const adres = inst.adres ?? "Straatnaam 1";
-  const stad = inst.stad ?? "Amsterdam";
+  const bedrijf = inst.bedrijfsnaam ?? inst.naam ?? "Bedrijfsnaam B.V.";
+  const adres = inst.adres ?? "Hoofdstraat 12";
+  const stad = inst.stad ?? "1234 AB Amsterdam";
+
+  const regels = [
+    { omschrijving: "Webdesign & ontwikkeling", aantal: 8, prijs: "€ 95,00", btw: "21%", totaal: "€ 760,00" },
+    { omschrijving: "Maandelijks onderhoud", aantal: 1, prijs: "€ 150,00", btw: "21%", totaal: "€ 150,00" },
+    { omschrijving: "SEO-optimalisatie", aantal: 3, prijs: "€ 85,00", btw: "21%", totaal: "€ 255,00" },
+    { omschrijving: "Hosting & domein (jaarlijks)", aantal: 1, prijs: "€ 120,00", btw: "21%", totaal: "€ 120,00" },
+    { omschrijving: "Technisch overleg (uren)", aantal: 2, prijs: "€ 95,00", btw: "21%", totaal: "€ 190,00" },
+  ];
 
   return (
     <div
@@ -59,116 +67,266 @@ export function FactuurLayoutPreview({ inst }: { inst: PreviewInstellingen }) {
         background: "white",
         fontFamily: font,
         fontSize,
-        transformOrigin: "top left",
-        transform: "scale(0.42)",
         padding: marge,
         boxSizing: "border-box",
         color: "#111",
-        boxShadow: "0 4px 24px rgba(0,0,0,0.12)",
+        display: "flex",
+        flexDirection: "column",
       }}
     >
       {/* Koptekst */}
       {inst.layoutKoptekst && (
-        <div style={{ fontSize: "11px", color: "#666", marginBottom: "12px", borderBottom: `1px solid ${kleur}`, paddingBottom: "6px" }}>
+        <div style={{ fontSize: "11px", color: "#666", marginBottom: "14px", borderBottom: `1px solid ${kleur}`, paddingBottom: "8px" }}>
           {inst.layoutKoptekst}
         </div>
       )}
 
-      {/* Header */}
-      <div style={{ display: "flex", justifyContent: logoPos === "rechts" ? "space-between" : logoPos === "midden" ? "center" : "space-between", alignItems: "flex-start", marginBottom: "24px", flexDirection: logoPos === "midden" ? "column" : "row", gap: "12px" }}>
+      {/* Header: bedrijf + logo */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: logoPos === "midden" ? "center" : "space-between",
+          alignItems: "flex-start",
+          marginBottom: "20px",
+          flexDirection: logoPos === "midden" ? "column" : "row",
+          gap: "12px",
+        }}
+      >
         <div>
-          <div style={{ fontSize: "22px", fontWeight: "700", color: kleur }}>{bedrijf}</div>
-          <div style={{ fontSize: "12px", color: "#555", marginTop: "4px" }}>{adres}</div>
+          <div style={{ fontSize: "24px", fontWeight: "800", color: kleur, letterSpacing: "-0.5px" }}>{bedrijf}</div>
+          <div style={{ fontSize: "12px", color: "#555", marginTop: "5px" }}>{adres}</div>
           <div style={{ fontSize: "12px", color: "#555" }}>{stad}</div>
-          {toonBtw && inst.btwNummer && <div style={{ fontSize: "11px", color: "#888", marginTop: "2px" }}>BTW: {inst.btwNummer}</div>}
-          {toonKvk && inst.kvkNummer && <div style={{ fontSize: "11px", color: "#888" }}>KvK: {inst.kvkNummer}</div>}
+          {toonBtw && (
+            <div style={{ fontSize: "11px", color: "#888", marginTop: "3px" }}>
+              BTW: {inst.btwNummer ?? "NL123456789B01"}
+            </div>
+          )}
+          {toonKvk && (
+            <div style={{ fontSize: "11px", color: "#888" }}>
+              KvK: {inst.kvkNummer ?? "12345678"}
+            </div>
+          )}
+          <div style={{ fontSize: "11px", color: "#888" }}>info@{bedrijf.toLowerCase().replace(/[^a-z0-9]/g, "")}.nl</div>
         </div>
         {inst.logoBase64 ? (
           <img src={inst.logoBase64} alt="logo" style={{ height: logoH, objectFit: "contain" }} />
         ) : (
-          <div style={{ height: logoH, width: logoH, background: "#f0f0f0", borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "10px", color: "#aaa" }}>logo</div>
+          <div
+            style={{
+              height: logoH,
+              width: logoH,
+              background: `${kleur}18`,
+              borderRadius: "10px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: "10px",
+              color: kleur,
+              fontWeight: "600",
+              border: `1px solid ${kleur}30`,
+            }}
+          >
+            LOGO
+          </div>
         )}
       </div>
 
       {/* Divider */}
-      <div style={{ borderTop: `2px solid ${kleur}`, marginBottom: "20px" }} />
+      <div style={{ borderTop: `3px solid ${kleur}`, marginBottom: "22px" }} />
 
-      {/* FACTUUR titel + klantgegevens */}
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "24px" }}>
+      {/* FACTUUR titel + factuurgegevens + klantgegevens */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "28px" }}>
         <div>
-          <div style={{ fontSize: "18px", fontWeight: "700", color: kleur, marginBottom: "4px" }}>FACTUUR</div>
-          <div style={{ fontSize: "11px", color: "#555" }}>Factuurnummer: F2025-0001</div>
-          <div style={{ fontSize: "11px", color: "#555" }}>Datum: 17-05-2025</div>
-          <div style={{ fontSize: "11px", color: "#555" }}>Vervaldatum: 16-06-2025</div>
+          <div style={{ fontSize: "28px", fontWeight: "800", color: kleur, letterSpacing: "2px", marginBottom: "10px" }}>
+            FACTUUR
+          </div>
+          <table style={{ borderCollapse: "collapse", fontSize: "12px" }}>
+            <tbody>
+              <tr>
+                <td style={{ color: "#888", paddingRight: "16px", paddingBottom: "3px" }}>Factuurnummer</td>
+                <td style={{ fontWeight: "600", paddingBottom: "3px" }}>F2026-0042</td>
+              </tr>
+              <tr>
+                <td style={{ color: "#888", paddingRight: "16px", paddingBottom: "3px" }}>Factuurdatum</td>
+                <td style={{ paddingBottom: "3px" }}>17-05-2026</td>
+              </tr>
+              <tr>
+                <td style={{ color: "#888", paddingRight: "16px", paddingBottom: "3px" }}>Vervaldatum</td>
+                <td style={{ paddingBottom: "3px", color: "#d97706", fontWeight: "600" }}>16-06-2026</td>
+              </tr>
+              <tr>
+                <td style={{ color: "#888", paddingRight: "16px" }}>Referentie</td>
+                <td>PO-2026-778</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
-        <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: "12px", fontWeight: "600", marginBottom: "4px" }}>Klant Voorbeeld B.V.</div>
-          <div style={{ fontSize: "11px", color: "#555" }}>Klantenstraat 42</div>
+        <div
+          style={{
+            textAlign: "right",
+            background: "#f8f8fb",
+            border: "1px solid #e5e7eb",
+            borderRadius: "10px",
+            padding: "14px 18px",
+            minWidth: "210px",
+          }}
+        >
+          <div style={{ fontSize: "10px", fontWeight: "700", color: kleur, textTransform: "uppercase", letterSpacing: "1px", marginBottom: "8px" }}>
+            Factuur aan
+          </div>
+          <div style={{ fontSize: "13px", fontWeight: "700", marginBottom: "3px" }}>Klant Voorbeeld B.V.</div>
+          <div style={{ fontSize: "11px", color: "#555" }}>T.a.v. de heer J. Jansen</div>
+          <div style={{ fontSize: "11px", color: "#555", marginTop: "4px" }}>Klantenstraat 42</div>
           <div style={{ fontSize: "11px", color: "#555" }}>1234 AB Amsterdam</div>
+          <div style={{ fontSize: "11px", color: "#555", marginTop: "4px" }}>BTW: NL987654321B01</div>
         </div>
       </div>
 
-      {/* Regeltabel */}
-      <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: "20px", fontSize: "12px" }}>
+      {/* Regeloverzicht — header */}
+      <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: "0", fontSize: "12px" }}>
         <thead>
-          <tr style={{ background: "#f8f8f8" }}>
-            <th style={{ textAlign: "left", padding: "8px", borderBottom: `2px solid ${kleur}`, fontWeight: 600 }}>Omschrijving</th>
-            <th style={{ textAlign: "right", padding: "8px", borderBottom: `2px solid ${kleur}`, fontWeight: 600 }}>Aantal</th>
-            <th style={{ textAlign: "right", padding: "8px", borderBottom: `2px solid ${kleur}`, fontWeight: 600 }}>Prijs</th>
-            {!korActief && <th style={{ textAlign: "right", padding: "8px", borderBottom: `2px solid ${kleur}`, fontWeight: 600 }}>BTW</th>}
-            <th style={{ textAlign: "right", padding: "8px", borderBottom: `2px solid ${kleur}`, fontWeight: 600 }}>Totaal</th>
+          <tr style={{ background: kleur }}>
+            <th style={{ textAlign: "left", padding: "10px 12px", fontWeight: 600, color: "white", borderRadius: "0" }}>Omschrijving</th>
+            <th style={{ textAlign: "right", padding: "10px 12px", fontWeight: 600, color: "white", width: "60px" }}>Aantal</th>
+            <th style={{ textAlign: "right", padding: "10px 12px", fontWeight: 600, color: "white", width: "90px" }}>Prijs</th>
+            {!korActief && (
+              <th style={{ textAlign: "right", padding: "10px 12px", fontWeight: 600, color: "white", width: "60px" }}>BTW</th>
+            )}
+            <th style={{ textAlign: "right", padding: "10px 12px", fontWeight: 600, color: "white", width: "90px" }}>Totaal</th>
           </tr>
         </thead>
         <tbody>
-          {[
-            { omschrijving: "Webdesign & ontwikkeling", aantal: 8, prijs: "€ 95,00", btw: "21%", totaal: "€ 760,00" },
-            { omschrijving: "Maandelijks onderhoud", aantal: 1, prijs: "€ 150,00", btw: "21%", totaal: "€ 150,00" },
-          ].map((r, i) => (
-            <tr key={i} style={{ borderBottom: "1px solid #eee" }}>
-              <td style={{ padding: "8px" }}>{r.omschrijving}</td>
-              <td style={{ textAlign: "right", padding: "8px" }}>{r.aantal}</td>
-              <td style={{ textAlign: "right", padding: "8px" }}>{r.prijs}</td>
-              {!korActief && <td style={{ textAlign: "right", padding: "8px" }}>{r.btw}</td>}
-              <td style={{ textAlign: "right", padding: "8px" }}>{r.totaal}</td>
+          {regels.map((r, i) => (
+            <tr
+              key={i}
+              style={{
+                background: i % 2 === 0 ? "white" : "#fafafa",
+                borderBottom: "1px solid #f0f0f0",
+              }}
+            >
+              <td style={{ padding: "10px 12px" }}>{r.omschrijving}</td>
+              <td style={{ textAlign: "right", padding: "10px 12px" }}>{r.aantal}</td>
+              <td style={{ textAlign: "right", padding: "10px 12px" }}>{r.prijs}</td>
+              {!korActief && <td style={{ textAlign: "right", padding: "10px 12px", color: "#888" }}>{r.btw}</td>}
+              <td style={{ textAlign: "right", padding: "10px 12px", fontWeight: "600" }}>{r.totaal}</td>
             </tr>
           ))}
         </tbody>
       </table>
 
+      {/* Dunne afsluitende lijn onder tabel */}
+      <div style={{ borderTop: `2px solid ${kleur}`, marginBottom: "20px" }} />
+
       {/* Totalen */}
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "24px" }}>
-        <div style={{ width: "240px", fontSize: "12px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0" }}>
-            <span style={{ color: "#555" }}>Subtotaal</span>
-            <span>€ 910,00</span>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "28px" }}>
+        <div style={{ width: "280px", fontSize: "13px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: "1px solid #f0f0f0" }}>
+            <span style={{ color: "#666" }}>Subtotaal excl. BTW</span>
+            <span>€ 1.475,00</span>
           </div>
           {!korActief && (
-            <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0" }}>
-              <span style={{ color: "#555" }}>BTW 21%</span>
-              <span>€ 191,10</span>
+            <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: "1px solid #f0f0f0" }}>
+              <span style={{ color: "#666" }}>BTW 21%</span>
+              <span>€ 309,75</span>
             </div>
           )}
-          <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderTop: `2px solid ${kleur}`, fontWeight: "700", fontSize: "14px", color: kleur }}>
-            <span>Totaal</span>
-            <span>{korActief ? "€ 910,00" : "€ 1.101,10"}</span>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              padding: "10px 14px",
+              marginTop: "6px",
+              background: kleur,
+              borderRadius: "8px",
+              fontWeight: "700",
+              fontSize: "16px",
+              color: "white",
+            }}
+          >
+            <span>Te betalen</span>
+            <span>{korActief ? "€ 1.475,00" : "€ 1.784,75"}</span>
           </div>
         </div>
       </div>
 
-      {/* Betaalgegevens */}
-      <div style={{ background: "#f8f8f8", borderRadius: "8px", padding: "16px", marginBottom: "16px", fontSize: "11px" }}>
-        <div style={{ fontWeight: 600, marginBottom: "6px" }}>Betalingsgegevens</div>
-        {toonIban && <div style={{ color: "#555" }}>IBAN: {inst.iban ?? "NL91 ABNA 0417 1643 00"}</div>}
-        <div style={{ color: "#555" }}>Onder vermelding van factuurnummer F2025-0001</div>
+      {/* Betalingsgegevens */}
+      <div
+        style={{
+          background: "#f8f8fb",
+          border: `1px solid ${kleur}30`,
+          borderLeft: `4px solid ${kleur}`,
+          borderRadius: "8px",
+          padding: "16px 20px",
+          marginBottom: "20px",
+          fontSize: "12px",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-start",
+          gap: "16px",
+        }}
+      >
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: "700", fontSize: "13px", marginBottom: "8px", color: kleur }}>Betalingsgegevens</div>
+          {toonIban && (
+            <div style={{ marginBottom: "4px" }}>
+              <span style={{ color: "#888" }}>IBAN: </span>
+              <span style={{ fontWeight: "600" }}>{inst.iban ?? "NL91 ABNA 0417 1643 00"}</span>
+            </div>
+          )}
+          <div style={{ marginBottom: "4px" }}>
+            <span style={{ color: "#888" }}>T.n.v.: </span>
+            <span>{bedrijf}</span>
+          </div>
+          <div style={{ marginBottom: "4px" }}>
+            <span style={{ color: "#888" }}>Kenmerk: </span>
+            <span style={{ fontWeight: "600" }}>F2026-0042</span>
+          </div>
+          <div style={{ marginTop: "8px", color: "#555", fontSize: "11px" }}>
+            Gelieve het bedrag binnen 30 dagen over te maken onder vermelding van het factuurnummer.
+          </div>
+        </div>
         {toonQr && (
-          <div style={{ marginTop: "8px", width: "60px", height: "60px", background: "#e0e0e0", borderRadius: "4px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "9px", color: "#999" }}>QR</div>
+          <div>
+            <div
+              style={{
+                width: "72px",
+                height: "72px",
+                background: "#e8e8e8",
+                borderRadius: "6px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "9px",
+                color: "#999",
+                flexDirection: "column",
+                gap: "3px",
+              }}
+            >
+              <div style={{ fontSize: "20px" }}>▦</div>
+              <span>SEPA QR</span>
+            </div>
+          </div>
         )}
       </div>
 
+      {/* Korting-vrijstelling tekst */}
+      {korActief && (
+        <div style={{ fontSize: "11px", color: "#888", marginBottom: "16px", fontStyle: "italic" }}>
+          BTW vrijgesteld o.g.v. artikel 25 Wet OB (Kleineondernemersregeling)
+        </div>
+      )}
+
+      {/* Spacer om voettekst naar onder te duwen */}
+      <div style={{ flex: 1 }} />
+
       {/* Voettekst */}
-      {inst.layoutVoettekst && (
-        <div style={{ fontSize: "10px", color: "#888", borderTop: "1px solid #eee", paddingTop: "8px", marginTop: "12px" }}>
+      {inst.layoutVoettekst ? (
+        <div style={{ fontSize: "10px", color: "#888", borderTop: "1px solid #eee", paddingTop: "10px", marginTop: "16px" }}>
           {inst.layoutVoettekst}
+        </div>
+      ) : (
+        <div style={{ fontSize: "10px", color: "#ccc", borderTop: "1px solid #eee", paddingTop: "10px", marginTop: "16px", textAlign: "center" }}>
+          Bedankt voor uw opdracht — {bedrijf} · {adres}, {stad}
         </div>
       )}
     </div>

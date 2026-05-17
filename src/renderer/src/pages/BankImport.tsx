@@ -64,6 +64,8 @@ export default function BankImportPagina() {
   const [melding, setMelding] = useState<{ type: "succes" | "fout"; tekst: string } | null>(null);
   const [bestandPad, setBestandPad] = useState<string | null>(null);
   const [importResultaat, setImportResultaat] = useState<{ aangemaakt: number } | null>(null);
+  const [latesteDatum, setLatesteDatum] = useState<string | null>(null);
+  const [oudeTransactiesAantal, setOudeTransactiesAantal] = useState<number>(0);
 
   // Handmatige mapping state
   const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
@@ -75,6 +77,20 @@ export default function BankImportPagina() {
   const toonMelding = (type: "succes" | "fout", tekst: string) => {
     setMelding({ type, tekst });
     setTimeout(() => setMelding(null), 5000);
+  };
+
+  const laadTransactiesMetDuplicaatCheck = async (rijen: TransactieRij[]) => {
+    const { latesteDatum: ld } = await (window.api.bank as any).controleerDuplicaten() as { latesteDatum: string | null };
+    setLatesteDatum(ld);
+    if (ld) {
+      const oudeRijen = rijen.filter(t => t.datum <= ld);
+      setOudeTransactiesAantal(oudeRijen.length);
+      const bijgewerkt = rijen.map(t => ({ ...t, geselecteerd: t.datum > ld }));
+      setTransacties(bijgewerkt);
+    } else {
+      setOudeTransactiesAantal(0);
+      setTransacties(rijen);
+    }
   };
 
   const selecteerBestand = async () => {
@@ -110,7 +126,7 @@ export default function BankImportPagina() {
           const rijen: TransactieRij[] = (data as Transactie[]).map((t, i) => ({
             ...t, geselecteerd: true, index: i,
           }));
-          setTransacties(rijen);
+          await laadTransactiesMetDuplicaatCheck(rijen);
           setStap(3);
         }
       }
@@ -148,7 +164,7 @@ export default function BankImportPagina() {
       const rijen: TransactieRij[] = (data as Transactie[]).map((t, i) => ({
         ...t, geselecteerd: true, index: i,
       }));
-      setTransacties(rijen);
+      await laadTransactiesMetDuplicaatCheck(rijen);
       setStap(3);
     } catch (e: unknown) {
       setMappingFout(`Fout: ${e instanceof Error ? e.message : "onbekend"}`);
@@ -171,6 +187,17 @@ export default function BankImportPagina() {
   const importeerGeselecteerde = async () => {
     const geselecteerd = transacties.filter((t) => t.geselecteerd);
     if (geselecteerd.length === 0) { toonMelding("fout", "Selecteer minimaal één transactie"); return; }
+
+    if (latesteDatum) {
+      const oudeGeselecteerd = geselecteerd.filter(t => t.datum <= latesteDatum);
+      if (oudeGeselecteerd.length > 0) {
+        const bevestigd = confirm(
+          `Je probeert ${oudeGeselecteerd.length} transacties te importeren die al verwerkt zijn (${latesteDatum}). Weet je zeker dat je dit wilt?`
+        );
+        if (!bevestigd) return;
+      }
+    }
+
     setImportLaden(true);
     let aangemaakt = 0;
     try {
@@ -189,7 +216,6 @@ export default function BankImportPagina() {
             bedrag: Math.abs(t.bedrag),
             btwPercentage: 0,
             btwBedrag: 0,
-            totaal: Math.abs(t.bedrag),
             zakelijk: true,
             zakelijkPercent: 100,
           });
@@ -198,8 +224,8 @@ export default function BankImportPagina() {
       }
       setImportResultaat({ aangemaakt });
       setStap(4);
-    } catch {
-      toonMelding("fout", "Importeren mislukt");
+    } catch (e: unknown) {
+      toonMelding("fout", `Importeren mislukt: ${e instanceof Error ? e.message : "onbekend"}`);
     } finally {
       setImportLaden(false);
     }
@@ -217,6 +243,8 @@ export default function BankImportPagina() {
     setCsvAlleRijen([]);
     setMapping({ datum: -1, omschrijving: -1, bedrag: -1, afBij: -1, debitCredit: -1 });
     setMappingFout(null);
+    setLatesteDatum(null);
+    setOudeTransactiesAantal(0);
   };
 
   const geselecteerdAantal = transacties.filter((t) => t.geselecteerd).length;
@@ -460,6 +488,12 @@ export default function BankImportPagina() {
                 {bestandPad && (
                   <div className="px-4 pb-2 text-xs text-gray-400 truncate">
                     Bestand: {bestandPad}
+                  </div>
+                )}
+                {oudeTransactiesAantal > 0 && latesteDatum && (
+                  <div className="mx-4 mb-3 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800 flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    {oudeTransactiesAantal} transacties zijn al verwerkt (tot {latesteDatum}). Alleen nieuwe transacties zijn geselecteerd.
                   </div>
                 )}
                 <Table>

@@ -81,6 +81,7 @@ contextBridge.exposeInMainWorld('api', {
     importeerCsv: (data: unknown) => ipcRenderer.invoke('bank:importeerCsv', data),
     leesRuweData: (filePath: string) => ipcRenderer.invoke('bank:leesRuweData', filePath),
     importeerMetMapping: (data: unknown) => ipcRenderer.invoke('bank:importeerMetMapping', data),
+    controleerDuplicaten: () => ipcRenderer.invoke('bank:controleerDuplicaten'),
   },
   instellingen: {
     get: () => ipcRenderer.invoke('instellingen:get'),
