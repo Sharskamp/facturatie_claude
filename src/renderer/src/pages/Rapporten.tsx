@@ -14,10 +14,10 @@ import {
   LineChart,
   Line,
 } from "recharts";
-import { Printer, TrendingUp, TrendingDown, Minus, Loader2, FileDown } from "lucide-react";
+import { Printer, TrendingUp, TrendingDown, Minus, Loader2, FileDown, Calculator } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
   Select,
@@ -49,7 +49,7 @@ function downloadCsv(rows: Record<string, unknown>[], bestandsnaam: string) {
   URL.revokeObjectURL(url);
 }
 
-type Tab = "btw" | "winstverlies" | "factuurstatus" | "btwAangifte" | "balans" | "debiteuren" | "cashflow";
+type Tab = "btw" | "winstverlies" | "factuurstatus" | "btwAangifte" | "balans" | "debiteuren" | "cashflow" | "inkomensschatting";
 
 interface FactuurRegel {
   id: string;
@@ -105,6 +105,7 @@ const TAB_LABELS: Record<Tab, string> = {
   balans: "Balans",
   debiteuren: "Debiteurenanalyse",
   cashflow: "Cashflow",
+  inkomensschatting: "Inkomensschatting",
 };
 
 const KWARTALEN = ["Q1", "Q2", "Q3", "Q4"];
