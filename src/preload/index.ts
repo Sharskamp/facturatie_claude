@@ -87,7 +87,7 @@ contextBridge.exposeInMainWorld('api', {
     update: (data: unknown) => ipcRenderer.invoke('instellingen:update', data),
     testEmail: (config: unknown) => ipcRenderer.invoke('instellingen:test-email', config),
     googleAuthUrl: () => ipcRenderer.invoke('instellingen:google-auth-url'),
-    googleKoppelen: (code: string) => ipcRenderer.invoke('instellingen:google-koppelen', code),
+    googleKoppelen: () => ipcRenderer.invoke('instellingen:google-koppelen'),
     googleOntkoppelen: () => ipcRenderer.invoke('instellingen:google-ontkoppelen'),
   },
   agenda: {

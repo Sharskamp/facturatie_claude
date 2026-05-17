@@ -5,6 +5,8 @@ import { PrismaClient } from '../generated/prisma/client'
 import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3'
 import bcrypt from 'bcryptjs'
 import * as fs from 'fs'
+import * as http from 'http'
+import * as net from 'net'
 import { verstuurEmail, maakFactuurEmailHtml } from '../lib/email'
 import { haalAgendaAfspraken, maakGoogleAuthUrl, wisselCodeVoorTokens, vernieuwAccessToken } from '../lib/google-calendar'
 import { autoUpdater } from 'electron-updater'
@@ -67,6 +69,17 @@ function createWindow() {
 }
 
 // ── Helper functies (inline, geen externe import nodig) ──
+function vrijePoortvinden(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer()
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address() as net.AddressInfo
+      server.close(() => resolve(addr.port))
+    })
+    server.on('error', reject)
+  })
+}
+
 async function genereerNummer(prefix: string, tabel: 'factuur' | 'offerte'): Promise<string> {
   const jaar = new Date().getFullYear()
   const startsWith = `${prefix}${jaar}-`
@@ -935,6 +948,7 @@ function setupIpcHandlers() {
         layoutKoptekst: true, layoutVoettekst: true, layoutLogoPositie: true,
         layoutToonBtwNummer: true, layoutToonKvkNummer: true, layoutToonIban: true,
         layoutToonQrCode: true, layoutRegelSpacing: true,
+        layoutLetterGrootte: true, layoutLogoGrootte: true, layoutMarges: true, layoutSectieVolgorde: true,
         onbetaaldeFactuurMelding: true,
       }
     })
@@ -959,6 +973,7 @@ function setupIpcHandlers() {
       'layoutKoptekst', 'layoutVoettekst', 'layoutLogoPositie',
       'layoutToonBtwNummer', 'layoutToonKvkNummer', 'layoutToonIban',
       'layoutToonQrCode', 'layoutRegelSpacing',
+      'layoutLetterGrootte', 'layoutLogoGrootte', 'layoutMarges', 'layoutSectieVolgorde',
       'onbetaaldeFactuurMelding',
     ])
     const updateData: Record<string, unknown> = {}
@@ -995,25 +1010,62 @@ function setupIpcHandlers() {
     if (!user?.googleClientId) {
       throw new Error('Google Client ID ontbreekt. Vul dit in bij Instellingen → Google Agenda.')
     }
-    const redirectUri = 'urn:ietf:wg:oauth:2.0:oob'
+    const port = await vrijePoortvinden()
+    const redirectUri = `http://127.0.0.1:${port}`
     const url = maakGoogleAuthUrl(user.googleClientId, redirectUri)
-    return { url }
+    return { url, port }
   })
 
-  ipcMain.handle('instellingen:google-koppelen', async (_, code: string) => {
+  ipcMain.handle('instellingen:google-koppelen', async () => {
     const user = await prisma.user.findFirst()
     if (!user?.googleClientId || !user?.googleClientSecret) {
       throw new Error('Google OAuth-gegevens ontbreken. Vul Client ID en Client Secret in bij Instellingen → Google Agenda.')
     }
-    const tokens = await wisselCodeVoorTokens(code, 'urn:ietf:wg:oauth:2.0:oob', user.googleClientId, user.googleClientSecret)
-    await prisma.user.updateMany({
-      data: {
-        googleRefreshToken: tokens.refresh_token,
-        googleAccessToken: tokens.access_token,
-        googleTokenExpiry: tokens.expires_in ? new Date(Date.now() + tokens.expires_in * 1000) : null,
-      }
+    const port = await vrijePoortvinden()
+    const redirectUri = `http://127.0.0.1:${port}`
+    const authUrl = maakGoogleAuthUrl(user.googleClientId, redirectUri)
+
+    return new Promise<{ succes: true }>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        server.close()
+        reject(new Error('Time-out: geen toestemming ontvangen binnen 5 minuten.'))
+      }, 5 * 60 * 1000)
+
+      const server = http.createServer(async (req, res) => {
+        if (!req.url) return
+        const urlParams = new URL(req.url, `http://127.0.0.1:${port}`)
+        const code = urlParams.searchParams.get('code')
+        const error = urlParams.searchParams.get('error')
+
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+        if (error || !code) {
+          res.end('<html><body style="font-family:Arial;text-align:center;padding:40px"><h2>Autorisatie geweigerd</h2><p>Sluit dit venster en probeer het opnieuw in AdminPro.</p></body></html>')
+          clearTimeout(timeout)
+          server.close()
+          reject(new Error(`Google autorisatie geweigerd: ${error || 'geen code ontvangen'}`))
+          return
+        }
+        res.end('<html><body style="font-family:Arial;text-align:center;padding:40px"><h2>Verbinding geslaagd!</h2><p>Je Google Agenda is gekoppeld. Je kunt dit venster sluiten.</p></body></html>')
+        clearTimeout(timeout)
+        server.close()
+        try {
+          const tokens = await wisselCodeVoorTokens(code, redirectUri, user!.googleClientId!, user!.googleClientSecret!)
+          await prisma.user.updateMany({
+            data: {
+              googleRefreshToken: tokens.refresh_token,
+              googleAccessToken: tokens.access_token,
+              googleTokenExpiry: tokens.expires_in ? new Date(Date.now() + tokens.expires_in * 1000) : null,
+            }
+          })
+          resolve({ succes: true })
+        } catch (e) {
+          reject(e)
+        }
+      })
+
+      server.on('error', (e) => { clearTimeout(timeout); reject(e) })
+      server.listen(port, '127.0.0.1', () => { shell.openExternal(authUrl) })
     })
-    return { succes: true }
   })
 
   ipcMain.handle('instellingen:google-ontkoppelen', async () => {
@@ -1181,7 +1233,7 @@ function setupIpcHandlers() {
     return result.filePaths[0]
   })
 
-  ipcMain.handle('bank:importeerCsv', async (_, { bank, filePath }: { bank: 'abn' | 'ing' | 'rabobank'; filePath: string }) => {
+  ipcMain.handle('bank:importeerCsv', async (_, { bank, filePath }: { bank: 'abn' | 'ing' | 'rabobank' | 'knab'; filePath: string }) => {
     const inhoud = fs.readFileSync(filePath, 'utf-8')
     const regels = inhoud.split('\n').map(r => r.trim()).filter(r => r.length > 0)
 
@@ -1275,6 +1327,37 @@ function setupIpcHandlers() {
             omschrijving: omschrijving || 'Onbekend',
             bedrag,
             type: bedrag < 0 ? 'uitgave' : 'inkomen'
+          })
+        } else if (bank === 'knab') {
+          // KNAB: Datum;Naam / Omschrijving;IBAN;Type;Af/Bij;Bedrag (EUR);Balans na boeking;...
+          const idx = (naam: string) => header.findIndex(h => h.toLowerCase().includes(naam.toLowerCase()))
+          const datumIdx = idx('datum')
+          const omschrijvingIdx = idx('naam')
+          const afBijIdx = header.findIndex(h => h.toLowerCase().replace(' ', '') === 'af/bij' || h.toLowerCase() === 'af/bij')
+          const bedragIdx = header.findIndex(h => h.toLowerCase().includes('bedrag') && !h.toLowerCase().includes('balans'))
+
+          if (datumIdx < 0 || bedragIdx < 0) continue
+
+          const datumRaw = velden[datumIdx] ?? ''
+          let datum = datumRaw
+          if (/^\d{2}-\d{2}-\d{4}$/.test(datumRaw)) {
+            const parts = datumRaw.split('-')
+            datum = `${parts[2]}-${parts[1]}-${parts[0]}`
+          } else if (/^\d{4}-\d{2}-\d{2}$/.test(datumRaw)) {
+            datum = datumRaw
+          }
+
+          const omschrijving = omschrijvingIdx >= 0 ? (velden[omschrijvingIdx] ?? '') : ''
+          const bedragStr = (velden[bedragIdx] ?? '').replace(/\./g, '').replace(',', '.')
+          const bedragAbs = Math.abs(parseFloat(bedragStr) || 0)
+          const afBij = afBijIdx >= 0 ? (velden[afBijIdx] ?? '').toLowerCase() : ''
+          const isDebet = afBij === 'af' || afBij === 'debet'
+
+          transacties.push({
+            datum,
+            omschrijving: omschrijving || 'Onbekend',
+            bedrag: isDebet ? -bedragAbs : bedragAbs,
+            type: isDebet ? 'uitgave' : 'inkomen'
           })
         }
       } catch {

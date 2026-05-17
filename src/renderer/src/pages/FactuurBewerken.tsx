@@ -81,6 +81,7 @@ export default function FactuurBewerkenPage() {
   const [klanten, setKlanten] = useState<Klant[]>([]);
   const [klantLaden, setKlantLaden] = useState(true);
   const [factuurLaden, setFactuurLaden] = useState(true);
+  const [korActief, setKorActief] = useState(false);
   const [factuurNummer, setFactuurNummer] = useState<string>("");
   const [nietBewerkbaar, setNietBewerkbaar] = useState(false);
   const [opslaan, setOpslaan] = useState(false);
@@ -116,6 +117,12 @@ export default function FactuurBewerkenPage() {
     } finally {
       setKlantLaden(false);
     }
+  }, []);
+
+  useEffect(() => {
+    window.api.instellingen.get().then((inst: { korActief?: boolean }) => {
+      setKorActief(inst?.korActief ?? false);
+    }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -481,7 +488,7 @@ export default function FactuurBewerkenPage() {
             <FactuurRegelTabel
               regels={regels}
               btwVerlegd={btwVerlegd}
-              korActief={false}
+              korActief={korActief}
               producten={[]}
               foutenVelden={foutenVelden}
               onRegelUpdate={updateRegel}
@@ -562,7 +569,7 @@ export default function FactuurBewerkenPage() {
           <FactuurTotalenSidebar
             totalen={totalen}
             btwVerlegd={btwVerlegd}
-            korActief={false}
+            korActief={korActief}
             totaalKortingActief={totaalKortingActief}
             totaalKortingType={totaalKortingType}
             totaalKortingPercentage={totaalKortingPercentage}

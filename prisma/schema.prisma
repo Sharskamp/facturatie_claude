@@ -67,6 +67,10 @@ model User {
   layoutToonIban        Boolean   @default(true)
   layoutToonQrCode      Boolean   @default(true)
   layoutRegelSpacing    String    @default("normaal")
+  layoutLetterGrootte   String    @default("14")
+  layoutLogoGrootte     String    @default("medium")
+  layoutMarges          String    @default("normaal")
+  layoutSectieVolgorde  String    @default("[]")
   onbetaaldeFactuurMelding Boolean @default(true)
   aangemaakt            DateTime  @default(now())
   bijgewerkt            DateTime  @updatedAt

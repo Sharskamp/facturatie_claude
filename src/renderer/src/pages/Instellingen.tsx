@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { FactuurLayoutPreview } from "@/components/facturen/FactuurLayoutPreview";
 import {
   Building2,
   FileText,
@@ -17,6 +18,8 @@ import {
   Download,
   Settings,
   Palette,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -65,11 +68,11 @@ interface Instellingen {
   betalingsherinneringen?: boolean;
   herinneringDagen?: number;
   // Email / SMTP
-  smtpHost?: string;
-  smtpPort?: number;
-  smtpSecure?: boolean;
-  smtpUser?: string;
-  smtpPass?: string;
+  emailSmtpHost?: string;
+  emailSmtpPort?: number;
+  emailSmtpSecure?: boolean;
+  emailSmtpUser?: string;
+  emailSmtpPass?: string;
   // Google
   googleGekoppeld?: boolean;
   googleEmail?: string;
@@ -104,6 +107,10 @@ interface Instellingen {
   layoutToonIban?: boolean;
   layoutToonQrCode?: boolean;
   layoutRegelSpacing?: string;
+  layoutLetterGrootte?: string;
+  layoutLogoGrootte?: string;
+  layoutMarges?: string;
+  layoutSectieVolgorde?: string;
   onbetaaldeFactuurMelding?: boolean;
 }
 
@@ -116,9 +123,6 @@ export default function InstellingenPagina() {
   const [melding, setMelding] = useState<{ type: "succes" | "fout"; tekst: string } | null>(null);
   const [emailTestStatus, setEmailTestStatus] = useState<"idle" | "laden" | "succes" | "fout">("idle");
   const [googleLaden, setGoogleLaden] = useState(false);
-  const [googleAuthCode, setGoogleAuthCode] = useState("");
-  const [googleAuthUrl, setGoogleAuthUrl] = useState<string | null>(null);
-  const [googleKoppelenStap, setGoogleKoppelenStap] = useState<"idle" | "url" | "code">("idle");
   const [autoStart, setAutoStart] = useState(false);
 
   const haalInstellingenOp = useCallback(async () => {
@@ -165,54 +169,30 @@ export default function InstellingenPagina() {
   const testEmail = async () => {
     setEmailTestStatus("laden");
     try {
-      await window.api.instellingen.update({
-        actie: "test-email",
-        smtpHost: instellingen.smtpHost,
-        smtpPort: instellingen.smtpPort,
-        smtpSecure: instellingen.smtpSecure,
-        smtpUser: instellingen.smtpUser,
-        smtpPass: instellingen.smtpPass,
-        email: instellingen.email,
-      } as any);
+      await window.api.instellingen.testEmail({
+        host: instellingen.emailSmtpHost ?? "",
+        port: instellingen.emailSmtpPort ?? 587,
+        secure: instellingen.emailSmtpSecure ?? false,
+        user: instellingen.emailSmtpUser ?? "",
+        pass: instellingen.emailSmtpPass ?? "",
+        naar: instellingen.email ?? "",
+      });
       setEmailTestStatus("succes");
       setTimeout(() => setEmailTestStatus("idle"), 4000);
-    } catch {
+    } catch (e: unknown) {
       setEmailTestStatus("fout");
+      const msg = e instanceof Error ? e.message : "Versturen mislukt";
+      toonMelding("fout", msg);
       setTimeout(() => setEmailTestStatus("idle"), 4000);
     }
   };
 
-  const startGoogleAuth = async () => {
+  const koppelGoogle = async () => {
     setGoogleLaden(true);
+    toonMelding("succes", "Browser wordt geopend. Geef toestemming in Google en wacht...");
     try {
-      const result = await window.api.instellingen.googleAuthUrl();
-      if ((result as any).url) {
-        setGoogleAuthUrl((result as any).url);
-        setGoogleKoppelenStap("url");
-        window.api.shell.openExternal((result as any).url);
-      } else {
-        toonMelding("fout", "Kon Google OAuth URL niet genereren");
-      }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "Verbindingsfout";
-      toonMelding("fout", msg);
-    } finally {
-      setGoogleLaden(false);
-    }
-  };
-
-  const koppelGoogleMetCode = async () => {
-    if (!googleAuthCode.trim()) {
-      toonMelding("fout", "Voer eerst de autorisatiecode in");
-      return;
-    }
-    setGoogleLaden(true);
-    try {
-      await window.api.instellingen.googleKoppelen(googleAuthCode.trim());
+      await (window.api.instellingen as any).googleKoppelen();
       setInstellingen((prev) => ({ ...prev, googleGekoppeld: true }));
-      setGoogleKoppelenStap("idle");
-      setGoogleAuthCode("");
-      setGoogleAuthUrl(null);
       toonMelding("succes", "Google Agenda succesvol gekoppeld!");
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Koppelen mislukt";
@@ -510,141 +490,205 @@ export default function InstellingenPagina() {
         )}
 
         {/* ── Factuurlayout ── */}
-        {actieveTab === "layout" && (
-          <div className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>Kleuren &amp; Typografie</CardTitle>
-                <CardDescription>Pas de huisstijl van je facturen aan</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Primaire kleur</label>
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="color"
-                        value={instellingen.layoutPrimairKleur ?? "#4f46e5"}
-                        onChange={(e) => updateVeld("layoutPrimairKleur", e.target.value)}
-                        onBlur={() => slaOp({ layoutPrimairKleur: instellingen.layoutPrimairKleur })}
-                        className="h-10 w-20 rounded border border-gray-300 cursor-pointer"
-                      />
-                      <span className="text-sm text-gray-500">{instellingen.layoutPrimairKleur ?? "#4f46e5"}</span>
+        {actieveTab === "layout" && (() => {
+          const SECTIE_LABELS: Record<string, string> = {
+            koptekst: "Koptekst",
+            bedrijf: "Bedrijfsgegevens",
+            klant: "Klantgegevens",
+            factuurInfo: "Factuurnummer & datum",
+            regels: "Regeloverzicht",
+            totalen: "Totalen",
+            betaling: "Betalingsgegevens",
+            voettekst: "Voettekst",
+          };
+          const DEFAULT_SECTIES = ["koptekst", "bedrijf", "klant", "factuurInfo", "regels", "totalen", "betaling", "voettekst"];
+          const secties: string[] = (() => {
+            try {
+              const parsed = JSON.parse(instellingen.layoutSectieVolgorde ?? "[]");
+              return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_SECTIES;
+            } catch { return DEFAULT_SECTIES; }
+          })();
+
+          const verplaatsSectie = (index: number, richting: -1 | 1) => {
+            const nieuw = [...secties];
+            const doel = index + richting;
+            if (doel < 0 || doel >= nieuw.length) return;
+            [nieuw[index], nieuw[doel]] = [nieuw[doel], nieuw[index]];
+            const json = JSON.stringify(nieuw);
+            updateVeld("layoutSectieVolgorde", json);
+            slaOp({ layoutSectieVolgorde: json });
+          };
+
+          return (
+            <div className="flex gap-6 items-start">
+              {/* Links: instellingen */}
+              <div className="flex-1 min-w-0 space-y-4">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Kleuren &amp; Typografie</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Primaire kleur</label>
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="color"
+                          value={instellingen.layoutPrimairKleur ?? "#4f46e5"}
+                          onChange={(e) => updateVeld("layoutPrimairKleur", e.target.value)}
+                          onBlur={() => slaOp({ layoutPrimairKleur: instellingen.layoutPrimairKleur })}
+                          className="h-10 w-20 rounded border border-gray-300 cursor-pointer"
+                        />
+                        <span className="text-sm text-gray-500">{instellingen.layoutPrimairKleur ?? "#4f46e5"}</span>
+                      </div>
                     </div>
-                    <p className="text-xs text-gray-400 mt-1">Kleur voor titel, scheidingslijnen en totaalbedrag</p>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Lettertype</label>
-                    <select
-                      value={instellingen.layoutLettertype ?? "Arial, sans-serif"}
-                      onChange={(e) => { updateVeld("layoutLettertype", e.target.value); slaOp({ layoutLettertype: e.target.value }); }}
-                      className="w-full h-9 rounded-lg border border-gray-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    >
-                      <option value="Arial, sans-serif">Arial (standaard)</option>
-                      <option value="'Times New Roman', serif">Times New Roman</option>
-                      <option value="'Georgia', serif">Georgia</option>
-                      <option value="'Helvetica Neue', Helvetica, sans-serif">Helvetica</option>
-                      <option value="'Calibri', sans-serif">Calibri</option>
-                    </select>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Lettertype</label>
+                      <select
+                        value={instellingen.layoutLettertype ?? "Arial, sans-serif"}
+                        onChange={(e) => { updateVeld("layoutLettertype", e.target.value); slaOp({ layoutLettertype: e.target.value }); }}
+                        className="w-full h-9 rounded-lg border border-gray-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      >
+                        <option value="Arial, sans-serif">Arial (standaard)</option>
+                        <option value="'Times New Roman', serif">Times New Roman</option>
+                        <option value="'Georgia', serif">Georgia</option>
+                        <option value="'Helvetica Neue', Helvetica, sans-serif">Helvetica</option>
+                        <option value="'Calibri', sans-serif">Calibri</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Lettergrootte</label>
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="range" min="11" max="16" step="1"
+                          value={parseInt(instellingen.layoutLetterGrootte ?? "14")}
+                          onChange={(e) => updateVeld("layoutLetterGrootte", e.target.value)}
+                          onMouseUp={() => slaOp({ layoutLetterGrootte: instellingen.layoutLetterGrootte })}
+                          className="flex-1"
+                        />
+                        <span className="text-sm text-gray-500 w-10">{instellingen.layoutLetterGrootte ?? "14"}px</span>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Kop- en voettekst</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Koptekst (boven factuur)</label>
-                  <textarea
-                    rows={2}
-                    value={instellingen.layoutKoptekst ?? ""}
-                    onChange={(e) => updateVeld("layoutKoptekst", e.target.value)}
-                    onBlur={() => slaOp({ layoutKoptekst: instellingen.layoutKoptekst })}
-                    placeholder="Optionele tekst bovenaan de factuur..."
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Voettekst (onder betalingsinformatie)</label>
-                  <textarea
-                    rows={2}
-                    value={instellingen.layoutVoettekst ?? ""}
-                    onChange={(e) => updateVeld("layoutVoettekst", e.target.value)}
-                    onBlur={() => slaOp({ layoutVoettekst: instellingen.layoutVoettekst })}
-                    placeholder="Bijv. bankgegevens, algemene voorwaarden, bedankt voor uw opdracht..."
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                </div>
-              </CardContent>
-            </Card>
+                <Card>
+                  <CardHeader><CardTitle>Opmaak &amp; Indeling</CardTitle></CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Marges</label>
+                        <select
+                          value={instellingen.layoutMarges ?? "normaal"}
+                          onChange={(e) => { updateVeld("layoutMarges", e.target.value); slaOp({ layoutMarges: e.target.value }); }}
+                          className="w-full h-9 rounded-lg border border-gray-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        >
+                          <option value="krap">Krap</option>
+                          <option value="normaal">Normaal</option>
+                          <option value="ruim">Ruim</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Logogrootte</label>
+                        <select
+                          value={instellingen.layoutLogoGrootte ?? "medium"}
+                          onChange={(e) => { updateVeld("layoutLogoGrootte", e.target.value); slaOp({ layoutLogoGrootte: e.target.value }); }}
+                          className="w-full h-9 rounded-lg border border-gray-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        >
+                          <option value="small">Klein</option>
+                          <option value="medium">Normaal</option>
+                          <option value="large">Groot</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Logopositie</label>
+                      <select
+                        value={instellingen.layoutLogoPositie ?? "links"}
+                        onChange={(e) => { updateVeld("layoutLogoPositie", e.target.value); slaOp({ layoutLogoPositie: e.target.value }); }}
+                        className="w-full h-9 rounded-lg border border-gray-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      >
+                        <option value="links">Links</option>
+                        <option value="rechts">Rechts</option>
+                        <option value="midden">Midden</option>
+                      </select>
+                    </div>
+                  </CardContent>
+                </Card>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Zichtbaarheid van blokken</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {[
-                  { veld: "layoutToonBtwNummer", label: "BTW-nummer tonen" },
-                  { veld: "layoutToonKvkNummer", label: "KvK-nummer tonen" },
-                  { veld: "layoutToonIban", label: "IBAN tonen in betalingsinformatie" },
-                  { veld: "layoutToonQrCode", label: "SEPA betaal-QR-code tonen" },
-                ].map(({ veld, label }) => (
-                  <div key={veld} className="flex items-center justify-between rounded-lg border border-gray-200 p-3">
-                    <span className="text-sm font-medium text-gray-700">{label}</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const huidig = (instellingen as Record<string, unknown>)[veld] !== false;
-                        const nieuw = !huidig;
-                        updateVeld(veld as keyof typeof instellingen, nieuw as never);
-                        slaOp({ [veld]: nieuw });
-                      }}
-                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                        (instellingen as Record<string, unknown>)[veld] !== false ? "bg-indigo-600" : "bg-gray-200"
-                      }`}
-                    >
-                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
-                        (instellingen as Record<string, unknown>)[veld] !== false ? "translate-x-6" : "translate-x-1"
-                      }`} />
-                    </button>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
+                <Card>
+                  <CardHeader><CardTitle>Kop- en voettekst</CardTitle></CardHeader>
+                  <CardContent className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Koptekst</label>
+                      <textarea rows={2} value={instellingen.layoutKoptekst ?? ""} onChange={(e) => updateVeld("layoutKoptekst", e.target.value)} onBlur={() => slaOp({ layoutKoptekst: instellingen.layoutKoptekst })} placeholder="Optionele tekst bovenaan de factuur..." className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Voettekst</label>
+                      <textarea rows={2} value={instellingen.layoutVoettekst ?? ""} onChange={(e) => updateVeld("layoutVoettekst", e.target.value)} onBlur={() => slaOp({ layoutVoettekst: instellingen.layoutVoettekst })} placeholder="Bijv. bankgegevens, algemene voorwaarden..." className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                    </div>
+                  </CardContent>
+                </Card>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Meldingen voor onbetaalde facturen</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center justify-between rounded-lg border border-gray-200 p-3">
-                  <div>
-                    <p className="text-sm font-medium text-gray-700">Popup tonen bij vervallen facturen</p>
-                    <p className="text-xs text-gray-400 mt-0.5">Melding bij opstarten als er facturen zijn die (bijna) verlopen</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const nieuw = !(instellingen.onbetaaldeFactuurMelding ?? true);
-                      updateVeld("onbetaaldeFactuurMelding", nieuw);
-                      slaOp({ onbetaaldeFactuurMelding: nieuw });
-                    }}
-                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                      instellingen.onbetaaldeFactuurMelding !== false ? "bg-indigo-600" : "bg-gray-200"
-                    }`}
-                  >
-                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
-                      instellingen.onbetaaldeFactuurMelding !== false ? "translate-x-6" : "translate-x-1"
-                    }`} />
-                  </button>
+                <Card>
+                  <CardHeader><CardTitle>Zichtbaarheid van blokken</CardTitle></CardHeader>
+                  <CardContent className="space-y-3">
+                    {[
+                      { veld: "layoutToonBtwNummer", label: "BTW-nummer tonen" },
+                      { veld: "layoutToonKvkNummer", label: "KvK-nummer tonen" },
+                      { veld: "layoutToonIban", label: "IBAN tonen" },
+                      { veld: "layoutToonQrCode", label: "SEPA betaal-QR-code tonen" },
+                    ].map(({ veld, label }) => (
+                      <div key={veld} className="flex items-center justify-between rounded-lg border border-gray-200 p-3">
+                        <span className="text-sm font-medium text-gray-700">{label}</span>
+                        <button type="button" onClick={() => { const nieuw = (instellingen as Record<string, unknown>)[veld] === false; updateVeld(veld as keyof typeof instellingen, nieuw as never); slaOp({ [veld]: nieuw }); }} className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${ (instellingen as Record<string, unknown>)[veld] !== false ? "bg-indigo-600" : "bg-gray-200" }`}>
+                          <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${ (instellingen as Record<string, unknown>)[veld] !== false ? "translate-x-6" : "translate-x-1" }`} />
+                        </button>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader><CardTitle>Sectievolgorde</CardTitle><CardDescription>Versleep secties met de pijltjes om de volgorde aan te passen</CardDescription></CardHeader>
+                  <CardContent className="space-y-2">
+                    {secties.map((sectie, i) => (
+                      <div key={sectie} className="flex items-center gap-2 rounded-lg border border-gray-200 p-3 bg-gray-50">
+                        <span className="text-sm font-medium text-gray-700 flex-1">{SECTIE_LABELS[sectie] ?? sectie}</span>
+                        <div className="flex gap-1">
+                          <button type="button" onClick={() => verplaatsSectie(i, -1)} disabled={i === 0} className="p-1 rounded hover:bg-gray-200 disabled:opacity-30"><ChevronUp className="h-4 w-4" /></button>
+                          <button type="button" onClick={() => verplaatsSectie(i, 1)} disabled={i === secties.length - 1} className="p-1 rounded hover:bg-gray-200 disabled:opacity-30"><ChevronDown className="h-4 w-4" /></button>
+                        </div>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader><CardTitle>Meldingen</CardTitle></CardHeader>
+                  <CardContent>
+                    <div className="flex items-center justify-between rounded-lg border border-gray-200 p-3">
+                      <div>
+                        <p className="text-sm font-medium text-gray-700">Popup tonen bij vervallen facturen</p>
+                        <p className="text-xs text-gray-400 mt-0.5">Melding bij opstarten als er facturen zijn die (bijna) verlopen</p>
+                      </div>
+                      <button type="button" onClick={() => { const nieuw = !(instellingen.onbetaaldeFactuurMelding ?? true); updateVeld("onbetaaldeFactuurMelding", nieuw); slaOp({ onbetaaldeFactuurMelding: nieuw }); }} className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${instellingen.onbetaaldeFactuurMelding !== false ? "bg-indigo-600" : "bg-gray-200"}`}>
+                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${instellingen.onbetaaldeFactuurMelding !== false ? "translate-x-6" : "translate-x-1"}`} />
+                      </button>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* Rechts: live preview */}
+              <div className="hidden xl:block sticky top-6">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Live voorbeeld</p>
+                <div style={{ width: "335px", height: "474px", overflow: "hidden", borderRadius: "8px", border: "1px solid #e5e7eb", boxShadow: "0 2px 8px rgba(0,0,0,0.08)" }}>
+                  <FactuurLayoutPreview inst={instellingen} />
                 </div>
-              </CardContent>
-            </Card>
-          </div>
-        )}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* ── Email / SMTP ── */}
         {actieveTab === "email" && (
@@ -668,18 +712,18 @@ export default function InstellingenPagina() {
                   <div className="sm:col-span-2">
                     <Input
                       label="SMTP Host"
-                      value={instellingen.smtpHost ?? ""}
-                      onChange={(e) => updateVeld("smtpHost", e.target.value)}
-                      onBlur={() => slaOp({ smtpHost: instellingen.smtpHost })}
+                      value={instellingen.emailSmtpHost ?? ""}
+                      onChange={(e) => updateVeld("emailSmtpHost", e.target.value)}
+                      onBlur={() => slaOp({ emailSmtpHost: instellingen.emailSmtpHost })}
                       placeholder="smtp.gmail.com"
                     />
                   </div>
                   <Input
                     label="Poort"
                     type="number"
-                    value={instellingen.smtpPort ?? 587}
-                    onChange={(e) => updateVeld("smtpPort", parseInt(e.target.value))}
-                    onBlur={() => slaOp({ smtpPort: instellingen.smtpPort })}
+                    value={instellingen.emailSmtpPort ?? 587}
+                    onChange={(e) => updateVeld("emailSmtpPort", parseInt(e.target.value))}
+                    onBlur={() => slaOp({ emailSmtpPort: instellingen.emailSmtpPort })}
                     placeholder="587"
                   />
                 </div>
@@ -692,17 +736,17 @@ export default function InstellingenPagina() {
                   <button
                     type="button"
                     onClick={() => {
-                      const nieuw = !instellingen.smtpSecure;
-                      updateVeld("smtpSecure", nieuw);
-                      slaOp({ smtpSecure: nieuw });
+                      const nieuw = !instellingen.emailSmtpSecure;
+                      updateVeld("emailSmtpSecure", nieuw);
+                      slaOp({ emailSmtpSecure: nieuw });
                     }}
                     className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                      instellingen.smtpSecure ? "bg-indigo-600" : "bg-gray-200"
+                      instellingen.emailSmtpSecure ? "bg-indigo-600" : "bg-gray-200"
                     }`}
                   >
                     <span
                       className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
-                        instellingen.smtpSecure ? "translate-x-6" : "translate-x-1"
+                        instellingen.emailSmtpSecure ? "translate-x-6" : "translate-x-1"
                       }`}
                     />
                   </button>
@@ -712,17 +756,17 @@ export default function InstellingenPagina() {
                   <Input
                     label="Gebruikersnaam / E-mail"
                     type="email"
-                    value={instellingen.smtpUser ?? ""}
-                    onChange={(e) => updateVeld("smtpUser", e.target.value)}
-                    onBlur={() => slaOp({ smtpUser: instellingen.smtpUser })}
+                    value={instellingen.emailSmtpUser ?? ""}
+                    onChange={(e) => updateVeld("emailSmtpUser", e.target.value)}
+                    onBlur={() => slaOp({ emailSmtpUser: instellingen.emailSmtpUser })}
                     placeholder="jij@gmail.com"
                   />
                   <Input
                     label="Wachtwoord / App-wachtwoord"
                     type="password"
-                    value={instellingen.smtpPass ?? ""}
-                    onChange={(e) => updateVeld("smtpPass", e.target.value)}
-                    onBlur={() => slaOp({ smtpPass: instellingen.smtpPass })}
+                    value={instellingen.emailSmtpPass ?? ""}
+                    onChange={(e) => updateVeld("emailSmtpPass", e.target.value)}
+                    onBlur={() => slaOp({ emailSmtpPass: instellingen.emailSmtpPass })}
                     placeholder="••••••••••••"
                   />
                 </div>
@@ -731,7 +775,7 @@ export default function InstellingenPagina() {
                   <Button
                     variant="outline"
                     onClick={testEmail}
-                    disabled={emailTestStatus === "laden" || !instellingen.smtpHost}
+                    disabled={emailTestStatus === "laden" || !instellingen.emailSmtpHost}
                   >
                     {emailTestStatus === "laden" ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
@@ -881,64 +925,29 @@ export default function InstellingenPagina() {
                       Google Agenda ontkoppelen
                     </Button>
                   </div>
-                ) : googleKoppelenStap === "idle" ? (
+                ) : (
                   <div className="space-y-4">
                     {!instellingen.googleClientId && (
                       <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800">
                         ⚠ Vul eerst de Google Client ID en Client Secret in (bovenstaande kaart) voordat je koppelt.
                       </div>
                     )}
+                    <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-sm text-blue-800">
+                      <p>Na het klikken op de knop opent een browservenster. Log in bij Google en geef toestemming. De koppeling voltooit automatisch — je hoeft geen code te kopiëren.</p>
+                    </div>
                     <ul className="text-sm text-gray-600 space-y-1 list-disc list-inside">
                       <li>Bekijk afspraken in het maandoverzicht</li>
                       <li>Maak facturen vanuit een afspraak</li>
                       <li>Zie reistijden en locaties</li>
                     </ul>
                     <Button
-                      onClick={startGoogleAuth}
+                      onClick={koppelGoogle}
                       loading={googleLaden}
                       disabled={!instellingen.googleClientId}
                     >
                       <Link className="h-4 w-4" />
-                      Koppel Google Agenda
+                      {googleLaden ? "Wachten op Google toestemming..." : "Koppel Google Agenda"}
                     </Button>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    <div className="rounded-lg bg-indigo-50 border border-indigo-200 p-4 text-sm text-indigo-800 space-y-2">
-                      <p className="font-semibold">Stap 1 voltooid: Open de autorisatiepagina</p>
-                      <p>Er is een browservenster geopend met Google. Log in en geef toestemming.</p>
-                      <p>Kopieer daarna de autorisatiecode die Google toont en plak die hieronder.</p>
-                      {googleAuthUrl && (
-                        <button
-                          className="text-indigo-600 underline text-xs break-all"
-                          onClick={() => window.api.shell.openExternal(googleAuthUrl)}
-                        >
-                          URL opnieuw openen
-                        </button>
-                      )}
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Autorisatiecode van Google
-                      </label>
-                      <Input
-                        value={googleAuthCode}
-                        onChange={(e) => setGoogleAuthCode(e.target.value)}
-                        placeholder="4/0AX4XfW..."
-                      />
-                    </div>
-                    <div className="flex gap-3">
-                      <Button onClick={koppelGoogleMetCode} loading={googleLaden}>
-                        <CheckCircle className="h-4 w-4" />
-                        Koppel met deze code
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => { setGoogleKoppelenStap("idle"); setGoogleAuthCode(""); setGoogleAuthUrl(null); }}
-                      >
-                        Annuleren
-                      </Button>
-                    </div>
                   </div>
                 )}
               </CardContent>

@@ -35,6 +35,7 @@ export interface FactuurTotalenSidebarProps {
 export function FactuurTotalenSidebar({
   totalen,
   btwVerlegd,
+  korActief,
   totaalKortingActief,
   totaalKortingType,
   totaalKortingPercentage,
@@ -61,7 +62,7 @@ export function FactuurTotalenSidebar({
             <div>
               <p className="text-sm font-medium text-gray-700">Totaalkorting toepassen</p>
               <p className="text-xs text-gray-400">
-                Korting op het totaalbedrag (BTW wordt berekend over het bedrag na korting)
+                {korActief ? "Korting op het totaalbedrag" : "Korting op het totaalbedrag (BTW wordt berekend over het bedrag na korting)"}
               </p>
             </div>
             <button

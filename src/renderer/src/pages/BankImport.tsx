@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/table";
 import { formatBedrag, formatDatum } from "@/lib/utils";
 
-type Bank = "abn" | "ing" | "rabobank" | "overig";
+type Bank = "abn" | "ing" | "rabobank" | "knab" | "overig";
 type Stap = 1 | 2 | 3 | 4 | "mapping";
 
 interface Transactie {
@@ -50,6 +50,7 @@ const BANKEN: Array<{ id: Bank; naam: string; kleur: string }> = [
   { id: "abn", naam: "ABN AMRO", kleur: "bg-yellow-400 text-yellow-900" },
   { id: "ing", naam: "ING", kleur: "bg-orange-500 text-white" },
   { id: "rabobank", naam: "Rabobank", kleur: "bg-red-600 text-white" },
+  { id: "knab", naam: "Knab", kleur: "bg-blue-600 text-white" },
   { id: "overig", naam: "Andere bank / CSV", kleur: "bg-gray-500 text-white" },
 ];
 

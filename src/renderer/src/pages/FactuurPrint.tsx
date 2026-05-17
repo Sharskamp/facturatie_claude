@@ -61,6 +61,9 @@ interface Instellingen {
   korActief?: boolean;
   layoutPrimairKleur?: string;
   layoutLettertype?: string;
+  layoutLetterGrootte?: string;
+  layoutMarges?: string;
+  layoutLogoGrootte?: string;
   layoutKoptekst?: string;
   layoutVoettekst?: string;
   layoutLogoPositie?: string;
@@ -69,6 +72,7 @@ interface Instellingen {
   layoutToonIban?: boolean;
   layoutToonQrCode?: boolean;
   layoutRegelSpacing?: string;
+  layoutSectieVolgorde?: string;
   logoBase64?: string;
 }
 
@@ -140,6 +144,11 @@ export default function FactuurPrintPage() {
   const korActief = instellingen.korActief ?? false;
   const primairKleur = instellingen.layoutPrimairKleur ?? "#4f46e5";
   const lettertype = instellingen.layoutLettertype ?? "Arial, sans-serif";
+  const letterGrootte = `${instellingen.layoutLetterGrootte ?? "14"}px`;
+  const MARGE_MAP: Record<string, string> = { krap: "24px", normaal: "40px", ruim: "56px" };
+  const marges = MARGE_MAP[instellingen.layoutMarges ?? "normaal"] ?? "40px";
+  const LOGO_H_MAP: Record<string, string> = { small: "40px", medium: "64px", large: "96px" };
+  const logoHoogte = LOGO_H_MAP[instellingen.layoutLogoGrootte ?? "medium"] ?? "64px";
   const toonIban = instellingen.layoutToonIban !== false;
   const toonQrCode = instellingen.layoutToonQrCode !== false;
   const toonKvk = instellingen.layoutToonKvkNummer !== false;
@@ -175,10 +184,13 @@ export default function FactuurPrintPage() {
 
       {/* Invoice - A4 format */}
       <div className="min-h-screen bg-gray-100 no-print:pt-20 print:bg-white">
-        <div className="max-w-[794px] mx-auto bg-white shadow-sm print:shadow-none p-12 min-h-[1123px]">
+        <div className="max-w-[794px] mx-auto bg-white shadow-sm print:shadow-none min-h-[1123px]" style={{ fontFamily: lettertype, fontSize: letterGrootte, padding: marges }}>
           {/* Header */}
           <div className="flex justify-between items-start mb-10">
             <div>
+              {instellingen.logoBase64 && (
+                <img src={instellingen.logoBase64} alt="logo" style={{ height: logoHoogte, objectFit: "contain", marginBottom: "8px" }} />
+              )}
               <h1 className="text-2xl font-bold text-gray-900">
                 {instellingen.bedrijfsnaam ?? instellingen.naam}
               </h1>
