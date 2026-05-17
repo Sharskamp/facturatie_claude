@@ -2068,11 +2068,32 @@ function setupIpcHandlers() {
       throw new Error(fout.detail || fout.message || `Mollie API fout (${response.status})`)
     }
 
-    const data = await response.json() as { _links?: { paymentLink?: { href: string } } }
+    const data = await response.json() as { id?: string; _links?: { paymentLink?: { href: string } } }
     const betaalLink = data._links?.paymentLink?.href ?? ''
+    const paymentLinkId = data.id ?? ''
 
-    await prisma.factuur.update({ where: { id: factuurId }, data: { mollieBetaalLink: betaalLink } })
+    await prisma.factuur.update({ where: { id: factuurId }, data: { mollieBetaalLink: betaalLink, molliePaymentLinkId: paymentLinkId } })
     return { url: betaalLink }
+  })
+
+  ipcMain.handle('mollie:checkBetalingStatus', async (_, factuurId: string) => {
+    const user = await prisma.user.findFirst()
+    if (!user?.mollieApiKey) return { fout: 'Geen Mollie API-sleutel geconfigureerd' }
+
+    const factuur = await prisma.factuur.findUnique({ where: { id: factuurId } })
+    if (!factuur?.molliePaymentLinkId) return { fout: 'Geen Mollie betaallink-ID gevonden. Maak eerst een betaallink aan.' }
+
+    const response = await fetch(`https://api.mollie.com/v2/payment-links/${factuur.molliePaymentLinkId}`, {
+      headers: { 'Authorization': `Bearer ${user.mollieApiKey}` }
+    })
+    if (!response.ok) return { fout: `Mollie API fout (${response.status})` }
+
+    const link = await response.json() as { paidAt?: string | null }
+    if (link.paidAt) {
+      await prisma.factuur.update({ where: { id: factuurId }, data: { status: 'BETAALD' } })
+      return { betaald: true }
+    }
+    return { betaald: false }
   })
 
   // ── Crediteuren ──
@@ -2281,6 +2302,169 @@ function setupIpcHandlers() {
     ])
     return { succes: true, factuurNummer: factuur.nummer }
   })
+
+  // ── Excel export per jaar ──
+  ipcMain.handle('app:exporteerExcel', async (_, jaar: number) => {
+    const XLSX = require('xlsx') as typeof import('xlsx')
+
+    const begin = new Date(jaar, 0, 1)
+    const einde = new Date(jaar, 11, 31, 23, 59, 59)
+
+    const [facturen, uitgaven, inkomen, crediteuren] = await Promise.all([
+      prisma.factuur.findMany({
+        where: { datum: { gte: begin, lte: einde } },
+        include: { klant: { select: { naam: true, bedrijf: true } }, regels: true },
+        orderBy: { datum: 'asc' }
+      }),
+      prisma.uitgave.findMany({
+        where: { datum: { gte: begin, lte: einde } },
+        include: { categorie: { select: { naam: true } } },
+        orderBy: { datum: 'asc' }
+      }),
+      prisma.inkomen.findMany({
+        where: { datum: { gte: begin, lte: einde } },
+        orderBy: { datum: 'asc' }
+      }),
+      prisma.crediteur.findMany({
+        where: { factuurdatum: { gte: begin, lte: einde } },
+        orderBy: { factuurdatum: 'asc' }
+      }),
+    ])
+
+    const wb = XLSX.utils.book_new()
+
+    const factuurRijen = facturen.map(f => ({
+      Nummer: f.nummer,
+      Datum: f.datum.toISOString().split('T')[0],
+      Vervaldatum: f.vervaldatum.toISOString().split('T')[0],
+      Klant: f.klant.bedrijf ?? f.klant.naam,
+      Status: f.status,
+      'Subtotaal excl. BTW': f.subtotaal,
+      'BTW bedrag': f.btwBedrag,
+      'Totaal incl. BTW': f.totaal,
+      Regels: f.regels.length,
+    }))
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(factuurRijen), 'Facturen')
+
+    const uitgaveRijen = uitgaven.map(u => ({
+      Datum: u.datum.toISOString().split('T')[0],
+      Omschrijving: u.omschrijving,
+      Leverancier: u.leverancier ?? '',
+      Categorie: u.categorie?.naam ?? '',
+      'Bedrag incl. BTW': u.bedrag,
+      'BTW%': u.btwPercentage,
+      'BTW bedrag': u.btwBedrag,
+      'Zakelijk%': u.zakelijkPercent,
+    }))
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(uitgaveRijen), 'Uitgaven')
+
+    const inkomenRijen = inkomen.map(i => ({
+      Datum: i.datum.toISOString().split('T')[0],
+      Omschrijving: i.omschrijving,
+      Bedrag: i.bedrag,
+      Bron: i.bron ?? '',
+    }))
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(inkomenRijen), 'Inkomen')
+
+    const crediteurRijen = crediteuren.map(c => ({
+      Leverancier: c.leverancier,
+      Factuurnummer: c.factuurNummer ?? '',
+      Factuurdatum: c.factuurdatum.toISOString().split('T')[0],
+      Vervaldatum: c.vervaldatum.toISOString().split('T')[0],
+      Bedrag: c.bedrag,
+      'BTW bedrag': c.btwBedrag,
+      Status: c.status,
+    }))
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(crediteurRijen), 'Crediteuren')
+
+    const parentWindow = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
+    const result = await dialog.showSaveDialog(parentWindow!, {
+      defaultPath: `boekhouding-${jaar}.xlsx`,
+      filters: [{ name: 'Excel', extensions: ['xlsx'] }]
+    })
+    if (result.canceled || !result.filePath) return { geannuleerd: true }
+
+    XLSX.writeFile(wb, result.filePath)
+    return { succes: true, pad: result.filePath }
+  })
+
+  // ── PDF-archief (alle facturen van een jaar naar map) ──
+  ipcMain.handle('app:exportPdfArchief', async (_, jaar: number) => {
+    const facturen = await prisma.factuur.findMany({
+      where: { datum: { gte: new Date(jaar, 0, 1), lte: new Date(jaar, 11, 31, 23, 59, 59) }, status: { not: 'CONCEPT' } },
+      orderBy: { datum: 'asc' },
+      select: { id: true, nummer: true }
+    })
+    if (!facturen.length) return { fout: `Geen facturen gevonden voor ${jaar}` }
+
+    const parentWindow = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
+    const dirResult = await dialog.showOpenDialog(parentWindow!, {
+      title: `Map kiezen voor PDF-archief ${jaar}`,
+      properties: ['openDirectory', 'createDirectory']
+    })
+    if (dirResult.canceled || !dirResult.filePaths[0]) return { geannuleerd: true }
+
+    const doelMap = dirResult.filePaths[0]
+    const user = await prisma.user.findFirst({ select: { factuurHtmlTemplate: true, logoBase64: true, naam: true, bedrijfsnaam: true, adres: true, postcode: true, stad: true, email: true, telefoon: true, website: true, kvkNummer: true, btwNummer: true, iban: true, korActief: true } })
+
+    let aangemaakt = 0
+    for (const f of facturen) {
+      try {
+        const pdfWindow = new BrowserWindow({
+          show: false, width: 900, height: 1200,
+          webPreferences: { preload: join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false }
+        })
+        pdfWindow.setMenuBarVisibility(false)
+
+        if (user?.factuurHtmlTemplate?.trim()) {
+          const factuur = await prisma.factuur.findUnique({ where: { id: f.id }, include: { regels: true, klant: true } })
+          if (factuur) {
+            const regelsHtml = `<table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:4px 8px;border-bottom:1px solid #ddd">Omschrijving</th><th style="text-align:center;padding:4px 8px;border-bottom:1px solid #ddd">Aantal</th><th style="text-align:right;padding:4px 8px;border-bottom:1px solid #ddd">Prijs</th><th style="text-align:right;padding:4px 8px;border-bottom:1px solid #ddd">Totaal</th></tr></thead><tbody>${factuur.regels.map((r: { omschrijving: string; aantal: number; eenheid?: string | null; prijs: number; totaal: number }) => `<tr><td style="padding:4px 8px;border-bottom:1px solid #eee">${r.omschrijving}${r.eenheid ? ` / ${r.eenheid}` : ''}</td><td style="text-align:center;padding:4px 8px;border-bottom:1px solid #eee">${r.aantal}</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid #eee">€${r.prijs.toFixed(2)}</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid #eee">€${r.totaal.toFixed(2)}</td></tr>`).join('')}</tbody></table>`
+            const vars: Record<string, string> = {
+              bedrijfsnaam: user.bedrijfsnaam ?? user.naam ?? '', bedrijfAdres: user.adres ?? '', bedrijfPostcode: user.postcode ?? '',
+              bedrijfStad: user.stad ?? '', bedrijfEmail: user.email ?? '', bedrijfTelefoon: user.telefoon ?? '',
+              bedrijfWebsite: user.website ?? '', kvkNummer: user.kvkNummer ?? '', btwNummer: user.btwNummer ?? '',
+              iban: user.iban ?? '', logo: user.logoBase64 ? `<img src="${user.logoBase64}" style="max-height:80px" />` : '',
+              factuurNummer: factuur.nummer, factuurDatum: factuur.datum.toISOString().split('T')[0],
+              vervaldatum: factuur.vervaldatum.toISOString().split('T')[0], notities: factuur.notities ?? '',
+              betalingsCondities: factuur.betalingsCondities ?? '', klantNaam: (factuur.klant as { naam: string }).naam,
+              klantBedrijf: (factuur.klant as { bedrijf?: string | null }).bedrijf ?? '',
+              klantAdres: (factuur.klant as { adres?: string | null }).adres ?? '',
+              klantPostcode: (factuur.klant as { postcode?: string | null }).postcode ?? '',
+              klantStad: (factuur.klant as { stad?: string | null }).stad ?? '',
+              klantBtwNummer: (factuur.klant as { btwNummer?: string | null }).btwNummer ?? '',
+              subtotaal: `€${factuur.subtotaal.toFixed(2)}`, kortingBedrag: `€${factuur.kortingBedrag.toFixed(2)}`,
+              btwBedrag: `€${factuur.btwBedrag.toFixed(2)}`, totaalBedrag: `€${factuur.totaal.toFixed(2)}`, regelsHtml,
+            }
+            const html = user.factuurHtmlTemplate.replace(/\{\{(\w+)\}\}/g, (_, k) => vars[k] ?? '')
+            await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+          }
+        } else if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+          await pdfWindow.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/#/facturen/${f.id}/print`)
+        } else {
+          await pdfWindow.loadFile(join(__dirname, '../renderer/index.html'), { hash: `/facturen/${f.id}/print` })
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 1200))
+        const pdfBuffer = await pdfWindow.webContents.printToPDF({ printBackground: true, pageSize: 'A4' })
+        pdfWindow.destroy()
+
+        const veiligNummer = f.nummer.replace(/[/\\:*?"<>|]/g, '-')
+        fs.writeFileSync(join(doelMap, `${veiligNummer}.pdf`), pdfBuffer)
+        aangemaakt++
+      } catch {
+        // sla individuele fouten over
+      }
+    }
+
+    shell.openPath(doelMap)
+    return { succes: true, aangemaakt, pad: doelMap }
+  })
+
+  // ── Update installeren ──
+  ipcMain.handle('app:installUpdate', () => {
+    autoUpdater.quitAndInstall()
+  })
 }
 
 app.whenReady().then(async () => {
@@ -2310,7 +2494,13 @@ app.whenReady().then(async () => {
   createWindow()
 
   if (!is.dev) {
-    autoUpdater.checkForUpdatesAndNotify().catch(e => logSchrijven(`Update check fout: ${e}`))
+    autoUpdater.checkForUpdates().catch(e => logSchrijven(`Update check fout: ${e}`))
+    autoUpdater.on('update-available', () => {
+      mainWindow?.webContents.send('update:beschikbaar')
+    })
+    autoUpdater.on('update-downloaded', () => {
+      mainWindow?.webContents.send('update:gedownload')
+    })
   }
 
   // Maak terugkerende facturen aan bij opstarten

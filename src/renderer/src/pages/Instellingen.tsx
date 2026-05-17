@@ -131,6 +131,9 @@ export default function InstellingenPagina() {
   const [googleLaden, setGoogleLaden] = useState(false);
   const [autoStart, setAutoStart] = useState(false);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [exportJaar, setExportJaar] = useState(new Date().getFullYear());
+  const [pdfArchiefLaden, setPdfArchiefLaden] = useState(false);
+  const [exportMelding, setExportMelding] = useState<string | null>(null);
   const isGeladen = useRef(false);
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1517,6 +1520,80 @@ export default function InstellingenPagina() {
                       }`}
                     />
                   </button>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Jaarlijkse export */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Jaarlijkse export</CardTitle>
+                <CardDescription>Exporteer alle boekhouding van een jaar naar Excel of PDF-archief</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {exportMelding && (
+                  <div className="rounded-lg bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-800">
+                    {exportMelding}
+                  </div>
+                )}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Jaar selecteren</label>
+                  <select
+                    value={exportJaar}
+                    onChange={(e) => setExportJaar(parseInt(e.target.value))}
+                    className="h-9 rounded-lg border border-gray-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i).map((jaar) => (
+                      <option key={jaar} value={jaar}>{jaar}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <Button
+                    variant="outline"
+                    onClick={async () => {
+                      try {
+                        const result = await (window.api.app as any).exporteerExcel(exportJaar) as { succes?: boolean; geannuleerd?: boolean; pad?: string; fout?: string };
+                        if (result.geannuleerd) return;
+                        if (result.succes) {
+                          toonMelding("succes", `Excel geëxporteerd naar: ${result.pad}`);
+                        } else {
+                          toonMelding("fout", result.fout ?? "Excel export mislukt");
+                        }
+                      } catch (e: unknown) {
+                        toonMelding("fout", e instanceof Error ? e.message : "Excel export mislukt");
+                      }
+                    }}
+                  >
+                    <Download className="h-4 w-4 mr-2" />
+                    Exporteer naar Excel (.xlsx)
+                  </Button>
+                  <Button
+                    variant="outline"
+                    loading={pdfArchiefLaden}
+                    onClick={async () => {
+                      setPdfArchiefLaden(true);
+                      setExportMelding(`Bezig met genereren van PDFs voor ${exportJaar}... Dit kan even duren.`);
+                      try {
+                        const result = await (window.api.app as any).exportPdfArchief(exportJaar) as { succes?: boolean; geannuleerd?: boolean; pad?: string; aantalPdfs?: number; fout?: string };
+                        setExportMelding(null);
+                        if (result.geannuleerd) return;
+                        if (result.succes) {
+                          toonMelding("succes", `PDF-archief aangemaakt met ${result.aantalPdfs ?? ""} PDFs: ${result.pad}`);
+                        } else {
+                          toonMelding("fout", result.fout ?? "PDF-archief mislukt");
+                        }
+                      } catch (e: unknown) {
+                        setExportMelding(null);
+                        toonMelding("fout", e instanceof Error ? e.message : "PDF-archief mislukt");
+                      } finally {
+                        setPdfArchiefLaden(false);
+                      }
+                    }}
+                  >
+                    <Download className="h-4 w-4 mr-2" />
+                    PDF-archief aanmaken
+                  </Button>
                 </div>
               </CardContent>
             </Card>

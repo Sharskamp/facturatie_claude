@@ -150,8 +150,9 @@ model Factuur {
   totaalKorting     Float          @default(0)
   totaalKortingBedrag Float        @default(0)
   taal              String         @default("nl")
-  mollieBetaalLink  String?
-  historisch        Boolean        @default(false)
+  mollieBetaalLink     String?
+  molliePaymentLinkId  String?
+  historisch           Boolean        @default(false)
   handmatigBedrag   Boolean        @default(false)
   aangemaakt        DateTime       @default(now())
   bijgewerkt        DateTime       @updatedAt

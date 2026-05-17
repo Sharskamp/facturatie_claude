@@ -136,8 +136,21 @@ contextBridge.exposeInMainWorld('api', {
     backup: () => ipcRenderer.invoke('app:backup'),
     kiesPdfMap: () => ipcRenderer.invoke('app:kiesPdfMap'),
     exporteerData: () => ipcRenderer.invoke('app:exporteerData'),
+    exporteerExcel: (jaar: number) => ipcRenderer.invoke('app:exporteerExcel', jaar),
+    exportPdfArchief: (jaar: number) => ipcRenderer.invoke('app:exportPdfArchief', jaar),
+    installUpdate: () => ipcRenderer.invoke('app:installUpdate'),
   },
   mollie: {
     maakBetaalLink: (factuurId: string) => ipcRenderer.invoke('mollie:maakBetaalLink', factuurId),
+    checkBetalingStatus: (factuurId: string) => ipcRenderer.invoke('mollie:checkBetalingStatus', factuurId),
+  },
+  updates: {
+    onBeschikbaar: (cb: () => void) => ipcRenderer.on('update:beschikbaar', cb),
+    onGedownload: (cb: () => void) => ipcRenderer.on('update:gedownload', cb),
+    verwijderListeners: () => {
+      ipcRenderer.removeAllListeners('update:beschikbaar')
+      ipcRenderer.removeAllListeners('update:gedownload')
+    },
+    installeer: () => ipcRenderer.invoke('app:installUpdate'),
   },
 })

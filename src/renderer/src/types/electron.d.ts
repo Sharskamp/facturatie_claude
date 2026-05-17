@@ -132,9 +132,19 @@ interface ElectronAPI {
     backup: () => Promise<{ succes?: boolean; geannuleerd?: boolean; pad?: string }>
     kiesPdfMap: () => Promise<string | null>
     exporteerData: () => Promise<{ succes?: boolean; geannuleerd?: boolean; pad?: string }>
+    exporteerExcel: (jaar: number) => Promise<{ succes?: boolean; geannuleerd?: boolean; pad?: string; fout?: string }>
+    exportPdfArchief: (jaar: number) => Promise<{ succes?: boolean; geannuleerd?: boolean; aangemaakt?: number; pad?: string; fout?: string }>
+    installUpdate: () => Promise<void>
   }
   mollie: {
     maakBetaalLink: (factuurId: string) => Promise<{ url: string }>
+    checkBetalingStatus: (factuurId: string) => Promise<{ betaald?: boolean; fout?: string }>
+  }
+  updates: {
+    onBeschikbaar: (cb: () => void) => void
+    onGedownload: (cb: () => void) => void
+    verwijderListeners: () => void
+    installeer: () => Promise<void>
   }
 }
 

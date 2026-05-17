@@ -111,6 +111,7 @@ export default function FactuurDetailPage() {
   const [creditnotaLaden, setCreditnotaLaden] = useState(false);
   const [herinneringLaden, setHerinneringLaden] = useState(false);
   const [mollieLaden, setMollieLaden] = useState(false);
+  const [checkLaden, setCheckLaden] = useState(false);
   const [melding, setMelding] = useState<{ type: "succes" | "fout"; tekst: string } | null>(null);
   const [auditLogs, setAuditLogs] = useState<Array<{id: string; actie: string; details?: string; aangemaakt: string}>>([]);
 
@@ -355,6 +356,34 @@ export default function FactuurDetailPage() {
               >
                 <ExternalLink className="h-4 w-4" />
                 iDEAL betaallink
+              </Button>
+            )}
+            {factuur.mollieBetaalLink && factuur.status !== "BETAALD" && (
+              <Button
+                variant="outline"
+                size="sm"
+                loading={checkLaden}
+                onClick={async () => {
+                  setCheckLaden(true);
+                  try {
+                    const result = await window.api.mollie.checkBetalingStatus(id!);
+                    if (result.betaald === true) {
+                      toonMelding("succes", "Betaling ontvangen! Factuur gemarkeerd als betaald.");
+                      laadFactuur();
+                    } else if (result.fout) {
+                      toonMelding("fout", result.fout);
+                    } else {
+                      toonMelding("fout", "Nog geen betaling gevonden bij Mollie.");
+                    }
+                  } catch (e: unknown) {
+                    toonMelding("fout", e instanceof Error ? e.message : "Statuscontrole mislukt");
+                  } finally {
+                    setCheckLaden(false);
+                  }
+                }}
+              >
+                <CheckCircle2 className="h-4 w-4" />
+                Controleer betaalstatus
               </Button>
             )}
             {(factuur.status === "VERZONDEN" || factuur.status === "BETAALD") && (
