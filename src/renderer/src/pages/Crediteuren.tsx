@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,36 +45,57 @@ export default function CrediteurenPage() {
   const [formulier, setFormulier] = useState(leegFormulier);
   const [opslaan, setOpslaan] = useState(false);
 
-  useEffect(() => {
-    laadCrediteuren();
+  const laadCrediteuren = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = filter === "Openstaand" ? { status: "OPENSTAAND" } : undefined;
+      const data = await window.api.crediteuren.list(params);
+      setCrediteuren(data as Crediteur[]);
+    } catch (e) {
+      console.error("Fout bij laden:", e);
+    } finally {
+      setLoading(false);
+    }
   }, [filter]);
 
-  async function laadCrediteuren() {
-    setLoading(true);
-    const params = filter === "Openstaand" ? { status: "OPENSTAAND" } : undefined;
-    const data = await window.api.crediteuren.list(params);
-    setCrediteuren(data);
-    setLoading(false);
-  }
+  useEffect(() => {
+    laadCrediteuren();
+  }, [laadCrediteuren]);
 
   async function markeerBetaald(id: string) {
     if (!confirm("Wil je deze factuur als betaald markeren?")) return;
-    await window.api.crediteuren.update(id, {
-      status: "BETAALD",
-      betaaldOp: new Date().toISOString(),
-    });
-    laadCrediteuren();
+    try {
+      await window.api.crediteuren.update(id, {
+        status: "BETAALD",
+        betaaldOp: new Date().toISOString(),
+      });
+      await laadCrediteuren();
+    } catch (e) {
+      console.error("Fout bij markeren als betaald:", e);
+    }
   }
 
   async function verwijder(id: string) {
     if (!confirm("Weet je zeker dat je deze factuur wilt verwijderen?")) return;
-    await window.api.crediteuren.delete(id);
-    laadCrediteuren();
+    try {
+      await window.api.crediteuren.delete(id);
+      await laadCrediteuren();
+    } catch (e) {
+      console.error("Fout bij verwijderen:", e);
+    }
   }
 
   async function handleOpslaan() {
     if (!formulier.leverancier.trim()) return;
     if (!formulier.bedrag) return;
+    if (new Date(formulier.vervaldatum) < new Date(formulier.factuurdatum)) {
+      alert("Vervaldatum moet na de factuurdatum liggen.");
+      return;
+    }
+    if (parseFloat(formulier.bedrag) <= 0) {
+      alert("Bedrag moet groter dan 0 zijn.");
+      return;
+    }
     setOpslaan(true);
     const bedrag = parseFloat(formulier.bedrag);
     const btwPercentage = parseInt(formulier.btwPercentage);

@@ -142,7 +142,7 @@ export default function KlantDetailPage() {
     laadAlles();
   }, [laadKlant, laadFacturen, laadNotities]);
 
-  async function voegNotitieТoe() {
+  async function voegNotitieToe() {
     if (!nieuweNotitie.trim() || !id) return;
     try {
       await window.api.klantNotities.create({ klantId: id, tekst: nieuweNotitie.trim() });
@@ -502,7 +502,7 @@ export default function KlantDetailPage() {
               />
               <Button
                 size="sm"
-                onClick={voegNotitieТое}
+                onClick={voegNotitieToe}
                 disabled={!nieuweNotitie.trim()}
                 className="shrink-0"
               >

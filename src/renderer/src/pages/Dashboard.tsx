@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Link } from "react-router-dom";
 import {
@@ -134,6 +134,17 @@ function StatCard({
   );
 }
 
+// Stable date constants computed once per module load (refresh resets them, which is fine)
+const nu = new Date();
+const beginMaand = startOfMonth(nu);
+const eindeMaand = endOfMonth(nu);
+const beginVorigeMaand = startOfMonth(subMonths(nu, 1));
+const eindeVorigeMaand = endOfMonth(subMonths(nu, 1));
+const jaarBegin = new Date(nu.getFullYear(), 0, 1);
+const jaarEinde = new Date(nu.getFullYear(), 11, 31, 23, 59, 59);
+
+const PIE_KLEUREN = ["#6366f1", "#f59e0b", "#10b981", "#ef4444", "#3b82f6", "#8b5cf6", "#ec4899", "#14b8a6"];
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const [facturen, setFacturen] = useState<Factuur[]>([]);
@@ -164,118 +175,161 @@ export default function Dashboard() {
     laadData();
   }, []);
 
-  const nu = new Date();
-  const beginMaand = startOfMonth(nu);
-  const eindeMaand = endOfMonth(nu);
-  const vorigeMaand = subMonths(nu, 1);
-  const beginVorigeMaand = startOfMonth(vorigeMaand);
-  const eindeVorigeMaand = endOfMonth(vorigeMaand);
+  const omzetDezeMaand = useMemo(
+    () =>
+      facturen
+        .filter((f) => {
+          const d = new Date(f.datum);
+          return (
+            (f.status === "BETAALD" || f.status === "VERZONDEN") &&
+            d >= beginMaand &&
+            d <= eindeMaand
+          );
+        })
+        .reduce((s, f) => s + f.totaal, 0),
+    [facturen]
+  );
 
-  const omzetDezeMaand = facturen
-    .filter((f) => {
-      const d = new Date(f.datum);
-      return (
-        (f.status === "BETAALD" || f.status === "VERZONDEN") &&
-        d >= beginMaand &&
-        d <= eindeMaand
-      );
-    })
-    .reduce((s, f) => s + f.totaal, 0);
+  const omzetVorigeMaand = useMemo(
+    () =>
+      facturen
+        .filter((f) => {
+          const d = new Date(f.datum);
+          return (
+            (f.status === "BETAALD" || f.status === "VERZONDEN") &&
+            d >= beginVorigeMaand &&
+            d <= eindeVorigeMaand
+          );
+        })
+        .reduce((s, f) => s + f.totaal, 0),
+    [facturen]
+  );
 
-  const omzetVorigeMaand = facturen
-    .filter((f) => {
-      const d = new Date(f.datum);
-      return (
-        (f.status === "BETAALD" || f.status === "VERZONDEN") &&
-        d >= beginVorigeMaand &&
-        d <= eindeVorigeMaand
-      );
-    })
-    .reduce((s, f) => s + f.totaal, 0);
+  const trendOmzet = useMemo(
+    () => ((omzetDezeMaand - omzetVorigeMaand) / (omzetVorigeMaand || 1)) * 100,
+    [omzetDezeMaand, omzetVorigeMaand]
+  );
 
-  const trendOmzet = ((omzetDezeMaand - omzetVorigeMaand) / (omzetVorigeMaand || 1)) * 100;
+  const openstaand = useMemo(
+    () =>
+      facturen
+        .filter((f) => f.status === "VERZONDEN" || f.status === "VERLOPEN")
+        .reduce((s, f) => s + f.totaal, 0),
+    [facturen]
+  );
 
-  const openstaand = facturen
-    .filter((f) => f.status === "VERZONDEN" || f.status === "VERLOPEN")
-    .reduce((s, f) => s + f.totaal, 0);
+  const uitgavenDezeMaand = useMemo(
+    () =>
+      uitgaven
+        .filter((u) => {
+          const d = new Date(u.datum);
+          return d >= beginMaand && d <= eindeMaand;
+        })
+        .reduce((s, u) => s + u.bedrag, 0),
+    [uitgaven]
+  );
 
-  const uitgavenDezeMaand = uitgaven
-    .filter((u) => {
-      const d = new Date(u.datum);
-      return d >= beginMaand && d <= eindeMaand;
-    })
-    .reduce((s, u) => s + u.bedrag, 0);
+  const uitgavenVorigeMaand = useMemo(
+    () =>
+      uitgaven
+        .filter((u) => {
+          const d = new Date(u.datum);
+          return d >= beginVorigeMaand && d <= eindeVorigeMaand;
+        })
+        .reduce((s, u) => s + u.bedrag, 0),
+    [uitgaven]
+  );
 
-  const uitgavenVorigeMaand = uitgaven
-    .filter((u) => {
-      const d = new Date(u.datum);
-      return d >= beginVorigeMaand && d <= eindeVorigeMaand;
-    })
-    .reduce((s, u) => s + u.bedrag, 0);
+  const trendUitgaven = useMemo(
+    () => ((uitgavenDezeMaand - uitgavenVorigeMaand) / (uitgavenVorigeMaand || 1)) * 100,
+    [uitgavenDezeMaand, uitgavenVorigeMaand]
+  );
 
-  const trendUitgaven = ((uitgavenDezeMaand - uitgavenVorigeMaand) / (uitgavenVorigeMaand || 1)) * 100;
-
-  const nettoResultaat = omzetDezeMaand - uitgavenDezeMaand;
+  const nettoResultaat = useMemo(
+    () => omzetDezeMaand - uitgavenDezeMaand,
+    [omzetDezeMaand, uitgavenDezeMaand]
+  );
 
   // Uitgaven per categorie (deze maand)
-  const PIE_KLEUREN = ["#6366f1", "#f59e0b", "#10b981", "#ef4444", "#3b82f6", "#8b5cf6", "#ec4899", "#14b8a6"];
-  const categorieGroepen = uitgaven
-    .filter((u) => {
-      const d = new Date(u.datum);
-      return d >= beginMaand && d <= eindeMaand;
-    })
-    .reduce<Record<string, { naam: string; bedrag: number; kleur?: string | null }>>((acc, u) => {
-      const catId = u.categorieId ?? "__geen__";
-      const naam = u.categorie?.naam ?? "Zonder categorie";
-      const kleur = u.categorie?.kleur ?? null;
-      if (!acc[catId]) {
-        acc[catId] = { naam, bedrag: 0, kleur };
-      }
-      acc[catId].bedrag += u.bedrag;
-      return acc;
-    }, {});
-  const categorieData = Object.values(categorieGroepen).filter((g) => g.bedrag > 0);
-
-  const maandGrafiek: MaandData[] = Array.from({ length: 6 }, (_, i) => {
-    const maand = subMonths(nu, 5 - i);
-    const begin = startOfMonth(maand);
-    const einde = endOfMonth(maand);
-    const omzet = facturen
-      .filter((f) => {
-        const d = new Date(f.datum);
-        return f.status === "BETAALD" && d >= begin && d <= einde;
+  const categorieData = useMemo(() => {
+    const groepen = uitgaven
+      .filter((u) => {
+        const d = new Date(u.datum);
+        return d >= beginMaand && d <= eindeMaand;
       })
-      .reduce((s, f) => s + f.totaal, 0);
-    return {
-      maand: format(maand, "MMM", { locale: nl }),
-      omzet,
-    };
-  });
+      .reduce<Record<string, { naam: string; bedrag: number; kleur?: string | null }>>((acc, u) => {
+        const catId = u.categorieId ?? "__geen__";
+        const naam = u.categorie?.naam ?? "Zonder categorie";
+        const kleur = u.categorie?.kleur ?? null;
+        if (!acc[catId]) {
+          acc[catId] = { naam, bedrag: 0, kleur };
+        }
+        acc[catId].bedrag += u.bedrag;
+        return acc;
+      }, {});
+    return Object.values(groepen).filter((g) => g.bedrag > 0);
+  }, [uitgaven]);
+
+  const maandGrafiek = useMemo<MaandData[]>(
+    () =>
+      Array.from({ length: 6 }, (_, i) => {
+        const maand = subMonths(nu, 5 - i);
+        const begin = startOfMonth(maand);
+        const einde = endOfMonth(maand);
+        const omzet = facturen
+          .filter((f) => {
+            const d = new Date(f.datum);
+            return f.status === "BETAALD" && d >= begin && d <= einde;
+          })
+          .reduce((s, f) => s + f.totaal, 0);
+        return {
+          maand: format(maand, "MMM", { locale: nl }),
+          omzet,
+        };
+      }),
+    [facturen]
+  );
 
   // KOR drempel berekening
   const korDrempel = instellingen.korDrempel ?? 20000;
-  const jaarBegin = new Date(nu.getFullYear(), 0, 1);
-  const jaarEinde = new Date(nu.getFullYear(), 11, 31, 23, 59, 59);
-  const jaaromzet = facturen
-    .filter((f) => {
-      const d = new Date(f.datum);
-      return (f.status === "BETAALD" || f.status === "VERZONDEN") && d >= jaarBegin && d <= jaarEinde;
-    })
-    .reduce((s, f) => s + f.subtotaal, 0);
-  const korPercentage = korDrempel > 0 ? (jaaromzet / korDrempel) * 100 : 0;
+
+  const jaaromzet = useMemo(
+    () =>
+      facturen
+        .filter((f) => {
+          const d = new Date(f.datum);
+          return (f.status === "BETAALD" || f.status === "VERZONDEN") && d >= jaarBegin && d <= jaarEinde;
+        })
+        .reduce((s, f) => s + f.subtotaal, 0),
+    [facturen]
+  );
+
+  const korPercentage = useMemo(
+    () => (korDrempel > 0 ? (jaaromzet / korDrempel) * 100 : 0),
+    [jaaromzet, korDrempel]
+  );
+
   const toonKorWaarschuwing = instellingen.korActief && instellingen.korWaarschuwing && korPercentage >= 80;
 
-  const recenteFacturen = [...facturen]
-    .sort((a, b) => new Date(b.datum).getTime() - new Date(a.datum).getTime())
-    .slice(0, 5);
+  const recenteFacturen = useMemo(
+    () =>
+      [...facturen]
+        .sort((a, b) => new Date(b.datum).getTime() - new Date(a.datum).getTime())
+        .slice(0, 5),
+    [facturen]
+  );
 
-  const aankomendBetalingen = facturen
-    .filter((f) => f.status === "VERZONDEN")
-    .sort(
-      (a, b) =>
-        new Date(a.vervaldatum).getTime() - new Date(b.vervaldatum).getTime()
-    )
-    .slice(0, 5);
+  const aankomendBetalingen = useMemo(
+    () =>
+      facturen
+        .filter((f) => f.status === "VERZONDEN")
+        .sort(
+          (a, b) =>
+            new Date(a.vervaldatum).getTime() - new Date(b.vervaldatum).getTime()
+        )
+        .slice(0, 5),
+    [facturen]
+  );
 
   return (
     <div>

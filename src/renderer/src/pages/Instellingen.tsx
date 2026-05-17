@@ -1553,7 +1553,7 @@ export default function InstellingenPagina() {
                     variant="outline"
                     onClick={async () => {
                       try {
-                        const result = await (window.api.app as any).exporteerExcel(exportJaar) as { succes?: boolean; geannuleerd?: boolean; pad?: string; fout?: string };
+                        const result = await window.api.app.exporteerExcel(exportJaar) as { succes?: boolean; geannuleerd?: boolean; pad?: string; fout?: string };
                         if (result.geannuleerd) return;
                         if (result.succes) {
                           toonMelding("succes", `Excel geëxporteerd naar: ${result.pad}`);
@@ -1575,7 +1575,7 @@ export default function InstellingenPagina() {
                       setPdfArchiefLaden(true);
                       setExportMelding(`Bezig met genereren van PDFs voor ${exportJaar}... Dit kan even duren.`);
                       try {
-                        const result = await (window.api.app as any).exportPdfArchief(exportJaar) as { succes?: boolean; geannuleerd?: boolean; pad?: string; aantalPdfs?: number; fout?: string };
+                        const result = await window.api.app.exportPdfArchief(exportJaar) as { succes?: boolean; geannuleerd?: boolean; pad?: string; aantalPdfs?: number; fout?: string };
                         setExportMelding(null);
                         if (result.geannuleerd) return;
                         if (result.succes) {

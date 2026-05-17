@@ -1877,7 +1877,8 @@ function setupIpcHandlers() {
   ipcMain.handle('audit:list', async (_, factuurId: string) => {
     return prisma.auditLog.findMany({
       where: { factuurId },
-      orderBy: { aangemaakt: 'desc' }
+      orderBy: { aangemaakt: 'desc' },
+      take: 100
     })
   })
 
@@ -2409,8 +2410,9 @@ function setupIpcHandlers() {
 
     let aangemaakt = 0
     for (const f of facturen) {
+      let pdfWindow: BrowserWindow | null = null
       try {
-        const pdfWindow = new BrowserWindow({
+        pdfWindow = new BrowserWindow({
           show: false, width: 900, height: 1200,
           webPreferences: { preload: join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false }
         })
@@ -2447,13 +2449,13 @@ function setupIpcHandlers() {
 
         await new Promise(resolve => setTimeout(resolve, 1200))
         const pdfBuffer = await pdfWindow.webContents.printToPDF({ printBackground: true, pageSize: 'A4' })
-        pdfWindow.destroy()
-
         const veiligNummer = f.nummer.replace(/[/\\:*?"<>|]/g, '-')
         fs.writeFileSync(join(doelMap, `${veiligNummer}.pdf`), pdfBuffer)
         aangemaakt++
       } catch {
         // sla individuele fouten over
+      } finally {
+        pdfWindow?.destroy()
       }
     }
 
