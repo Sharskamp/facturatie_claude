@@ -10,7 +10,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import { TrendingUp, AlertCircle, TrendingDown, Activity, ArrowRight, Loader2, TriangleAlert } from "lucide-react";
+import { TrendingUp, AlertCircle, TrendingDown, Activity, ArrowRight, Loader2, TriangleAlert, Building2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Header } from "@/components/layout/header";
@@ -225,6 +225,32 @@ export default function Dashboard() {
                 Huidige jaaromzet: <span className="font-semibold">{formatBedrag(jaaromzet)}</span>
                 {" "}({korPercentage.toFixed(1)}% van de drempel)
               </p>
+            </div>
+          </div>
+        )}
+
+        {!laden && facturen.length === 0 && (
+          <div className="rounded-2xl border-2 border-dashed border-indigo-200 bg-indigo-50 p-10 text-center">
+            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-indigo-100">
+              <Building2 className="h-8 w-8 text-indigo-600" />
+            </div>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">Welkom bij Streamline Facturatie</h2>
+            <p className="text-gray-500 max-w-md mx-auto mb-6">
+              Begin met het aanmaken van je eerste klant en factuur. Alle financiële statistieken worden hier weergegeven zodra je gegevens hebt.
+            </p>
+            <div className="flex items-center justify-center gap-3 flex-wrap">
+              <button
+                onClick={() => navigate('/klanten')}
+                className="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-xl hover:border-indigo-300 hover:text-indigo-700 transition-colors font-medium text-sm"
+              >
+                Klant aanmaken →
+              </button>
+              <button
+                onClick={() => navigate('/facturen/nieuw')}
+                className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-colors font-medium text-sm"
+              >
+                Eerste factuur aanmaken →
+              </button>
             </div>
           </div>
         )}

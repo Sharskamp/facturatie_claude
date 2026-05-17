@@ -76,6 +76,9 @@ interface Instellingen {
   korDrempel?: number;
   // AI / OCR
   anthropicApiKey?: string;
+  // Email sjabloon
+  emailAanhef?: string;
+  emailAfsluitingsTekst?: string;
   // Overig
   kmVergoeding?: number;
   // Geavanceerd
@@ -465,107 +468,151 @@ export default function InstellingenPagina() {
 
         {/* ── Email / SMTP ── */}
         {actieveTab === "email" && (
-          <Card>
-            <CardHeader>
-              <CardTitle>E-mail instellingen</CardTitle>
-              <CardDescription>SMTP-configuratie voor het versturen van facturen en herinneringen</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-sm text-blue-800">
-                <p className="font-medium mb-1">Instructies</p>
-                <p>
-                  Vul je SMTP-gegevens in om e-mails te kunnen versturen vanuit AdminPro. Voor Gmail gebruik je{" "}
-                  <code className="bg-blue-100 px-1 rounded">smtp.gmail.com</code> (poort 587 of 465).
-                  Zorg dat je een app-wachtwoord hebt aangemaakt in je Google-account.
-                </p>
-              </div>
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>E-mail instellingen</CardTitle>
+                <CardDescription>SMTP-configuratie voor het versturen van facturen en herinneringen</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-sm text-blue-800">
+                  <p className="font-medium mb-1">Instructies</p>
+                  <p>
+                    Vul je SMTP-gegevens in om e-mails te kunnen versturen vanuit AdminPro. Voor Gmail gebruik je{" "}
+                    <code className="bg-blue-100 px-1 rounded">smtp.gmail.com</code> (poort 587 of 465).
+                    Zorg dat je een app-wachtwoord hebt aangemaakt in je Google-account.
+                  </p>
+                </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div className="sm:col-span-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="sm:col-span-2">
+                    <Input
+                      label="SMTP Host"
+                      value={instellingen.smtpHost ?? ""}
+                      onChange={(e) => updateVeld("smtpHost", e.target.value)}
+                      onBlur={() => slaOp({ smtpHost: instellingen.smtpHost })}
+                      placeholder="smtp.gmail.com"
+                    />
+                  </div>
                   <Input
-                    label="SMTP Host"
-                    value={instellingen.smtpHost ?? ""}
-                    onChange={(e) => updateVeld("smtpHost", e.target.value)}
-                    onBlur={() => slaOp({ smtpHost: instellingen.smtpHost })}
-                    placeholder="smtp.gmail.com"
+                    label="Poort"
+                    type="number"
+                    value={instellingen.smtpPort ?? 587}
+                    onChange={(e) => updateVeld("smtpPort", parseInt(e.target.value))}
+                    onBlur={() => slaOp({ smtpPort: instellingen.smtpPort })}
+                    placeholder="587"
                   />
                 </div>
-                <Input
-                  label="Poort"
-                  type="number"
-                  value={instellingen.smtpPort ?? 587}
-                  onChange={(e) => updateVeld("smtpPort", parseInt(e.target.value))}
-                  onBlur={() => slaOp({ smtpPort: instellingen.smtpPort })}
-                  placeholder="587"
-                />
-              </div>
 
-              <div className="flex items-center justify-between rounded-lg border border-gray-200 p-3">
-                <div>
-                  <p className="text-sm font-medium text-gray-700">SSL/TLS (beveiligde verbinding)</p>
-                  <p className="text-xs text-gray-400">Gebruik poort 465 voor SSL, 587 voor STARTTLS</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const nieuw = !instellingen.smtpSecure;
-                    updateVeld("smtpSecure", nieuw);
-                    slaOp({ smtpSecure: nieuw });
-                  }}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                    instellingen.smtpSecure ? "bg-indigo-600" : "bg-gray-200"
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
-                      instellingen.smtpSecure ? "translate-x-6" : "translate-x-1"
+                <div className="flex items-center justify-between rounded-lg border border-gray-200 p-3">
+                  <div>
+                    <p className="text-sm font-medium text-gray-700">SSL/TLS (beveiligde verbinding)</p>
+                    <p className="text-xs text-gray-400">Gebruik poort 465 voor SSL, 587 voor STARTTLS</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nieuw = !instellingen.smtpSecure;
+                      updateVeld("smtpSecure", nieuw);
+                      slaOp({ smtpSecure: nieuw });
+                    }}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      instellingen.smtpSecure ? "bg-indigo-600" : "bg-gray-200"
                     }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                        instellingen.smtpSecure ? "translate-x-6" : "translate-x-1"
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <Input
+                    label="Gebruikersnaam / E-mail"
+                    type="email"
+                    value={instellingen.smtpUser ?? ""}
+                    onChange={(e) => updateVeld("smtpUser", e.target.value)}
+                    onBlur={() => slaOp({ smtpUser: instellingen.smtpUser })}
+                    placeholder="jij@gmail.com"
                   />
-                </button>
-              </div>
+                  <Input
+                    label="Wachtwoord / App-wachtwoord"
+                    type="password"
+                    value={instellingen.smtpPass ?? ""}
+                    onChange={(e) => updateVeld("smtpPass", e.target.value)}
+                    onBlur={() => slaOp({ smtpPass: instellingen.smtpPass })}
+                    placeholder="••••••••••••"
+                  />
+                </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <Input
-                  label="Gebruikersnaam / E-mail"
-                  type="email"
-                  value={instellingen.smtpUser ?? ""}
-                  onChange={(e) => updateVeld("smtpUser", e.target.value)}
-                  onBlur={() => slaOp({ smtpUser: instellingen.smtpUser })}
-                  placeholder="jij@gmail.com"
-                />
-                <Input
-                  label="Wachtwoord / App-wachtwoord"
-                  type="password"
-                  value={instellingen.smtpPass ?? ""}
-                  onChange={(e) => updateVeld("smtpPass", e.target.value)}
-                  onBlur={() => slaOp({ smtpPass: instellingen.smtpPass })}
-                  placeholder="••••••••••••"
-                />
-              </div>
+                <div className="flex flex-wrap gap-3 justify-end pt-2">
+                  <Button
+                    variant="outline"
+                    onClick={testEmail}
+                    disabled={emailTestStatus === "laden" || !instellingen.smtpHost}
+                  >
+                    {emailTestStatus === "laden" ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Send className="h-4 w-4" />
+                    )}
+                    {emailTestStatus === "succes"
+                      ? "E-mail verzonden!"
+                      : emailTestStatus === "fout"
+                      ? "Verzenden mislukt"
+                      : "Test e-mail versturen"}
+                  </Button>
+                  <Button onClick={() => slaOp(instellingen)} loading={opslaan}>
+                    Opslaan
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
 
-              <div className="flex flex-wrap gap-3 justify-end pt-2">
+            <Card>
+              <CardHeader>
+                <CardTitle>E-mailsjabloon</CardTitle>
+                <CardDescription>Personaliseer de tekst in je factuur- en offerte e-mails</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Aanhef
+                  </label>
+                  <input
+                    type="text"
+                    value={instellingen.emailAanhef ?? ''}
+                    onChange={(e) => updateVeld('emailAanhef', e.target.value)}
+                    placeholder="Geachte {{naam}},"
+                    className="flex h-9 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-1 text-sm text-gray-900 dark:text-gray-100 shadow-sm placeholder:text-gray-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:border-transparent"
+                  />
+                  <p className="mt-1 text-xs text-gray-400">Gebruik {'{{naam}}'} voor de klantnaam</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Afsluitingstekst
+                  </label>
+                  <input
+                    type="text"
+                    value={instellingen.emailAfsluitingsTekst ?? ''}
+                    onChange={(e) => updateVeld('emailAfsluitingsTekst', e.target.value)}
+                    placeholder="Met vriendelijke groet,"
+                    className="flex h-9 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-1 text-sm text-gray-900 dark:text-gray-100 shadow-sm placeholder:text-gray-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:border-transparent"
+                  />
+                </div>
                 <Button
-                  variant="outline"
-                  onClick={testEmail}
-                  disabled={emailTestStatus === "laden" || !instellingen.smtpHost}
+                  onClick={() => slaOp({ emailAanhef: instellingen.emailAanhef, emailAfsluitingsTekst: instellingen.emailAfsluitingsTekst })}
+                  disabled={opslaan}
+                  className="gap-2"
                 >
-                  {emailTestStatus === "laden" ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Send className="h-4 w-4" />
-                  )}
-                  {emailTestStatus === "succes"
-                    ? "E-mail verzonden!"
-                    : emailTestStatus === "fout"
-                    ? "Verzenden mislukt"
-                    : "Test e-mail versturen"}
+                  {opslaan && <Loader2 className="h-4 w-4 animate-spin" />}
+                  Sjabloon opslaan
                 </Button>
-                <Button onClick={() => slaOp(instellingen)} loading={opslaan}>
-                  Opslaan
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          </div>
         )}
 
         {/* ── Google Agenda ── */}
