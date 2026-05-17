@@ -22,22 +22,23 @@ import {
 import { cn } from "@/lib/utils";
 import { useState } from "react";
 import { useAuth } from "@/context/auth";
+import { HelpTip } from "@/components/ui/help-tip";
 
 const navigatie = [
-  { naam: "Dashboard", href: "/", icoon: LayoutDashboard },
-  { naam: "Klanten", href: "/klanten", icoon: Users },
-  { naam: "Facturen", href: "/facturen", icoon: FileText },
-  { naam: "Offertes", href: "/offertes", icoon: FileCheck },
-  { naam: "Agenda", href: "/agenda", icoon: Calendar },
-  { naam: "Inkomen", href: "/inkomen", icoon: TrendingUp },
-  { naam: "Uitgaven", href: "/uitgaven", icoon: TrendingDown },
-  { naam: "Uren", href: "/uren", icoon: Clock },
-  { naam: "Kilometer", href: "/kilometer", icoon: Car },
-  { naam: "Bankimport", href: "/bank-import", icoon: Landmark },
-  { naam: "Producten", href: "/producten", icoon: Package },
-  { naam: "Vaste activa", href: "/vaste-activa", icoon: Cpu },
-  { naam: "Rapporten", href: "/rapporten", icoon: BarChart3 },
-  { naam: "Instellingen", href: "/instellingen", icoon: Settings },
+  { naam: "Dashboard", href: "/", icoon: LayoutDashboard, uitleg: "Overzicht van je omzet, openstaande facturen en recente activiteit." },
+  { naam: "Klanten", href: "/klanten", icoon: Users, uitleg: "Beheer al je klantgegevens. Voeg klanten toe, bekijk hun factuurhistorie en contactinfo." },
+  { naam: "Facturen", href: "/facturen", icoon: FileText, uitleg: "Maak en verstuur facturen. Volg de status (concept, verzonden, betaald) en stuur herinneringen." },
+  { naam: "Offertes", href: "/offertes", icoon: FileCheck, uitleg: "Maak offertes aan en zet ze met één klik om naar een factuur zodra de klant akkoord gaat." },
+  { naam: "Agenda", href: "/agenda", icoon: Calendar, uitleg: "Bekijk je Google Calendar afspraken en maak direct een factuur van een afspraak." },
+  { naam: "Inkomen", href: "/inkomen", icoon: TrendingUp, uitleg: "Registreer en beheer al je inkomsten. Koppel betalingen aan facturen." },
+  { naam: "Uitgaven", href: "/uitgaven", icoon: TrendingDown, uitleg: "Houd je zakelijke uitgaven bij per categorie. Koppel bonnen voor de belasting." },
+  { naam: "Uren", href: "/uren", icoon: Clock, uitleg: "Registreer gewerkte uren per klant of project. Gebruik de timer of voer handmatig in." },
+  { naam: "Kilometer", href: "/kilometer", icoon: Car, uitleg: "Registreer zakelijke ritten voor de kilometervergoeding (€0,23/km fiscaal aftrekbaar)." },
+  { naam: "Bankimport", href: "/bank-import", icoon: Landmark, uitleg: "Importeer bankafschriften (CSV) van ABN AMRO, ING of Rabobank om transacties te matchen." },
+  { naam: "Producten", href: "/producten", icoon: Package, uitleg: "Beheer een productcatalogus met vaste prijzen en BTW-tarieven voor sneller factureren." },
+  { naam: "Vaste activa", href: "/vaste-activa", icoon: Cpu, uitleg: "Registreer bedrijfsmiddelen (laptop, auto) en volg de jaarlijkse afschrijvingen." },
+  { naam: "Rapporten", href: "/rapporten", icoon: BarChart3, uitleg: "Bekijk winst & verlies, BTW-overzicht per kwartaal en jaaroverzichten voor de belastingaangifte." },
+  { naam: "Instellingen", href: "/instellingen", icoon: Settings, uitleg: "Stel je bedrijfsgegevens, e-mail (SMTP), BTW-nummers, Mollie-koppeling en meer in." },
 ];
 
 export function Sidebar() {
@@ -100,21 +101,22 @@ export function Sidebar() {
               ? location.pathname === "/"
               : location.pathname.startsWith(item.href);
           return (
-            <Link
-              key={item.href}
-              to={item.href}
-              className={cn(
-                "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
-                actief
-                  ? "bg-indigo-600 text-white"
-                  : "text-gray-400 hover:bg-gray-700 hover:text-white",
-                ingeklapt && "justify-center px-2"
-              )}
-              title={ingeklapt ? item.naam : undefined}
-            >
-              <item.icoon className="h-5 w-5 flex-shrink-0" />
-              {!ingeklapt && <span>{item.naam}</span>}
-            </Link>
+            <HelpTip key={item.href} tekst={item.uitleg} className="w-full">
+              <Link
+                to={item.href}
+                className={cn(
+                  "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors w-full",
+                  actief
+                    ? "bg-indigo-600 text-white"
+                    : "text-gray-400 hover:bg-gray-700 hover:text-white",
+                  ingeklapt && "justify-center px-2"
+                )}
+                title={ingeklapt ? item.naam : undefined}
+              >
+                <item.icoon className="h-5 w-5 flex-shrink-0" />
+                {!ingeklapt && <span>{item.naam}</span>}
+              </Link>
+            </HelpTip>
           );
         })}
       </nav>

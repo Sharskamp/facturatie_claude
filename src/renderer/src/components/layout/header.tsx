@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { User, Sun, Moon, Monitor, Search, X } from "lucide-react";
+import { User, Sun, Moon, Monitor, Search, X, HelpCircle } from "lucide-react";
 import { useAuth } from "@/context/auth";
 import { useTheme } from "@/context/theme";
+import { useHelp } from "@/context/help";
 import { useNavigate } from "react-router-dom";
 
 interface HeaderProps {
@@ -25,6 +26,7 @@ interface ZoekFactuur {
 export function Header({ titel, subtitel, acties }: HeaderProps) {
   const { user } = useAuth();
   const { modus, setModus } = useTheme();
+  const { helpActief, toggleHelp } = useHelp();
   const navigate = useNavigate();
 
   const [zoekterm, setZoekterm] = useState("");
@@ -212,6 +214,19 @@ export function Header({ titel, subtitel, acties }: HeaderProps) {
         </div>
 
         {acties}
+
+        {/* Help toggle */}
+        <button
+          onClick={toggleHelp}
+          className={`p-2 rounded-lg transition-colors ${
+            helpActief
+              ? "bg-indigo-100 dark:bg-indigo-900 text-indigo-600 dark:text-indigo-400"
+              : "text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+          }`}
+          title={helpActief ? "Help-modus uitschakelen" : "Help-modus inschakelen – beweeg over functies voor uitleg"}
+        >
+          <HelpCircle className="h-4 w-4" />
+        </button>
 
         {/* Dark mode toggle */}
         <button

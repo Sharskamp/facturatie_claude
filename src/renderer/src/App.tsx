@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/auth'
 import { ThemeProvider } from './context/theme'
+import { HelpProvider } from './context/help'
 import { Loader2 } from 'lucide-react'
 
 // Pages
@@ -79,9 +80,11 @@ function AppRoutes() {
 export default function App() {
   return (
     <ThemeProvider>
-      <AuthProvider>
-        <AppRoutes />
-      </AuthProvider>
+      <HelpProvider>
+        <AuthProvider>
+          <AppRoutes />
+        </AuthProvider>
+      </HelpProvider>
     </ThemeProvider>
   )
 }
