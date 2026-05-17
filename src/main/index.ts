@@ -942,7 +942,7 @@ function setupIpcHandlers() {
         korActief: true, korDrempel: true, korWaarschuwing: true,
         standaardBetaalTermijn: true, standaardBtwTarief: true,
         betalingsherinneringen: true, herinneringDagen: true,
-        googleRefreshToken: true, googleClientId: true, googleClientSecret: true, kmVergoeding: true, anthropicApiKey: true,
+        googleRefreshToken: true, googleClientId: true, googleClientSecret: true, kmVergoeding: true, anthropicApiKey: true, openaiApiKey: true, aiModel: true,
         donkerModus: true, autoStart: true, pdfMapPad: true, mollieApiKey: true,
         layoutPrimairKleur: true, layoutSecundairKleur: true, layoutLettertype: true,
         layoutKoptekst: true, layoutVoettekst: true, layoutLogoPositie: true,
@@ -965,7 +965,7 @@ function setupIpcHandlers() {
       'korActief', 'korDrempel', 'korWaarschuwing',
       'standaardBetaalTermijn', 'standaardBtwTarief', 'betalingsCondities',
       'betalingsherinneringen', 'herinneringDagen',
-      'kmVergoeding', 'anthropicApiKey', 'mollieApiKey',
+      'kmVergoeding', 'anthropicApiKey', 'openaiApiKey', 'aiModel', 'mollieApiKey',
       'donkerModus', 'autoStart', 'pdfMapPad',
       'emailAanhef', 'emailAfsluitingsTekst',
       'googleClientId', 'googleClientSecret',
@@ -1726,9 +1726,7 @@ function setupIpcHandlers() {
 
   ipcMain.handle('uitgaven:scanBon', async (_, { bonPad }: { bonPad: string }) => {
     const user = await prisma.user.findFirst()
-    if (!user?.anthropicApiKey) {
-      return { error: 'Geen Anthropic API sleutel ingesteld. Ga naar Instellingen > AI.' }
-    }
+    const model = user?.aiModel ?? 'claude'
 
     const ext = bonPad.split('.').pop()?.toLowerCase() ?? ''
     if (ext === 'pdf') {
@@ -1747,41 +1745,68 @@ function setupIpcHandlers() {
     }
 
     const base64 = fs.readFileSync(bonPad).toString('base64')
+    const prompt = 'Dit is een kassabon of factuur. Extraheer: 1) totaalbedrag (alleen getal, geen €-teken, punt als decimaalscheidingsteken), 2) naam van de winkel/leverancier, 3) datum (formaat YYYY-MM-DD). Reageer ALLEEN met JSON: {"bedrag": 12.50, "leverancier": "Albert Heijn", "datum": "2025-03-15"}. Als je een waarde niet kunt vinden, gebruik null.'
+
+    const parseResultaat = (tekst: string) => {
+      const schoon = tekst.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
+      const parsed = JSON.parse(schoon) as { bedrag?: number | null; leverancier?: string | null; datum?: string | null }
+      return { bedrag: parsed.bedrag ?? null, leverancier: parsed.leverancier ?? null, datum: parsed.datum ?? null }
+    }
 
     try {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'x-api-key': user.anthropicApiKey,
-          'anthropic-version': '2023-06-01',
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 256,
-          system: 'Je bent een assistent die bonnen uitleest. Reageer alleen met het gevraagde JSON-formaat, niets anders.',
-          messages: [{
-            role: 'user',
-            content: [
-              { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
-              { type: 'text', text: 'Dit is een kassabon of factuur. Extraheer: 1) totaalbedrag (alleen getal, geen €-teken, punt als decimaalscheidingsteken), 2) naam van de winkel/leverancier, 3) datum (formaat YYYY-MM-DD). Reageer ALLEEN met JSON: {"bedrag": 12.50, "leverancier": "Albert Heijn", "datum": "2025-03-15"}. Als je een waarde niet kunt vinden, gebruik null.' }
-            ]
-          }]
+      if (model === 'openai') {
+        if (!user?.openaiApiKey) return { error: 'Geen OpenAI API sleutel ingesteld. Ga naar Instellingen > AI.' }
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${user.openaiApiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'gpt-4o-mini',
+            max_tokens: 256,
+            messages: [{
+              role: 'user',
+              content: [
+                { type: 'image_url', image_url: { url: `data:${mediaType};base64,${base64}`, detail: 'low' } },
+                { type: 'text', text: prompt }
+              ]
+            }]
+          })
         })
-      })
-
-      if (!response.ok) {
-        const fout = await response.text()
-        return { error: `API fout (${response.status}): ${fout.slice(0, 200)}` }
+        if (!response.ok) {
+          const fout = await response.text()
+          return { error: `OpenAI fout (${response.status}): ${fout.slice(0, 200)}` }
+        }
+        const data = await response.json() as { choices: Array<{ message: { content: string } }> }
+        return parseResultaat(data.choices?.[0]?.message?.content ?? '{}')
+      } else {
+        // Claude (standaard)
+        if (!user?.anthropicApiKey) return { error: 'Geen Anthropic API sleutel ingesteld. Ga naar Instellingen > AI.' }
+        const response = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'x-api-key': user.anthropicApiKey,
+            'anthropic-version': '2023-06-01',
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'claude-haiku-4-5-20251001',
+            max_tokens: 256,
+            system: 'Je bent een assistent die bonnen uitleest. Reageer alleen met het gevraagde JSON-formaat, niets anders.',
+            messages: [{
+              role: 'user',
+              content: [
+                { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
+                { type: 'text', text: prompt }
+              ]
+            }]
+          })
+        })
+        if (!response.ok) {
+          const fout = await response.text()
+          return { error: `Claude fout (${response.status}): ${fout.slice(0, 200)}` }
+        }
+        const apiResp = await response.json() as { content: Array<{ text: string }> }
+        return parseResultaat(apiResp.content?.[0]?.text ?? '{}')
       }
-
-      const apiResp = await response.json() as { content: Array<{ text: string }> }
-      const tekst = apiResp.content?.[0]?.text ?? '{}'
-
-      // Strip mogelijke markdown code fences
-      const schoonTekst = tekst.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
-      const parsed = JSON.parse(schoonTekst) as { bedrag?: number | null; leverancier?: string | null; datum?: string | null }
-      return { bedrag: parsed.bedrag ?? null, leverancier: parsed.leverancier ?? null, datum: parsed.datum ?? null }
     } catch (e: unknown) {
       return { error: e instanceof Error ? e.message : 'Onbekende fout bij scannen' }
     }

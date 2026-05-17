@@ -83,6 +83,8 @@ interface Instellingen {
   korDrempel?: number;
   // AI / OCR
   anthropicApiKey?: string;
+  openaiApiKey?: string;
+  aiModel?: string;
   // Email sjabloon
   emailAanhef?: string;
   emailAfsluitingsTekst?: string;
@@ -1105,51 +1107,85 @@ export default function InstellingenPagina() {
 
         {/* ── AI / OCR ── */}
         {actieveTab === "ai" && (
-          <Card>
-            <CardHeader>
-              <CardTitle>AI / OCR — Bon scannen</CardTitle>
-              <CardDescription>Gebruik Claude Vision om bonnen automatisch uit te lezen</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="rounded-lg bg-indigo-50 border border-indigo-200 p-4 text-sm text-indigo-900 space-y-2">
-                <p className="font-semibold">Hoe werkt het?</p>
-                <p>
-                  Na het uploaden van een bon kun je op "Scannen" klikken. AdminPro stuurt de
-                  afbeelding naar de Claude Vision API en leest automatisch het bedrag,
-                  de leverancier en de datum uit.
-                </p>
-                <p className="text-indigo-700">
-                  Vereist een Anthropic API-sleutel. Maak er een aan op{" "}
-                  <button
-                    type="button"
-                    className="underline"
-                    onClick={() => window.api.shell.openExternal("https://console.anthropic.com/")}
-                  >
-                    console.anthropic.com
-                  </button>
-                  .
-                </p>
-              </div>
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>AI / OCR — Bon scannen</CardTitle>
+                <CardDescription>Kies welk AI-model je gebruikt om bonnen automatisch uit te lezen</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="rounded-lg bg-indigo-50 border border-indigo-200 p-4 text-sm text-indigo-900 space-y-1">
+                  <p className="font-semibold">Hoe werkt het?</p>
+                  <p>Upload een foto van een bon. De app stuurt de afbeelding naar het gekozen AI-model en leest automatisch het bedrag, de leverancier en de datum uit. Ondersteunde formaten: JPG, PNG, WEBP.</p>
+                </div>
 
-              <Input
-                label="Anthropic API sleutel"
-                type="password"
-                value={instellingen.anthropicApiKey ?? ""}
-                onChange={(e) => updateVeld("anthropicApiKey", e.target.value)}
-                onBlur={() => slaOp({ anthropicApiKey: instellingen.anthropicApiKey })}
-                placeholder="sk-ant-api03-..."
-              />
-              <p className="text-xs text-gray-400">
-                De sleutel wordt veilig lokaal opgeslagen. Ondersteunde formaten: JPG, PNG, WEBP (geen PDF).
-              </p>
+                {/* Model keuze */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-3">AI-model voor bon scannen</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    {[
+                      { id: "claude", naam: "Claude (Anthropic)", omschrijving: "claude-haiku — snel en nauwkeurig", kleur: "indigo" },
+                      { id: "openai", naam: "ChatGPT (OpenAI)", omschrijving: "gpt-4o-mini — breed ondersteund", kleur: "green" },
+                    ].map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => updateVeld("aiModel", m.id)}
+                        className={`rounded-xl border-2 p-4 text-left transition-all ${
+                          (instellingen.aiModel ?? "claude") === m.id
+                            ? m.kleur === "indigo"
+                              ? "border-indigo-500 bg-indigo-50"
+                              : "border-green-500 bg-green-50"
+                            : "border-gray-200 bg-white hover:border-gray-300"
+                        }`}
+                      >
+                        <div className={`font-semibold text-sm ${(instellingen.aiModel ?? "claude") === m.id ? (m.kleur === "indigo" ? "text-indigo-700" : "text-green-700") : "text-gray-700"}`}>{m.naam}</div>
+                        <div className="text-xs text-gray-500 mt-1">{m.omschrijving}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
 
-              <div className="flex justify-end pt-2">
-                <Button onClick={() => slaOp({ anthropicApiKey: instellingen.anthropicApiKey })} loading={opslaan}>
-                  Opslaan
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+                {/* Claude API sleutel */}
+                <div className={`space-y-3 rounded-xl border p-4 transition-all ${(instellingen.aiModel ?? "claude") === "claude" ? "border-indigo-200 bg-indigo-50/40" : "border-gray-100 opacity-60"}`}>
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-semibold text-gray-700">Anthropic API sleutel</label>
+                    <button type="button" className="text-xs text-indigo-600 underline" onClick={() => window.api.shell.openExternal("https://console.anthropic.com/")}>
+                      Sleutel aanmaken ↗
+                    </button>
+                  </div>
+                  <Input
+                    type="password"
+                    value={instellingen.anthropicApiKey ?? ""}
+                    onChange={(e) => updateVeld("anthropicApiKey", e.target.value)}
+                    placeholder="sk-ant-api03-..."
+                  />
+                  {instellingen.anthropicApiKey && (
+                    <p className="text-xs text-indigo-600">✓ Sleutel ingesteld</p>
+                  )}
+                </div>
+
+                {/* OpenAI API sleutel */}
+                <div className={`space-y-3 rounded-xl border p-4 transition-all ${instellingen.aiModel === "openai" ? "border-green-200 bg-green-50/40" : "border-gray-100 opacity-60"}`}>
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-semibold text-gray-700">OpenAI API sleutel</label>
+                    <button type="button" className="text-xs text-green-600 underline" onClick={() => window.api.shell.openExternal("https://platform.openai.com/api-keys")}>
+                      Sleutel aanmaken ↗
+                    </button>
+                  </div>
+                  <Input
+                    type="password"
+                    value={instellingen.openaiApiKey ?? ""}
+                    onChange={(e) => updateVeld("openaiApiKey", e.target.value)}
+                    placeholder="sk-proj-..."
+                  />
+                  {instellingen.openaiApiKey && (
+                    <p className="text-xs text-green-600">✓ Sleutel ingesteld</p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         )}
 
         {/* ── Geavanceerd ── */}

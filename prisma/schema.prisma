@@ -43,6 +43,8 @@ model User {
   herinneringDagen      Int       @default(7)
   kmVergoeding          Float     @default(0.23)
   anthropicApiKey       String?
+  openaiApiKey          String?
+  aiModel               String    @default("claude")
   donkerModus           String    @default("systeem")
   autoStart             Boolean   @default(false)
   pdfMapPad             String?
