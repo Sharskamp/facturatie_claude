@@ -988,15 +988,22 @@ function setupIpcHandlers() {
 
   ipcMain.handle('instellingen:test-email', async (_, config: { host: string; port: number; secure: boolean; user: string; pass: string; naar: string }) => {
     try {
+      // Port 465 = direct SSL; port 587/25/other = STARTTLS (secure must be false)
+      const secureDwingen = config.port === 465 ? true : config.port === 587 ? false : config.secure
+      const naar = config.naar?.trim() || config.user // fallback: stuur naar eigen adres
+      if (!naar) throw new Error('Geen ontvanger opgegeven. Vul je e-mailadres in bij Bedrijfsgegevens of gebruikersnaam bij SMTP.')
       await verstuurEmail(
-        { host: config.host, port: config.port, secure: config.secure, user: config.user, pass: config.pass },
-        { van: config.user, naar: config.naar, onderwerp: 'AdminPro - Test e-mail', html: '<p>Dit is een test e-mail van AdminPro. Uw SMTP-instellingen werken correct!</p>' }
+        { host: config.host, port: config.port, secure: secureDwingen, user: config.user, pass: config.pass },
+        { van: config.user, naar, onderwerp: 'AdminPro - Test e-mail', html: '<p>Dit is een test e-mail van AdminPro. Uw SMTP-instellingen werken correct!</p>' }
       )
       return { succes: true }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Onbekende fout'
+      if (msg.includes('WRONG_VERSION') || msg.includes('SSL')) {
+        throw new Error(`SSL/TLS mismatch. Gebruik poort 465 met SSL aan, of poort 587 met SSL uit (STARTTLS). Details: ${msg}`)
+      }
       if (msg.includes('ETIMEDOUT') || msg.includes('connect')) {
-        throw new Error(`Verbinding mislukt (${config.host}:${config.port}). Controleer host, poort en firewall. Poort 25 is vaak geblokkeerd — gebruik 587 (STARTTLS) of 465 (SSL). Details: ${msg}`)
+        throw new Error(`Verbinding mislukt (${config.host}:${config.port}). Controleer host, poort en firewall. Gebruik 587 (STARTTLS) of 465 (SSL). Details: ${msg}`)
       }
       if (msg.includes('EAUTH') || msg.includes('535') || msg.includes('auth')) {
         throw new Error(`Authenticatie mislukt. Controleer gebruikersnaam en wachtwoord. Details: ${msg}`)

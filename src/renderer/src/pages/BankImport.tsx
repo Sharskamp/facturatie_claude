@@ -498,7 +498,7 @@ export default function BankImportPagina() {
                             />
                           </TableCell>
                           <TableCell className="whitespace-nowrap text-gray-500 text-sm">
-                            {t.datum ? formatDatum(t.datum) : t.datum}
+                            {(() => { try { return t.datum ? formatDatum(t.datum) : t.datum; } catch { return t.datum; } })()}
                           </TableCell>
                           <TableCell className="max-w-[250px] truncate text-sm">{t.omschrijving}</TableCell>
                           <TableCell className={`text-right font-semibold text-sm ${t.type === "inkomen" ? "text-green-700" : "text-red-700"}`}>
