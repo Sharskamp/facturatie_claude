@@ -21,7 +21,7 @@ import {
   Receipt,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/context/auth";
 import { HelpTip } from "@/components/ui/help-tip";
 
@@ -47,7 +47,13 @@ export function Sidebar() {
   const location = useLocation();
   const navigate = useNavigate();
   const { logout } = useAuth();
-  const [ingeklapt, setIngeklapt] = useState(false);
+  const [ingeklapt, setIngeklapt] = useState(window.innerWidth < 1200);
+
+  useEffect(() => {
+    const handler = () => setIngeklapt(prev => window.innerWidth < 1200 ? true : prev);
+    window.addEventListener("resize", handler);
+    return () => window.removeEventListener("resize", handler);
+  }, []);
 
   function handleLogout() {
     logout();

@@ -210,8 +210,8 @@ export default function CrediteurenPage() {
                       key={c.id}
                       className={isVervallen(c) ? "bg-red-50 hover:bg-red-100" : ""}
                     >
-                      <TableCell className="font-medium">{c.leverancier}</TableCell>
-                      <TableCell className="text-gray-500">
+                      <TableCell className="font-medium max-w-[160px] truncate">{c.leverancier}</TableCell>
+                      <TableCell className="text-gray-500 max-w-[120px] truncate">
                         {c.factuurNummer ?? <span className="text-gray-300">—</span>}
                       </TableCell>
                       <TableCell>{formatDatum(c.factuurdatum)}</TableCell>

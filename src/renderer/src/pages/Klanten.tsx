@@ -273,23 +273,23 @@ export default function KlantenPage() {
                       onClick={() => navigate(`/klanten/${klant.id}`)}
                       onContextMenu={(e) => handleContextMenu(e, klant)}
                     >
-                      <TableCell className="font-medium text-gray-900">
-                        <div className="flex items-center gap-2">
-                          {klant.naam}
+                      <TableCell className="font-medium text-gray-900 max-w-[160px]">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="truncate">{klant.naam}</span>
                           {!klant.actief && (
-                            <span className="text-xs bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded font-normal">
+                            <span className="text-xs bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded font-normal shrink-0">
                               Gearchiveerd
                             </span>
                           )}
                         </div>
                       </TableCell>
-                      <TableCell className="text-gray-500">
+                      <TableCell className="text-gray-500 max-w-[140px] truncate">
                         {klant.bedrijf ?? "-"}
                       </TableCell>
-                      <TableCell className="text-gray-500">
+                      <TableCell className="text-gray-500 max-w-[160px] truncate">
                         {klant.email ?? "-"}
                       </TableCell>
-                      <TableCell className="text-gray-500">
+                      <TableCell className="text-gray-500 max-w-[120px] truncate">
                         {klant.telefoon ?? "-"}
                       </TableCell>
                       <TableCell className="text-center">

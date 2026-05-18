@@ -129,7 +129,7 @@ export function Header({ titel, subtitel, acties }: HeaderProps) {
 
       <div className="flex items-center gap-3 flex-1 justify-end">
         {/* Globale zoekbalk */}
-        <div className="relative w-72 hidden sm:block">
+        <div className="relative w-48 lg:w-72 hidden sm:block">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
           <input
             ref={inputRef}

@@ -381,13 +381,13 @@ export default function FacturenPage() {
                         <TableCell className="font-mono text-sm font-medium text-indigo-700">
                           {f.nummer}
                         </TableCell>
-                        <TableCell>
-                          <div>
-                            <p className="font-medium text-gray-900">
+                        <TableCell className="max-w-[180px]">
+                          <div className="min-w-0">
+                            <p className="font-medium text-gray-900 truncate">
                               {f.klant.naam}
                             </p>
                             {f.klant.bedrijf && (
-                              <p className="text-xs text-gray-400">
+                              <p className="text-xs text-gray-400 truncate">
                                 {f.klant.bedrijf}
                               </p>
                             )}

@@ -573,9 +573,9 @@ export default function InstellingenPagina() {
           };
 
           return (
-            <div className="flex gap-6 items-start">
+            <div className="flex flex-col lg:flex-row gap-6 items-start">
               {/* Links: instellingen */}
-              <div className="w-[380px] shrink-0 space-y-4">
+              <div className="w-full lg:w-[380px] lg:shrink-0 space-y-4">
 
                 {/* Kleur & typografie */}
                 <Card>

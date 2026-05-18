@@ -79,7 +79,7 @@ export default function OnbetaaldeFactuurMelding() {
       <div className="fixed inset-0 z-50 bg-black/20 backdrop-blur-sm" onClick={sluit} />
 
       {/* Panel */}
-      <div className="fixed bottom-6 right-6 z-50 w-[420px] max-h-[80vh] bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col overflow-hidden">
+      <div className="fixed bottom-6 right-6 z-50 w-[min(420px,calc(100vw-48px))] max-h-[80vh] bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 bg-amber-50">
           <div className="flex items-center gap-3">
