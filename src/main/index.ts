@@ -674,21 +674,23 @@ function setupIpcHandlers() {
       const kortingBedrag = (subtotaal * ((data.kortingPercentage as number) ?? 0)) / 100
       subtotaal -= kortingBedrag
 
-      await prisma.factuurRegel.deleteMany({ where: { factuurId: id } })
-
-      return prisma.factuur.update({
-        where: { id },
-        data: {
-          ...data,
-          subtotaal,
-          btwBedrag,
-          kortingBedrag,
-          totaal: subtotaal + btwBedrag,
-          datum: data.datum ? new Date(data.datum as string) : undefined,
-          vervaldatum: data.vervaldatum ? new Date(data.vervaldatum as string) : undefined,
-          regels: { create: berekendeRegels as Parameters<typeof prisma.factuurRegel.create>[0]['data'][] }
-        },
-        include: { klant: true, regels: { orderBy: { volgorde: 'asc' } } }
+      // Transaction: delete old regels and update factuur atomically to prevent orphaned factuur
+      return prisma.$transaction(async (tx) => {
+        await tx.factuurRegel.deleteMany({ where: { factuurId: id } })
+        return tx.factuur.update({
+          where: { id },
+          data: {
+            ...data,
+            subtotaal,
+            btwBedrag,
+            kortingBedrag,
+            totaal: subtotaal + btwBedrag,
+            datum: data.datum ? new Date(data.datum as string) : undefined,
+            vervaldatum: data.vervaldatum ? new Date(data.vervaldatum as string) : undefined,
+            regels: { create: berekendeRegels as Parameters<typeof prisma.factuurRegel.create>[0]['data'][] }
+          },
+          include: { klant: true, regels: { orderBy: { volgorde: 'asc' } } }
+        })
       })
     }
 
@@ -1087,11 +1089,14 @@ function setupIpcHandlers() {
   })
 
   // Uren
+  const mapUur = (r: Record<string, unknown>) => ({ ...r, duurMinuten: (r.duur as number | null) ?? 0 })
+
   ipcMain.handle('uren:list', async (_, params?: { gefactureerd?: boolean }) => {
-    return prisma.uurregistratie.findMany({
+    const records = await prisma.uurregistratie.findMany({
       where: params?.gefactureerd !== undefined ? { gefactureerd: params.gefactureerd } : {},
       orderBy: { startTijd: 'desc' }
     })
+    return records.map(mapUur)
   })
 
   ipcMain.handle('uren:create', async (_, data: Record<string, unknown>) => {
@@ -1099,16 +1104,28 @@ function setupIpcHandlers() {
     if (data.startTijd && data.eindTijd) {
       duur = Math.floor((new Date(data.eindTijd as string).getTime() - new Date(data.startTijd as string).getTime()) / 60000)
     }
-    return prisma.uurregistratie.create({
-      data: { ...data, startTijd: new Date(data.startTijd as string), eindTijd: data.eindTijd ? new Date(data.eindTijd as string) : null, duur } as Parameters<typeof prisma.uurregistratie.create>[0]['data']
+    // Strip frontend-only duurMinuten; backend owns the duur calculation
+    const { duurMinuten: _dm, ...cleanData } = data as Record<string, unknown> & { duurMinuten?: unknown }
+    void _dm
+    const record = await prisma.uurregistratie.create({
+      data: { ...cleanData, startTijd: new Date(cleanData.startTijd as string), eindTijd: cleanData.eindTijd ? new Date(cleanData.eindTijd as string) : null, duur } as Parameters<typeof prisma.uurregistratie.create>[0]['data']
     })
+    return mapUur(record as unknown as Record<string, unknown>)
   })
 
   ipcMain.handle('uren:update', async (_, id: string, data: Record<string, unknown>) => {
-    return prisma.uurregistratie.update({
+    // Recalculate duur when start/end times change
+    let duur: number | undefined
+    if (data.startTijd && data.eindTijd) {
+      duur = Math.floor((new Date(data.eindTijd as string).getTime() - new Date(data.startTijd as string).getTime()) / 60000)
+    }
+    const { duurMinuten: _dm, ...cleanData } = data as Record<string, unknown> & { duurMinuten?: unknown }
+    void _dm
+    const record = await prisma.uurregistratie.update({
       where: { id },
-      data: { ...data, startTijd: data.startTijd ? new Date(data.startTijd as string) : undefined, eindTijd: data.eindTijd ? new Date(data.eindTijd as string) : null } as Parameters<typeof prisma.uurregistratie.update>[0]['data']
+      data: { ...cleanData, startTijd: cleanData.startTijd ? new Date(cleanData.startTijd as string) : undefined, eindTijd: cleanData.eindTijd ? new Date(cleanData.eindTijd as string) : null, ...(duur !== undefined ? { duur } : {}) } as Parameters<typeof prisma.uurregistratie.update>[0]['data']
     })
+    return mapUur(record as unknown as Record<string, unknown>)
   })
 
   ipcMain.handle('uren:delete', async (_, id: string) => {
@@ -1686,8 +1703,8 @@ function setupIpcHandlers() {
     }
 
     const headers = regels[0] ? parseerCsvRij(regels[0]) : []
-    const preview = regels.slice(1, 6).map(r => parseerCsvRij(r))
     const alleRijen = regels.slice(1).map(r => parseerCsvRij(r)).filter(r => r.some(v => v))
+    const preview = alleRijen.slice(0, 5)
     return { headers, preview, alleRijen }
   })
 
