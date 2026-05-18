@@ -49,6 +49,7 @@ interface CsvRij {
   klantAdres?: string;
   isNieuweKlant?: boolean;
   nieuweKlantAanmaken?: boolean;
+  geextraheerdRegels?: Array<{ omschrijving: string; bedrag: number; aantal: number; totaal: number }>;
 }
 
 function vandaagString() {
@@ -354,6 +355,7 @@ export default function FactuurImportHistorischPage() {
           notities: resultaat.notities ?? "",
           isNieuweKlant: !!klantNaam && !gevondenKlant,
           nieuweKlantAanmaken: !!klantNaam && !gevondenKlant,
+          geextraheerdRegels: ('regels' in resultaat && Array.isArray(resultaat.regels)) ? resultaat.regels : undefined,
         } : r));
       } catch (e: unknown) {
         setPdfRijen(prev => prev.map(r => r._id === rij._id ? {
@@ -425,13 +427,24 @@ export default function FactuurImportHistorischPage() {
         const btw = parseFloat(rij.btwBedrag) || 0;
         const sub = parseFloat(rij.subtotaal) || (totaal - btw);
 
+        const importRegels = rij.geextraheerdRegels && rij.geextraheerdRegels.length > 0
+          ? rij.geextraheerdRegels.map(gr => ({
+              omschrijving: gr.omschrijving,
+              aantal: gr.aantal,
+              prijs: gr.bedrag,
+              btwPercentage: 0,
+              kortingPercentage: 0,
+              totaal: gr.totaal,
+            }))
+          : [{ omschrijving: `Factuur ${rij.nummer}`, aantal: 1, prijs: sub, btwPercentage: sub > 0 ? (btw / sub) * 100 : 0, kortingPercentage: 0, totaal }];
+
         await importFn({
           nummer: rij.nummer, klantId: effectiefKlantId,
           datum: rij.datum, vervaldatum: rij.vervaldatum, status: rij.status,
           subtotaal: sub, btwBedrag: btw, totaal, handmatigBedrag: true,
           notities: rij.notities || undefined,
           betaaldOp: rij.status === "BETAALD" ? rij.datum : undefined,
-          regels: [{ omschrijving: `Factuur ${rij.nummer}`, aantal: 1, prijs: sub, btwPercentage: sub > 0 ? (btw / sub) * 100 : 0, kortingPercentage: 0, totaal }],
+          regels: importRegels,
         });
         succesCount++;
       } catch (e: unknown) {

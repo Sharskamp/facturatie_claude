@@ -13,6 +13,13 @@ import { BrowserWindow } from 'electron'
 
 const execAsync = promisify(exec)
 
+export interface OcrRegel {
+  omschrijving: string
+  bedrag: number
+  aantal: number
+  totaal: number
+}
+
 export interface OcrVelden {
   nummer?: string | null
   klantNaam?: string | null
@@ -26,6 +33,7 @@ export interface OcrVelden {
   status?: string | null
   notities?: string | null
   omschrijving?: string | null
+  regels?: OcrRegel[]
   error?: string
 }
 
@@ -161,11 +169,11 @@ export async function pdfPaginaNaarPng(pad: string, paginaIndex = 0): Promise<Bu
 }
 
 // ── Factuurvelden extraheren uit OCR-tekst ────────────────────────────────────
-export function extraheerFactuurVelden(tekst: string): Omit<OcrVelden, 'error'> {
+export function extraheerFactuurVelden(tekst: string, eigenBedrijfsnaam?: string): Omit<OcrVelden, 'error'> {
   const regels = tekst.split('\n').map(r => r.trim()).filter(Boolean)
   const alles = tekst.replace(/\n/g, ' ')
 
-  // ── Hulpfuncties ────────────────────────────────────────────────────────────
+  // ── Hulpfuncties ─────────────────────────────────────────────────────────────
 
   function parseerBedrag(s: string): number | null {
     const schoon = s.replace(/\s/g, '').replace(/[€$£]/g, '')
@@ -175,6 +183,11 @@ export function extraheerFactuurVelden(tekst: string): Omit<OcrVelden, 'error'> 
       return parseFloat(schoon.replace(/,/g, ''))
     const n = parseFloat(schoon.replace(',', '.'))
     return isNaN(n) ? null : n
+  }
+
+  function eersteBedragIn(r: string): number | null {
+    const m = r.match(/[€$]?\s*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|\d+[.,]\d{2})/)
+    return m ? parseerBedrag(m[1]) : null
   }
 
   const MAANDEN: Record<string, string> = {
@@ -195,173 +208,208 @@ export function extraheerFactuurVelden(tekst: string): Omit<OcrVelden, 'error'> 
     }
     return null
   }
-
-  const DATUM_PATRONEN = [
-    /\b(\d{4}-\d{2}-\d{2})\b/,
-    /\b(\d{1,2}[-/.]\d{1,2}[-/.]\d{4})\b/,
-    /\b(\d{1,2}\s+[a-zA-Zà-ü]{3,9}\.?\s+\d{4})\b/i,
-  ]
   function vindDatumInRegel(r: string): string | null {
-    for (const pat of DATUM_PATRONEN) {
+    for (const pat of [/\b(\d{4}-\d{2}-\d{2})\b/, /\b(\d{1,2}[-/.]\d{1,2}[-/.]\d{4})\b/, /\b(\d{1,2}\s+[a-zA-Zà-ü]{3,9}\.?\s+\d{4})\b/i]) {
       const m = r.match(pat)
       if (m) { const d = normaliseerDatum(m[1]); if (d) return d }
     }
     return null
   }
 
-  // ── KOR / BTW-vrijstelling detecteren ───────────────────────────────────────
-  const korActief = /\b(?:kor|kleineondernemersregeling|vrijgesteld\s+van\s+btw|niet\s+btw.?plichtig|btw\s+niet\s+van\s+toepassing|article\s+25|art\.?\s*25|reverse\s+charge|btw\s+verlegd)\b/i.test(alles)
+  // ── KOR / BTW-vrijstelling ───────────────────────────────────────────────────
+  const korActief = /\b(?:kor|kleineondernemersregeling|vrijgesteld\s+van\s+btw|niet\s+btw.?plichtig|btw\s+niet\s+van\s+toepassing|art\.?\s*25|reverse\s+charge|btw\s+verlegd)\b/i.test(alles)
 
-  // ── Factuurnummer ────────────────────────────────────────────────────────────
+  // ── Factuurnummer ─────────────────────────────────────────────────────────────
   const nummerMatch = alles.match(
-    /(?:factuur(?:nummer)?|invoice(?:\s*no\.?)?|inv\.?\s*nr\.?|rekening(?:nummer)?)\s*[:#]?\s*([A-Z0-9][-A-Z0-9/_.]{1,20})/i
+    /(?:factuur(?:nummer)?|invoice(?:\s*no\.?)?|inv\.?\s*nr\.?|rekening(?:nummer)?)\s*[:#]?\s*([A-Z0-9][-A-Z0-9/_.]{2,20})/i
   )
   const nummer = nummerMatch?.[1]?.trim() ?? null
 
-  // ── Bedragen ─────────────────────────────────────────────────────────────────
-  const bedragRgx = /[€$]?\s*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|\d+[.,]\d{2})/g
-  const gevondenBedragen: number[] = []
-  let m: RegExpExecArray | null
-  while ((m = bedragRgx.exec(alles)) !== null) {
-    const n = parseerBedrag(m[1])
-    if (n !== null && n >= 0.01 && n < 999_999) gevondenBedragen.push(n)
-  }
-  const uniekeBedragen = [...new Set(gevondenBedragen)].sort((a, b) => b - a)
+  // ── Datums ────────────────────────────────────────────────────────────────────
+  let datum: string | null = null
+  let vervaldatum: string | null = null
 
-  // Totaal: zoek expliciet "totaal"-label, anders grootste bedrag
+  for (const r of regels) {
+    if (/verval|due\s*date|betaal.*voor|uiterlijk|payment\s*due/i.test(r)) {
+      const d = vindDatumInRegel(r); if (d) vervaldatum = d
+    }
+  }
+  for (const r of regels) {
+    if (/factuur(?:datum)?|invoice\s*date|datum|bill\s*date/i.test(r)) {
+      const d = vindDatumInRegel(r); if (d && d !== vervaldatum) { datum = d; break }
+    }
+  }
+  // Fallback: eerste datum in document die nog niet is gebruikt
+  if (!datum) {
+    for (const r of regels) {
+      const d = vindDatumInRegel(r)
+      if (d && d !== vervaldatum) { datum = d; break }
+    }
+  }
+
+  // ── E-mail ────────────────────────────────────────────────────────────────────
+  const emailMatch = alles.match(/\b([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b/)
+  const klantEmail = emailMatch?.[1] ?? null
+
+  // ── Klantnaam ─────────────────────────────────────────────────────────────────
+  // Strategie voor dit factuurformaat (Streamline Coaching):
+  //   - Klantnaam staat linksboven VOOR de "Factuur" kop
+  //   - Eigen bedrijfsnaam staat rechtsboven (met adres, telefoon, email etc.)
+  //   - Klantnaam kan gevolgd worden door bijzetting tussen haakjes op volgende regel
+  let klantNaam: string | null = null
+
+  // 1. Gelabelde klant-regel
+  const gelabeldeKlantRegel = regels.find(r =>
+    /^(?:klant|aan|t\.?\s*a\.?\s*v\.?|bill\s+to|invoice\s+to|geleverd\s+aan|sold\s+to|ontvanger|recipient)[:\s]/i.test(r)
+  )
+  if (gelabeldeKlantRegel) {
+    klantNaam = gelabeldeKlantRegel.replace(/^[^:]+:\s*/i, '').trim() || null
+  }
+
+  // 2. Blok vóór de "Factuur" kop:
+  //    zoek regels die er als persoons- of bedrijfsnaam uitzien, exclusief eigen bedrijf
+  if (!klantNaam) {
+    const factuurKopIdx = regels.findIndex(r => /^factuur\b/i.test(r))
+    const headerRegels = factuurKopIdx > 0 ? regels.slice(0, factuurKopIdx) : regels.slice(0, 8)
+
+    // Filter regels die duidelijk geen naam zijn (adres, contactinfo, KvK, IBAN, eigen bedrijf)
+    const GEEN_NAAM = /^\d{4}\s?[A-Z]{2}\b|^[+]?[(]?\d{2,}|^(www\.|http|kvk|iban|tel|fax|rekeningnr|btw-nr)/i
+    const kandidaten = headerRegels.filter(r =>
+      r.length >= 2 && r.length <= 60 &&
+      !GEEN_NAAM.test(r) &&
+      !/^\d[\d\s.,€-]*$/.test(r) &&
+      !/^(streamline|factuur|invoice|omschrijving|bedrag|aantal|totaal)/i.test(r) &&
+      !(eigenBedrijfsnaam && r.toLowerCase().includes(eigenBedrijfsnaam.toLowerCase()))
+    )
+
+    if (kandidaten.length > 0) {
+      // Eerste kandidaat is de naam, optioneel gevolgd door bijzetting (bijv. "(Dyon)")
+      let naam = kandidaten[0]
+      const volgende = kandidaten[1]
+      if (volgende && /^\(.*\)$/.test(volgende)) naam += ` ${volgende}`
+      klantNaam = naam
+    }
+  }
+
+  // 3. Bedrijfsnaam met rechtsvorm
+  if (!klantNaam) {
+    const rechtsvormen = /\b(?:b\.?v\.?|n\.?v\.?|v\.?o\.?f\.?|bvba|gmbh|inc\.?|ltd\.?|llc|holding|groep|group)\b/i
+    klantNaam = regels.find(r =>
+      rechtsvormen.test(r) && r.length >= 3 && r.length <= 60 &&
+      !/factuur|invoice|btw|kvk|iban|datum/i.test(r)
+    ) ?? null
+  }
+
+  // ── Artikelregels ──────────────────────────────────────────────────────────────
+  // Zoek de tabel: koptekst "Omschrijving ... Bedrag ... Aantal ... Totaal"
+  // en lees alle rijen tot "Totaal te voldoen" / "Totaal"
+  const geextraheerdRegels: OcrRegel[] = []
+
+  const tabelHeaderIdx = regels.findIndex(r =>
+    /omschrijving/i.test(r) && /bedrag|prijs/i.test(r) && /totaal/i.test(r)
+  )
+  const tabelFooterIdx = regels.findIndex(r =>
+    /\btotaal\s+te\s+voldoen\b|\bgrand\s+total\b|\bte\s+betalen\b/i.test(r)
+  )
+
+  if (tabelHeaderIdx >= 0) {
+    const start = tabelHeaderIdx + 1
+    const einde = tabelFooterIdx > tabelHeaderIdx ? tabelFooterIdx : regels.length
+
+    for (let i = start; i < einde; i++) {
+      const r = regels[i]
+      // Sla lege regels en puur-€-lege regels over ("€ - € -")
+      if (!r || /^[€\s\-]+$/.test(r)) continue
+      // Sla koptekst-achtige regels over
+      if (/^(?:btw|vat|subtotaal|korting|discount|verzend|shipping)/i.test(r)) continue
+
+      // Patroon voor een artikelregel:
+      // "<omschrijving> [€] <bedrag> <aantal> [€] <totaal>"
+      // Bedrag en totaal zijn getallen, aantal is een heel getal
+      const artikelMatch = r.match(
+        /^(.+?)\s+[€$]?\s*(\d[\d.,]+)\s+(\d+(?:[.,]\d+)?)\s+[€$]?\s*(\d[\d.,]+)\s*$/
+      )
+      if (artikelMatch) {
+        const omschr = artikelMatch[1].trim()
+        const bedrag = parseerBedrag(artikelMatch[2])
+        const aantal = parseFloat(artikelMatch[3].replace(',', '.'))
+        const regelTotaal = parseerBedrag(artikelMatch[4])
+        if (omschr.length >= 2 && bedrag !== null && regelTotaal !== null) {
+          geextraheerdRegels.push({ omschrijving: omschr, bedrag, aantal: aantal || 1, totaal: regelTotaal })
+        }
+        continue
+      }
+
+      // Simpler: regel met tekst + één bedrag achteraan (geen apart aantal)
+      const enkelvoudigMatch = r.match(/^(.+?)\s+[€$]?\s*(\d[\d.,]+)\s*$/)
+      if (enkelvoudigMatch) {
+        const omschr = enkelvoudigMatch[1].trim()
+        const bedrag = parseerBedrag(enkelvoudigMatch[2])
+        if (omschr.length >= 2 && bedrag !== null && bedrag >= 0.01 &&
+            !/^(aantal|omschrijving|bedrag|totaal)/i.test(omschr)) {
+          geextraheerdRegels.push({ omschrijving: omschr, bedrag, aantal: 1, totaal: bedrag })
+        }
+      }
+    }
+  }
+
+  // ── Totaalbedrag ────────────────────────────────────────────────────────────
   let totaal: number | null = null
   const totaalRegel = regels.find(r =>
-    /\b(?:totaal|total|te\s+betalen|amount\s+due|grand\s+total)\b/i.test(r) &&
-    !/subtotaal|excl/i.test(r)
+    /\b(?:totaal\s+te\s+voldoen|grand\s+total|te\s+betalen|amount\s+due)\b/i.test(r)
+  ) ?? regels.find(r =>
+    /\btotaal\b/i.test(r) && !/subtotaal|excl/i.test(r) && /\d/.test(r)
   )
-  if (totaalRegel) {
-    const tm = totaalRegel.match(/(\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|\d+[.,]\d{2})/)
-    if (tm) totaal = parseerBedrag(tm[1])
-  }
-  if (totaal === null) totaal = uniekeBedragen[0] ?? null
+  if (totaalRegel) totaal = eersteBedragIn(totaalRegel.replace(/.*totaal[^€\d]*/i, ''))
 
-  // BTW
+  // Fallback: som van artikelregels, of grootste bedrag
+  if (totaal === null && geextraheerdRegels.length > 0) {
+    totaal = Math.round(geextraheerdRegels.reduce((s, r2) => s + r2.totaal, 0) * 100) / 100
+  }
+  if (totaal === null) {
+    const gevondenBedragen: number[] = []
+    let m: RegExpExecArray | null
+    const bedragRgx = /[€$]?\s*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|\d+[.,]\d{2})/g
+    while ((m = bedragRgx.exec(alles)) !== null) {
+      const n = parseerBedrag(m[1])
+      if (n !== null && n >= 0.01 && n < 999_999) gevondenBedragen.push(n)
+    }
+    totaal = [...new Set(gevondenBedragen)].sort((a, b) => b - a)[0] ?? null
+  }
+
+  // ── BTW ────────────────────────────────────────────────────────────────────
   let btwBedrag: number | null = null
   let subtotaal: number | null = null
 
   if (korActief) {
-    // KOR: geen BTW
     btwBedrag = 0
     subtotaal = totaal
   } else {
     const btwRegel = regels.find(r =>
       /\b(?:btw|omzetbelasting|vat|tax)\b.*\d/i.test(r) && !/excl|exclu/i.test(r)
     )
-    if (btwRegel) {
-      const bm = btwRegel.match(/(\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|\d+[.,]\d{2})/)
-      if (bm) btwBedrag = parseerBedrag(bm[1])
-    }
+    if (btwRegel) btwBedrag = eersteBedragIn(btwRegel)
     const subRegel = regels.find(r =>
-      /\b(?:subtotaal|sub(?:total)?|excl(?:\.|usief)?\.?\s*btw|netto(?:bedrag)?)\b.*\d/i.test(r)
+      /\b(?:subtotaal|excl(?:\.|usief)?\.?\s*btw|netto(?:bedrag)?)\b.*\d/i.test(r)
     )
-    if (subRegel) {
-      const sm = subRegel.match(/(\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|\d+[.,]\d{2})/)
-      if (sm) subtotaal = parseerBedrag(sm[1])
-    }
-    // Bereken ontbrekende waarde
-    if (totaal !== null && btwBedrag !== null && subtotaal === null) {
+    if (subRegel) subtotaal = eersteBedragIn(subRegel)
+    if (totaal !== null && btwBedrag !== null && subtotaal === null)
       subtotaal = Math.round((totaal - btwBedrag) * 100) / 100
-    } else if (totaal !== null && subtotaal !== null && btwBedrag === null) {
+    else if (totaal !== null && subtotaal !== null && btwBedrag === null)
       btwBedrag = Math.round((totaal - subtotaal) * 100) / 100
-    } else if (totaal !== null && btwBedrag === null && subtotaal === null) {
-      // Controleer of totaal ≈ subtotaal (geen BTW): verschil < 0.01
-      // Anders schat op 21%
+    else if (totaal !== null && btwBedrag === null && subtotaal === null) {
       subtotaal = Math.round((totaal / 1.21) * 100) / 100
       btwBedrag = Math.round((totaal - subtotaal) * 100) / 100
     }
-    // Als BTW = 0 maar KOR niet expliciet: zet toch op 0
-    if (btwBedrag !== null && btwBedrag === 0) subtotaal = totaal
+    if (btwBedrag === 0) subtotaal = totaal
   }
 
-  // ── Datum en vervaldatum ─────────────────────────────────────────────────────
-  let datum: string | null = null
-  let vervaldatum: string | null = null
-
-  const vervalRegel = regels.find(r =>
-    /verval|due\s*date|betaal.*voor|uiterlijk|payment\s*due/i.test(r)
-  )
-  if (vervalRegel) vervaldatum = vindDatumInRegel(vervalRegel)
-
-  const datumRegel = regels.find(r =>
-    /factuur(?:datum)?|invoice\s*date|datum\s*(?:van\s*)?(?:factuur|rekening)|bill\s*date/i.test(r)
-  )
-  const zoekIn = datumRegel ? [datumRegel, ...regels] : regels
-  for (const regel of zoekIn) {
-    const d = vindDatumInRegel(regel)
-    if (d && d !== vervaldatum) { datum = d; break }
-  }
-
-  // ── E-mail ───────────────────────────────────────────────────────────────────
-  const emailMatch = alles.match(/\b([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b/)
-  const klantEmail = emailMatch?.[1] ?? null
-
-  // ── Klantnaam / Leverancier ──────────────────────────────────────────────────
-  // Volgorde:
-  // 1. Gelabelde klant-regel ("Aan:", "Klant:", "Bill to:", "Geleverd aan:")
-  // 2. Bedrijfsnaam met rechtsvorm (BV, NV, VOF, Inc, Ltd, GmbH)
-  // 3. Eerste zinvolle niet-numerieke bovenregel (kassabon)
-
-  let klantNaam: string | null = null
-
-  // 1. Gelabeld
-  const gelabeldeKlantRegel = regels.find(r =>
-    /^(?:klant|aan|t\.?\s*a\.?\s*v\.?|bill\s+to|invoice\s+to|geleverd\s+aan|sold\s+to|ontvanger|recipient|besteld\s+door)[:\s]/i.test(r)
-  )
-  if (gelabeldeKlantRegel) {
-    klantNaam = gelabeldeKlantRegel.replace(/^[^:]+:\s*/i, '').trim() || null
-  }
-
-  // 2. Bedrijfsnaam met rechtsvorm ergens in document
-  if (!klantNaam) {
-    const rechtsvormen = /\b(?:b\.?v\.?|n\.?v\.?|v\.?o\.?f\.?|bvba|gmbh|inc\.?|ltd\.?|llc|s\.?a\.?r\.?l\.?|eenmanszaak|holding|groep|group)\b/i
-    const bedrijfsRegel = regels.find(r =>
-      rechtsvormen.test(r) && r.length >= 3 && r.length <= 60 &&
-      !/factuur|invoice|btw|vat|kvk|iban|datum|nummer/i.test(r)
-    )
-    if (bedrijfsRegel) klantNaam = bedrijfsRegel.trim()
-  }
-
-  // 3. Eerste zinvolle regel (kassabon fallback)
-  if (!klantNaam) {
-    klantNaam = regels.find(r =>
-      r.length >= 2 && r.length <= 60 &&
-      !/^\d[\d\s.,€*-]*$/.test(r) &&
-      !/^\d{4}\s?[A-Z]{2}\b/.test(r) &&
-      !/^[+]?[(]?[0-9]{2,}[)]?[-\s.]/.test(r) &&
-      !/^(www\.|http)/i.test(r) &&
-      !/^(btw|vat|tax|kvk|iban|subtotaal|totaal|bedrag|datum|factuur|invoice|nummer|nr\.)/i.test(r)
-    ) ?? null
-  }
-
-  // ── Artikelregels / omschrijving ────────────────────────────────────────────
-  // Herken inhoudsregels: tekst gevolgd door een bedrag, maar geen kop/voet/totaal-regels
-  const SKIP_PATRONEN = /^(?:btw|vat|tax|omzetbelasting|subtotaal|totaal|total|te\s+betalen|amount\s+due|korting|discount|verzend|shipping|porto|aanbetaling|deposit|iban|kvk|datum|factuur|invoice|aan|klant|bill\s+to|tel\.|fax|www\.|http|pagina|page)/i
-  const BEDRAG_ACHTERAAN = /[€$]?\s*\d{1,3}(?:[.,]\d{3})*[.,]\d{2}\s*$/
-
-  const artikelRegels: string[] = []
-  for (const regel of regels) {
-    // Sla koptekst (eerste 3 en laatste 5 regels) over
-    const idx = regels.indexOf(regel)
-    if (idx < 3 || idx >= regels.length - 5) continue
-    if (SKIP_PATRONEN.test(regel)) continue
-    if (BEDRAG_ACHTERAAN.test(regel) && regel.length > 5) {
-      // Haal bedrag weg aan het einde → omschrijving
-      const omschr = regel.replace(/[€$]?\s*\d{1,3}(?:[.,]\d{3})*[.,]\d{2}\s*$/, '').trim()
-      if (omschr.length >= 3 && !/^\d+$/.test(omschr)) artikelRegels.push(omschr)
-    }
-  }
-
-  // Omschrijving samenstellen
+  // ── Omschrijving ───────────────────────────────────────────────────────────
   let omschrijving: string | null = null
-  if (artikelRegels.length > 0) {
-    // Meerdere regels: combineer, max 5 voor leesbaarheid
-    omschrijving = artikelRegels.slice(0, 5).join('; ')
-    if (artikelRegels.length > 5) omschrijving += ` (+${artikelRegels.length - 5} meer)`
+  if (geextraheerdRegels.length > 0) {
+    const beschrijvingen = geextraheerdRegels.map(r => r.omschrijving)
+    omschrijving = beschrijvingen.slice(0, 5).join('; ')
+    if (beschrijvingen.length > 5) omschrijving += ` (+${beschrijvingen.length - 5} meer)`
   } else if (klantNaam && datum) {
     omschrijving = `${klantNaam} – ${datum}`
   } else if (klantNaam) {
@@ -381,6 +429,7 @@ export function extraheerFactuurVelden(tekst: string): Omit<OcrVelden, 'error'> 
     status: 'BETAALD',
     notities: korActief ? 'KOR – geen BTW' : null,
     omschrijving,
+    regels: geextraheerdRegels.length > 0 ? geextraheerdRegels : undefined,
   }
 }
 
