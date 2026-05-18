@@ -397,7 +397,7 @@ export default function UitgavenPagina() {
                   scanEngine === "lokaal" ? "bg-white shadow text-gray-800 border border-gray-200" : "text-indigo-500 hover:text-indigo-700"
                 }`}
               >
-                <Cpu className="h-3 w-3" />Lokaal (NPU)
+                <Cpu className="h-3 w-3" />Lokaal
               </button>
               <button
                 onClick={() => setScanEngine("ai")}
@@ -782,7 +782,7 @@ export default function UitgavenPagina() {
                           scanEngine === "lokaal" ? "bg-white shadow text-gray-800" : "text-gray-500"
                         }`}
                       >
-                        <Cpu className="h-3 w-3" />Lokaal (NPU)
+                        <Cpu className="h-3 w-3" />Lokaal
                       </button>
                       <button
                         type="button"

@@ -2234,10 +2234,11 @@ function setupIpcHandlers() {
   ipcMain.handle('uitgaven:scanBon', async (_, { bonPad, lokaal }: { bonPad: string; lokaal?: boolean }) => {
     const user = await prisma.user.findFirst()
     const model = user?.aiModel ?? 'claude'
+    const eigenBedrijfsnaam = user?.bedrijfsnaam ?? undefined
 
     // Lokale OCR pad (geen API nodig)
     if (lokaal) {
-      const result = await scanBestandLokaal(bonPad)
+      const result = await scanBestandLokaal(bonPad, { eigenBedrijfsnaam })
       if (result.error) return result
       return {
         bedrag: result.totaal ?? null,
@@ -2250,7 +2251,7 @@ function setupIpcHandlers() {
     const ext = bonPad.split('.').pop()?.toLowerCase() ?? ''
     // PDF nu ook ondersteunen via lokale OCR als fallback
     if (ext === 'pdf') {
-      const result = await scanBestandLokaal(bonPad)
+      const result = await scanBestandLokaal(bonPad, { eigenBedrijfsnaam })
       if (result.error) return result
       return {
         bedrag: result.totaal ?? null,
@@ -2439,7 +2440,8 @@ Gebruik null voor velden die je niet kunt vinden. Retourneer ALLEEN JSON.`
 
   // ── Factuur/bon scannen zonder cloud AI (lokale OCR) ──
   ipcMain.handle('facturen:scanPdfLokaal', async (_, { pad }: { pad: string }) => {
-    return scanBestandLokaal(pad)
+    const user = await prisma.user.findFirst()
+    return scanBestandLokaal(pad, { eigenBedrijfsnaam: user?.bedrijfsnaam ?? undefined })
   })
 
   // ── Vaste Activa ──

@@ -10,12 +10,30 @@ files:
   - out/**/*
   - prisma/migrations/**/*
   - "!node_modules/**/*"
+  # OCR-runtime en image-processing: nodig in productie (worden via require() geladen)
+  - "node_modules/ppu-paddle-ocr/**/*"
+  - "node_modules/ppu-ocv/**/*"
+  - "node_modules/onnxruntime-node/**/*"
+  - "node_modules/onnxruntime-common/**/*"
+  - "node_modules/@napi-rs/canvas/**/*"
+  - "node_modules/@napi-rs/canvas-*/**/*"
+  - "node_modules/@techstark/opencv-js/**/*"
+
+asarUnpack:
+  # Native .node binaries en grote ONNX runtime libs moeten buiten asar staan
+  - "node_modules/onnxruntime-node/**/*"
+  - "node_modules/@napi-rs/canvas/**/*"
+  - "node_modules/@napi-rs/canvas-*/**/*"
 
 extraResources:
   - from: prisma/migrations
     to: migrations
   - from: prisma/schema.prisma
     to: schema.prisma
+  - from: resources/paddleocr
+    to: paddleocr
+    filter:
+      - "**/*"
 
 win:
   target:
@@ -23,6 +41,14 @@ win:
       arch:
         - x64
   icon: build/icon.ico
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  category: public.app-category.business
 
 nsis:
   oneClick: false

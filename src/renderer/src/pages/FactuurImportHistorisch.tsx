@@ -852,7 +852,7 @@ export default function FactuurImportHistorischPage() {
                 }`}
               >
                 <Cpu className="h-4 w-4" />
-                Lokaal (NPU/Tesseract)
+                Lokaal (PaddleOCR)
               </button>
               <button
                 onClick={() => setScanEngine("ai")}
@@ -878,7 +878,7 @@ export default function FactuurImportHistorischPage() {
                 {scanEngine === "lokaal" ? (
                   <>
                     <p className="font-semibold">Lokale OCR — geen internet nodig</p>
-                    <p className="mt-0.5 opacity-80">Op Windows wordt Windows.Media.Ocr gebruikt (hardware-versneld via NPU/GPU). Op andere systemen valt het terug op Tesseract. Eerste gebruik downloadt taalbestanden (~10 MB).</p>
+                    <p className="mt-0.5 opacity-80">PaddleOCR draait volledig lokaal via ONNX Runtime, ondersteunt Nederlands en herkent tabellen in facturen en bonnen. Werkt op Windows en Mac. Eerste scan duurt ~2-3s (model laden), daarna &lt;1s per pagina.</p>
                   </>
                 ) : (
                   <>
