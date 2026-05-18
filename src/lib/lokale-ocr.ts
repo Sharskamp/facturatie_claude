@@ -11,7 +11,6 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { BrowserWindow } from 'electron'
-import Tesseract from 'tesseract.js'
 
 const execAsync = promisify(exec)
 
@@ -94,12 +93,22 @@ async function ocrViaWindowsMediaOcr(imagePad: string): Promise<string> {
   }
 }
 
-// ── Tesseract.js fallback (v4, CJS-compatible) ───────────────────────────────
+// ── Tesseract.js fallback (v4, lazy require) ─────────────────────────────────
+// Lazy geladen zodat de app niet crasht als tesseract.js niet is geïnstalleerd.
 async function ocrViaTesseract(imagePad: string): Promise<string> {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  let Tesseract: typeof import('tesseract.js')
+  try {
+    Tesseract = require('tesseract.js')
+  } catch {
+    throw new Error(
+      'Tesseract.js niet gevonden. Voer "npm install" uit in de projectmap en herstart de app.'
+    )
+  }
+
   const cacheDir = path.join(os.homedir(), '.streamline-facturatie', 'tessdata')
   if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true })
 
-  // v4 API: createWorker(taal, oem, opties)
   const worker = await Tesseract.createWorker('nld+eng', 1, {
     cachePath: cacheDir,
     gzip: false,
