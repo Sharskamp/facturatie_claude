@@ -28,6 +28,7 @@ interface ElectronAPI {
     maakTermijnFacturen: () => Promise<unknown>
     maakCreditnota: (id: string) => Promise<string>
     stuurHerinneringen: () => Promise<unknown>
+    stuurHerinnering: (id: string) => Promise<{ succes: boolean }>
   }
   offertes: {
     list: (params?: { status?: string }) => Promise<unknown[]>
@@ -149,6 +150,21 @@ interface ElectronAPI {
     onGedownload: (cb: () => void) => void
     verwijderListeners: () => void
     installeer: () => Promise<void>
+  }
+  factuurSjablonen: {
+    list: () => Promise<unknown[]>
+    create: (data: unknown) => Promise<unknown>
+    delete: (id: string) => Promise<{ succes: boolean }>
+  }
+  documenten: {
+    list: (params: { type: string; referentieId: string }) => Promise<unknown[]>
+    upload: (params: { type: string; referentieId: string }) => Promise<{ succes: boolean; id?: string }>
+    open: (id: string) => Promise<{ succes: boolean }>
+    delete: (id: string) => Promise<{ succes: boolean }>
+  }
+  bank2: {
+    onNieuwBestand: (cb: (data: { pad: string; naam: string }) => void) => void
+    verwijderListeners: () => void
   }
 }
 

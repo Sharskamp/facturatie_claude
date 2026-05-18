@@ -5,6 +5,9 @@ import {
   Loader2,
   ChevronDown,
   ChevronUp,
+  BookmarkPlus,
+  Trash2,
+  BookOpen,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -18,6 +21,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Modal,
+  ModalContent,
+  ModalHeader,
+  ModalFooter,
+  ModalTitle,
+} from "@/components/ui/modal";
 import { FactuurRegelTabel, type Regel } from "@/components/facturen/FactuurRegelTabel";
 import { FactuurTotalenSidebar } from "@/components/facturen/FactuurTotalenSidebar";
 
@@ -107,6 +117,86 @@ export default function FactuurBewerkenPage() {
 
   // Factuurtaal
   const [taal, setTaal] = useState<"nl" | "en">("nl");
+
+  // Sjablonen
+  const [sjablonen, setSjablonen] = useState<Array<{
+    id: string;
+    naam: string;
+    regels: string;
+    notities?: string | null;
+    betalingsCondities?: string | null;
+    btwVerlegd: boolean;
+  }>>([]);
+  const [sjabloonNaam, setSjabloonNaam] = useState("");
+  const [sjabloonModalOpen, setSjabloonModalOpen] = useState(false);
+  const [sjabloonLaden, setSjabloonLaden] = useState(false);
+
+  useEffect(() => {
+    window.api.factuurSjablonen.list().then((data) => {
+      setSjablonen(data as typeof sjablonen);
+    }).catch(() => {});
+  }, []);
+
+  function laadSjabloon(sjabloon: typeof sjablonen[number]) {
+    const parsed = JSON.parse(sjabloon.regels) as Array<{
+      omschrijving: string;
+      aantal: number;
+      eenheid?: string;
+      prijs: number;
+      btwPercentage: number;
+      kortingPercentage: number;
+    }>;
+    setRegels(parsed.map((r) => ({
+      id: crypto.randomUUID(),
+      omschrijving: r.omschrijving,
+      aantal: r.aantal,
+      eenheid: r.eenheid ?? "stuks",
+      prijs: r.prijs,
+      btwPercentage: r.btwPercentage,
+      kortingPercentage: r.kortingPercentage,
+    })));
+    setBtwVerlegd(sjabloon.btwVerlegd);
+    if (sjabloon.notities != null) setNotities(sjabloon.notities);
+    if (sjabloon.betalingsCondities != null) setBetalingsCondities(sjabloon.betalingsCondities);
+  }
+
+  async function slaOpAlsSjabloon() {
+    if (!sjabloonNaam.trim()) return;
+    setSjabloonLaden(true);
+    try {
+      await window.api.factuurSjablonen.create({
+        naam: sjabloonNaam,
+        regels: regels.map((r) => ({
+          omschrijving: r.omschrijving,
+          aantal: r.aantal,
+          eenheid: r.eenheid,
+          prijs: r.prijs,
+          btwPercentage: r.btwPercentage,
+          kortingPercentage: r.kortingPercentage,
+        })),
+        notities,
+        betalingsCondities,
+        btwVerlegd,
+      });
+      const data = await window.api.factuurSjablonen.list();
+      setSjablonen(data as typeof sjablonen);
+      setSjabloonNaam("");
+      setSjabloonModalOpen(false);
+    } catch (e) {
+      console.error("Sjabloon opslaan mislukt:", e);
+    } finally {
+      setSjabloonLaden(false);
+    }
+  }
+
+  async function verwijderSjabloon(sjabloonId: string) {
+    try {
+      await window.api.factuurSjablonen.delete(sjabloonId);
+      setSjablonen((prev) => prev.filter((s) => s.id !== sjabloonId));
+    } catch (e) {
+      console.error("Sjabloon verwijderen mislukt:", e);
+    }
+  }
 
   const laadKlanten = useCallback(async () => {
     try {
@@ -366,6 +456,62 @@ export default function FactuurBewerkenPage() {
           </div>
         )}
 
+        {/* Sjablonen */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2">
+              <BookOpen className="h-4 w-4 text-gray-500" />
+              Sjablonen
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex flex-wrap gap-2 items-center">
+              {sjablonen.length > 0 && (
+                <Select onValueChange={(val) => {
+                  const s = sjablonen.find((x) => x.id === val);
+                  if (s) laadSjabloon(s);
+                }}>
+                  <SelectTrigger className="w-56">
+                    <SelectValue placeholder="Laad sjabloon..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {sjablonen.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.naam}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setSjabloonModalOpen(true)}
+              >
+                <BookmarkPlus className="h-4 w-4 mr-1" />
+                Opslaan als sjabloon
+              </Button>
+            </div>
+            {sjablonen.length > 0 && (
+              <ul className="space-y-1">
+                {sjablonen.map((s) => (
+                  <li key={s.id} className="flex items-center justify-between text-sm text-gray-700 bg-gray-50 rounded px-3 py-1.5">
+                    <span>{s.naam}</span>
+                    <button
+                      type="button"
+                      onClick={() => verwijderSjabloon(s.id)}
+                      className="text-gray-400 hover:text-red-500 transition-colors ml-2"
+                      title="Verwijder sjabloon"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+
         {/* Klant en datums */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Klant */}
@@ -586,6 +732,42 @@ export default function FactuurBewerkenPage() {
           />
         </div>
       </div>
+
+      {/* Sjabloon opslaan modal */}
+      <Modal open={sjabloonModalOpen} onOpenChange={setSjabloonModalOpen}>
+        <ModalContent>
+          <ModalHeader>
+            <ModalTitle>Sjabloon opslaan</ModalTitle>
+          </ModalHeader>
+          <div className="space-y-3 py-2">
+            <Input
+              label="Naam"
+              placeholder="Bijv. Standaard diensten..."
+              value={sjabloonNaam}
+              onChange={(e) => setSjabloonNaam(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") slaOpAlsSjabloon(); }}
+            />
+          </div>
+          <ModalFooter>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setSjabloonModalOpen(false)}
+              disabled={sjabloonLaden}
+            >
+              Annuleren
+            </Button>
+            <Button
+              size="sm"
+              onClick={slaOpAlsSjabloon}
+              disabled={!sjabloonNaam.trim() || sjabloonLaden}
+            >
+              {sjabloonLaden && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
+              Opslaan
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
     </div>
   );
 }

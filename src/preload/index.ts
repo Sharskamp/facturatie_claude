@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('api', {
     maakTermijnFacturen: () => ipcRenderer.invoke('facturen:maakTermijnFacturen'),
     maakCreditnota: (id: string) => ipcRenderer.invoke('facturen:maakCreditnota', id),
     stuurHerinneringen: () => ipcRenderer.invoke('facturen:stuurHerinneringen'),
+    stuurHerinnering: (id: string) => ipcRenderer.invoke('facturen:stuurHerinnering', id),
     importeerHistorisch: (data: unknown) => ipcRenderer.invoke('facturen:importeerHistorisch', data),
     onbetaaldeMeldingen: () => ipcRenderer.invoke('facturen:onbetaaldeMeldingen'),
   },
@@ -148,6 +149,17 @@ contextBridge.exposeInMainWorld('api', {
     maakBetaalLink: (factuurId: string) => ipcRenderer.invoke('mollie:maakBetaalLink', factuurId),
     checkBetalingStatus: (factuurId: string) => ipcRenderer.invoke('mollie:checkBetalingStatus', factuurId),
   },
+  factuurSjablonen: {
+    list: () => ipcRenderer.invoke('factuurSjablonen:list'),
+    create: (data: unknown) => ipcRenderer.invoke('factuurSjablonen:create', data),
+    delete: (id: string) => ipcRenderer.invoke('factuurSjablonen:delete', id),
+  },
+  documenten: {
+    list: (params: unknown) => ipcRenderer.invoke('documenten:list', params),
+    upload: (params: unknown) => ipcRenderer.invoke('documenten:upload', params),
+    open: (id: string) => ipcRenderer.invoke('documenten:open', id),
+    delete: (id: string) => ipcRenderer.invoke('documenten:delete', id),
+  },
   updates: {
     onBeschikbaar: (cb: () => void) => ipcRenderer.on('update:beschikbaar', cb),
     onGedownload: (cb: () => void) => ipcRenderer.on('update:gedownload', cb),
@@ -156,5 +168,9 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.removeAllListeners('update:gedownload')
     },
     installeer: () => ipcRenderer.invoke('app:installUpdate'),
+  },
+  bank2: {
+    onNieuwBestand: (cb: (data: { pad: string; naam: string }) => void) => ipcRenderer.on('bank:nieuw-bestand', (_e, d) => cb(d)),
+    verwijderListeners: () => ipcRenderer.removeAllListeners('bank:nieuw-bestand'),
   },
 })

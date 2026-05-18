@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron'
-import { join } from 'path'
+import { join, extname, basename } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { PrismaClient } from '../generated/prisma/client'
 import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3'
@@ -16,6 +16,29 @@ app.setName('Streamline Facturatie')
 
 let prisma: PrismaClient
 let mainWindow: BrowserWindow | null = null
+let bankWatcher: fs.FSWatcher | null = null
+const geimporteerdeBank = new Set<string>()
+
+async function startBankWatcher() {
+  if (bankWatcher) { bankWatcher.close(); bankWatcher = null }
+  try {
+    const user = await prisma.user.findFirst()
+    const map = (user as Record<string, unknown>)?.bankAfschriftenMap as string | null
+    if (!map || !fs.existsSync(map)) return
+    bankWatcher = fs.watch(map, (_event, filename) => {
+      if (!filename) return
+      const vollePad = join(map, filename)
+      if (geimporteerdeBank.has(vollePad)) return
+      const ext = extname(filename).toLowerCase()
+      if (!['.csv', '.mt940', '.xml'].includes(ext)) return
+      setTimeout(() => {
+        if (!fs.existsSync(vollePad) || geimporteerdeBank.has(vollePad)) return
+        geimporteerdeBank.add(vollePad)
+        mainWindow?.webContents.send('bank:nieuw-bestand', { pad: vollePad, naam: filename })
+      }, 1000)
+    })
+  } catch {}
+}
 
 const logBestand = join(app.getPath('userData'), 'app.log')
 function logSchrijven(bericht: string) {
@@ -185,6 +208,30 @@ function runMigratie(dbPath: string): void {
   try { db.exec('ALTER TABLE "AgendaAfspraakData" ADD COLUMN "klantIds" TEXT') } catch {}
   try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS "AgendaAfspraakData_eventId_key" ON "AgendaAfspraakData"("eventId")') } catch {}
   try { db.exec('CREATE INDEX IF NOT EXISTS "AgendaAfspraakData_eventId_idx" ON "AgendaAfspraakData"("eventId")') } catch {}
+
+  db.exec(`CREATE TABLE IF NOT EXISTS "FactuurSjabloon" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "naam" TEXT NOT NULL,
+    "regels" TEXT NOT NULL DEFAULT '[]',
+    "notities" TEXT,
+    "betalingsCondities" TEXT,
+    "btwVerlegd" BOOLEAN NOT NULL DEFAULT false,
+    "aangemaakt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "bijgewerkt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`)
+
+  db.exec(`CREATE TABLE IF NOT EXISTS "Document" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "naam" TEXT NOT NULL,
+    "bestandsPad" TEXT NOT NULL,
+    "type" TEXT NOT NULL,
+    "referentieId" TEXT NOT NULL,
+    "aangemaakt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`)
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Document_referentieId_idx" ON "Document"("referentieId")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Document_type_referentieId_idx" ON "Document"("type", "referentieId")') } catch {}
+
+  kolomToevoegen('User', 'bankAfschriftenMap', 'TEXT')
 
   db.close()
 }
@@ -1183,7 +1230,7 @@ function setupIpcHandlers() {
       'layoutToonBtwNummer', 'layoutToonKvkNummer', 'layoutToonIban',
       'layoutToonQrCode', 'layoutRegelSpacing',
       'layoutLetterGrootte', 'layoutLogoGrootte', 'layoutMarges', 'layoutSectieVolgorde',
-      'onbetaaldeFactuurMelding',
+      'onbetaaldeFactuurMelding', 'verborgenPaginas', 'bankAfschriftenMap',
     ])
     const updateData: Record<string, unknown> = {}
     for (const [sleutel, waarde] of Object.entries(data)) {
@@ -1192,6 +1239,7 @@ function setupIpcHandlers() {
     if (updateData.emailSmtpPass === '') delete updateData.emailSmtpPass
     if (updateData.anthropicApiKey === '') updateData.anthropicApiKey = null
     await prisma.user.updateMany({ data: updateData })
+    if ('bankAfschriftenMap' in updateData) startBankWatcher().catch(() => {})
     return { succes: true }
   })
 
@@ -2829,6 +2877,87 @@ function setupIpcHandlers() {
   ipcMain.handle('app:installUpdate', () => {
     autoUpdater.quitAndInstall()
   })
+
+  // Factuur sjablonen
+  ipcMain.handle('factuurSjablonen:list', async () => {
+    return prisma.factuurSjabloon.findMany({ orderBy: { aangemaakt: 'desc' } })
+  })
+
+  ipcMain.handle('factuurSjablonen:create', async (_, data: { naam: string; regels: unknown[]; notities?: string; betalingsCondities?: string; btwVerlegd?: boolean }) => {
+    return prisma.factuurSjabloon.create({
+      data: {
+        naam: data.naam,
+        regels: JSON.stringify(data.regels),
+        notities: data.notities,
+        betalingsCondities: data.betalingsCondities,
+        btwVerlegd: data.btwVerlegd ?? false,
+      }
+    })
+  })
+
+  ipcMain.handle('factuurSjablonen:delete', async (_, id: string) => {
+    await prisma.factuurSjabloon.delete({ where: { id } })
+    return { succes: true }
+  })
+
+  // Documenten
+  ipcMain.handle('documenten:list', async (_, { type, referentieId }: { type: string; referentieId: string }) => {
+    return prisma.document.findMany({ where: { type, referentieId }, orderBy: { aangemaakt: 'desc' } })
+  })
+
+  ipcMain.handle('documenten:upload', async (_, { type, referentieId }: { type: string; referentieId: string }) => {
+    const { canceled, filePaths } = await dialog.showOpenDialog({ properties: ['openFile'] })
+    if (canceled || !filePaths[0]) return { succes: false }
+    const bronPad = filePaths[0]
+    const documentenMap = join(app.getPath('userData'), 'documenten')
+    await fs.promises.mkdir(documentenMap, { recursive: true })
+    const doelNaam = `${Date.now()}-${basename(bronPad)}`
+    const doelPad = join(documentenMap, doelNaam)
+    await fs.promises.copyFile(bronPad, doelPad)
+    const doc = await prisma.document.create({
+      data: { naam: basename(bronPad), bestandsPad: doelPad, type, referentieId }
+    })
+    return { succes: true, id: doc.id }
+  })
+
+  ipcMain.handle('documenten:open', async (_, id: string) => {
+    const doc = await prisma.document.findUnique({ where: { id } })
+    if (!doc) return { succes: false }
+    await shell.openPath(doc.bestandsPad)
+    return { succes: true }
+  })
+
+  ipcMain.handle('documenten:delete', async (_, id: string) => {
+    const doc = await prisma.document.findUnique({ where: { id } })
+    if (doc) {
+      try { await fs.promises.unlink(doc.bestandsPad) } catch {}
+      await prisma.document.delete({ where: { id } })
+    }
+    return { succes: true }
+  })
+
+  // Enkele betalingsherinnering
+  ipcMain.handle('facturen:stuurHerinnering', async (_, id: string) => {
+    const user = await prisma.user.findFirst()
+    if (!user) throw new Error('Geen gebruiker')
+    if (!user.emailSmtpHost || !user.emailSmtpUser) throw new Error('SMTP niet geconfigureerd')
+    const factuur = await prisma.factuur.findUnique({ where: { id }, include: { klant: true } })
+    if (!factuur) throw new Error('Factuur niet gevonden')
+    if (!factuur.klant.email) throw new Error(`${factuur.klant.naam} heeft geen e-mailadres`)
+    const nu = new Date()
+    const dagenTeLasten = Math.max(0, Math.floor((nu.getTime() - new Date(factuur.vervaldatum).getTime()) / (1000 * 60 * 60 * 24)))
+    const html = `<p>Geachte ${factuur.klant.naam},</p><p>Wij verzoeken u vriendelijk onderstaande factuur te voldoen.</p>
+<table style="border-collapse:collapse"><tr><td style="padding:4px 8px"><strong>Factuurnummer:</strong></td><td>${factuur.nummer}</td></tr>
+<tr><td style="padding:4px 8px"><strong>Openstaand bedrag:</strong></td><td><strong>€ ${factuur.totaal.toFixed(2).replace('.', ',')}</strong></td></tr>
+${dagenTeLasten > 0 ? `<tr><td style="padding:4px 8px"><strong>Dagen te laat:</strong></td><td>${dagenTeLasten} dagen</td></tr>` : ''}
+</table><p>Met vriendelijke groet,<br>${user.naam}${user.bedrijfsnaam ? '<br>' + user.bedrijfsnaam : ''}</p>`
+    await verstuurEmail(
+      { host: user.emailSmtpHost, port: user.emailSmtpPort ?? 587, secure: user.emailSmtpSecure, user: user.emailSmtpUser, pass: user.emailSmtpPass ?? '' },
+      { van: user.emailSmtpUser, naar: factuur.klant.email, onderwerp: `Betalingsherinnering - Factuur ${factuur.nummer}`, html }
+    )
+    await prisma.factuur.update({ where: { id }, data: { herinneringVerzondenOp: nu } })
+    return { succes: true }
+  })
 }
 
 app.whenReady().then(async () => {
@@ -2857,6 +2986,7 @@ app.whenReady().then(async () => {
   // Maak terugkerende facturen aan bij opstarten
   maakTermijnFacturen().catch(e => console.error('Fout bij opstarten terugkerende facturen:', e))
   stuurHerinneringen().catch(e => console.error('Fout bij sturen herinneringen:', e))
+  startBankWatcher().catch(() => {})
 
   // Notificatie voor vervallen facturen
   setTimeout(async () => {

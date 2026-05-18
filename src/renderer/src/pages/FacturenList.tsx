@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Plus, FileText, Eye, Loader2, Search, Trash2, Copy } from "lucide-react";
+import { Plus, FileText, Eye, Loader2, Search, Trash2, Copy, Send, Bell } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -191,6 +191,28 @@ export default function FacturenPage() {
     laadFacturen(statusFilter);
   }
 
+  async function bulkVerstuur() {
+    if (!window.confirm(`${geselecteerd.size} facturen per e-mail versturen naar klant?`)) return;
+    const resultaten = await Promise.allSettled(
+      [...geselecteerd].map(id => window.api.facturen.verstuur(id, { methode: 'email' }))
+    );
+    const fouten = resultaten.filter(r => r.status === 'rejected').length;
+    toonMelding(fouten > 0 ? 'fout' : 'succes', fouten > 0 ? `${fouten} facturen konden niet worden verstuurd` : `${geselecteerd.size} facturen verstuurd`);
+    setGeselecteerd(new Set());
+    haalOp();
+  }
+
+  async function bulkHerinnering() {
+    if (!window.confirm(`Betalingsherinnering sturen voor ${geselecteerd.size} facturen?`)) return;
+    const resultaten = await Promise.allSettled(
+      [...geselecteerd].map(id => window.api.facturen.stuurHerinnering(id))
+    );
+    const fouten = resultaten.filter(r => r.status === 'rejected').length;
+    toonMelding(fouten > 0 ? 'fout' : 'succes', fouten > 0 ? `${fouten} herinneringen konden niet worden gestuurd` : `${geselecteerd.size} herinneringen verstuurd`);
+    setGeselecteerd(new Set());
+    haalOp();
+  }
+
   // Lokale zoekfilter
   const gefilterd = facturen.filter((f) => {
     if (!zoekterm) return true;
@@ -297,6 +319,20 @@ export default function FacturenPage() {
                 className="px-3 py-1.5 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
               >
                 Verwijderen
+              </button>
+              <button
+                onClick={bulkVerstuur}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                <Send className="h-3.5 w-3.5" />
+                Verstuur
+              </button>
+              <button
+                onClick={bulkHerinnering}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors"
+              >
+                <Bell className="h-3.5 w-3.5" />
+                Herinnering
               </button>
               <button
                 onClick={() => setGeselecteerd(new Set())}

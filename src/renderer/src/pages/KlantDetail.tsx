@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
@@ -14,7 +14,11 @@ import {
   Globe,
   MessageSquare,
   X,
+  Paperclip,
+  ExternalLink,
+  Trash2,
 } from "lucide-react";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -99,6 +103,7 @@ export default function KlantDetailPage() {
   const [fout, setFout] = useState<string | null>(null);
   const [notities, setNotities] = useState<KlantNotitie[]>([]);
   const [nieuweNotitie, setNieuweNotitie] = useState("");
+  const [documenten, setDocumenten] = useState<Array<{ id: string; naam: string; aangemaakt: string }>>([]);
 
   const laadKlant = useCallback(async () => {
     if (!id) return;
@@ -133,14 +138,25 @@ export default function KlantDetailPage() {
     }
   }, [id]);
 
+  const laadDocumenten = useCallback(async () => {
+    if (!id) return;
+    try {
+      const data = await window.api.documenten.list({ type: "klant", referentieId: id });
+      setDocumenten(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error("Fout bij laden documenten:", e);
+      setDocumenten([]);
+    }
+  }, [id]);
+
   useEffect(() => {
     async function laadAlles() {
       setLaden(true);
-      await Promise.all([laadKlant(), laadFacturen(), laadNotities()]);
+      await Promise.all([laadKlant(), laadFacturen(), laadNotities(), laadDocumenten()]);
       setLaden(false);
     }
     laadAlles();
-  }, [laadKlant, laadFacturen, laadNotities]);
+  }, [laadKlant, laadFacturen, laadNotities, laadDocumenten]);
 
   async function voegNotitieToe() {
     if (!nieuweNotitie.trim() || !id) return;
@@ -161,6 +177,50 @@ export default function KlantDetailPage() {
       console.error("Fout bij verwijderen notitie:", e);
     }
   }
+
+  async function uploadDocument() {
+    if (!id) return;
+    try {
+      const result = await window.api.documenten.upload({ type: "klant", referentieId: id });
+      if (result?.succes) await laadDocumenten();
+    } catch (e) {
+      console.error("Fout bij uploaden document:", e);
+    }
+  }
+
+  async function verwijderDocument(docId: string) {
+    try {
+      await window.api.documenten.delete(docId);
+      await laadDocumenten();
+    } catch (e) {
+      console.error("Fout bij verwijderen document:", e);
+    }
+  }
+
+  async function openDocument(docId: string) {
+    try {
+      await window.api.documenten.open(docId);
+    } catch (e) {
+      console.error("Fout bij openen document:", e);
+    }
+  }
+
+  const maandData = useMemo(() => {
+    const maandNamen = ["jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
+    const nu = new Date();
+    return Array.from({ length: 12 }, (_, i) => {
+      const d = new Date(nu.getFullYear(), nu.getMonth() - 11 + i, 1);
+      const jaar = d.getFullYear();
+      const maand = d.getMonth();
+      const omzet = facturen
+        .filter((f) => {
+          const fd = new Date(f.datum);
+          return fd.getFullYear() === jaar && fd.getMonth() === maand;
+        })
+        .reduce((som, f) => som + f.totaal, 0);
+      return { naam: maandNamen[maand], omzet };
+    });
+  }, [facturen]);
 
   function openBewerken() {
     if (!klant) return;
@@ -243,6 +303,15 @@ export default function KlantDetailPage() {
               <ArrowLeft className="h-4 w-4" />
               Terug
             </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigate(`/facturen/nieuw?klantId=${id}`)}
+              className="gap-2"
+            >
+              <Plus className="h-4 w-4" />
+              Nieuwe factuur
+            </Button>
             <Button size="sm" onClick={openBewerken} className="gap-2">
               <Edit className="h-4 w-4" />
               Bewerken
@@ -282,6 +351,26 @@ export default function KlantDetailPage() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Omzet per maand */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle>Omzet per maand</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="h-48">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={maandData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                  <XAxis dataKey="naam" tick={{ fontSize: 12 }} axisLine={false} tickLine={false} />
+                  <YAxis tickFormatter={(v) => `€${v}`} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} width={60} />
+                  <Tooltip formatter={(value: number) => [`€${value.toFixed(2)}`, "Omzet"]} />
+                  <Bar dataKey="omzet" fill="#6366f1" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Hoofd content: klantinfo links, factuurgeschiedenis rechts */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -532,6 +621,50 @@ export default function KlantDetailPage() {
                       title="Verwijderen"
                     >
                       <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Documenten */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-3">
+            <CardTitle>Documenten</CardTitle>
+            <Button size="sm" variant="outline" onClick={uploadDocument} className="gap-2">
+              <Paperclip className="h-4 w-4" />
+              Toevoegen
+            </Button>
+          </CardHeader>
+          <CardContent>
+            {documenten.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-4">Geen documenten gekoppeld</p>
+            ) : (
+              <div className="space-y-2">
+                {documenten.map((doc) => (
+                  <div
+                    key={doc.id}
+                    className="flex items-center gap-3 rounded-lg border border-gray-100 bg-gray-50 px-4 py-3"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-800 truncate">{doc.naam}</p>
+                      <p className="text-xs text-gray-400 mt-0.5">{formatDatum(doc.aangemaakt)}</p>
+                    </div>
+                    <button
+                      onClick={() => openDocument(doc.id)}
+                      className="shrink-0 text-gray-400 hover:text-indigo-600 transition-colors"
+                      title="Openen"
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                    </button>
+                    <button
+                      onClick={() => verwijderDocument(doc.id)}
+                      className="shrink-0 text-gray-300 hover:text-red-500 transition-colors"
+                      title="Verwijderen"
+                    >
+                      <Trash2 className="h-4 w-4" />
                     </button>
                   </div>
                 ))}

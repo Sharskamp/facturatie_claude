@@ -110,6 +110,7 @@ interface Instellingen {
   emailAfsluitingsTekst?: string;
   // Overig
   kmVergoeding?: number;
+  bankAfschriftenMap?: string;
   // Geavanceerd
   pdfMapPad?: string;
   mollieApiKey?: string;
@@ -1196,43 +1197,80 @@ export default function InstellingenPagina() {
 
         {/* ── Overig ── */}
         {actieveTab === "overig" && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Car className="h-5 w-5" />
-                Kilometervergoeding
-              </CardTitle>
-              <CardDescription>Tarief voor zakelijke reiskosten per kilometer</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-sm text-blue-800">
-                <p>
-                  De Belastingdienst hanteert een standaard vergoeding van <strong>€ 0,23 per km</strong> (2024).
-                  Dit tarief wordt gebruikt bij de kilometerregistratie om de aftrekbare vergoeding te berekenen.
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Car className="h-5 w-5" />
+                  Kilometervergoeding
+                </CardTitle>
+                <CardDescription>Tarief voor zakelijke reiskosten per kilometer</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-sm text-blue-800">
+                  <p>
+                    De Belastingdienst hanteert een standaard vergoeding van <strong>€ 0,23 per km</strong> (2024).
+                    Dit tarief wordt gebruikt bij de kilometerregistratie om de aftrekbare vergoeding te berekenen.
+                  </p>
+                </div>
+                <Input
+                  label="Kilometervergoeding (€ per km)"
+                  type="number"
+                  step="0.001"
+                  min="0"
+                  max="1"
+                  prefix="€"
+                  value={instellingen.kmVergoeding ?? 0.23}
+                  onChange={(e) => updateVeld("kmVergoeding", parseFloat(e.target.value))}
+                  onBlur={() => slaOp({ kmVergoeding: instellingen.kmVergoeding })}
+                  placeholder="0.23"
+                />
+                <p className="text-xs text-gray-400">
+                  Pas dit aan als je een ander tarief wilt hanteren, bijv. het hogere belastingvrije tarief voor motorfietsen (€ 0,23).
                 </p>
-              </div>
-              <Input
-                label="Kilometervergoeding (€ per km)"
-                type="number"
-                step="0.001"
-                min="0"
-                max="1"
-                prefix="€"
-                value={instellingen.kmVergoeding ?? 0.23}
-                onChange={(e) => updateVeld("kmVergoeding", parseFloat(e.target.value))}
-                onBlur={() => slaOp({ kmVergoeding: instellingen.kmVergoeding })}
-                placeholder="0.23"
-              />
-              <p className="text-xs text-gray-400">
-                Pas dit aan als je een ander tarief wilt hanteren, bijv. het hogere belastingvrije tarief voor motorfietsen (€ 0,23).
-              </p>
-              <div className="flex justify-end pt-2">
-                <Button onClick={() => slaOp({ kmVergoeding: instellingen.kmVergoeding })} loading={opslaan}>
-                  Opslaan
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+                <div className="flex justify-end pt-2">
+                  <Button onClick={() => slaOp({ kmVergoeding: instellingen.kmVergoeding })} loading={opslaan}>
+                    Opslaan
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Bankfeed automatisering</CardTitle>
+                <CardDescription>Stel een map in die automatisch wordt bewaakt voor nieuwe bankafschriften (CSV). Bij een nieuw bestand verschijnt een melding.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Bewaking map</label>
+                  <div className="flex gap-2">
+                    <input
+                      value={instellingen.bankAfschriftenMap ?? ''}
+                      readOnly
+                      className="flex-1 h-9 rounded-lg border border-gray-300 bg-gray-50 px-3 text-sm text-gray-600"
+                      placeholder="Geen map gekozen"
+                    />
+                    <Button
+                      variant="outline"
+                      onClick={async () => {
+                        try {
+                          const result = await window.api.app.kiesPdfMap() as string | null;
+                          if (result) {
+                            updateVeld('bankAfschriftenMap', result);
+                          }
+                        } catch {
+                          toonMelding('fout', 'Kon map niet selecteren');
+                        }
+                      }}
+                    >
+                      Kiezen
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         )}
 
         {/* ── AI / OCR ── */}

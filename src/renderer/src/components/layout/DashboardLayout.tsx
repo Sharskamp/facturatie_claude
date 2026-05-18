@@ -7,10 +7,16 @@ export default function DashboardLayout() {
   const navigate = useNavigate()
   const [shortcutOverlayOpen, setShortcutOverlayOpen] = useState(false)
   const [updateGedownload, setUpdateGedownload] = useState(false)
+  const [bankMelding, setBankMelding] = useState<{ pad: string; naam: string } | null>(null)
 
   useEffect(() => {
     window.api.updates.onGedownload(() => setUpdateGedownload(true))
     return () => window.api.updates.verwijderListeners()
+  }, [])
+
+  useEffect(() => {
+    window.api.bank2.onNieuwBestand((data) => setBankMelding(data))
+    return () => window.api.bank2.verwijderListeners()
   }, [])
 
   useEffect(() => {
@@ -98,6 +104,28 @@ export default function DashboardLayout() {
         open={shortcutOverlayOpen}
         onClose={() => setShortcutOverlayOpen(false)}
       />
+      {bankMelding !== null && (
+        <div className="fixed bottom-4 right-4 z-50 bg-indigo-600 text-white rounded-lg shadow-lg p-4 flex items-center gap-3">
+          <span className="text-sm font-medium">
+            Nieuw bankafschrift gedetecteerd: {bankMelding.naam}
+          </span>
+          <button
+            onClick={() => {
+              setBankMelding(null)
+              navigate('/bank-import')
+            }}
+            className="bg-white text-indigo-700 text-sm font-semibold px-3 py-1.5 rounded-lg hover:bg-indigo-50 transition-colors shrink-0"
+          >
+            Importeren
+          </button>
+          <button
+            onClick={() => setBankMelding(null)}
+            className="text-indigo-200 hover:text-white text-sm font-medium transition-colors shrink-0"
+          >
+            ×
+          </button>
+        </div>
+      )}
       {updateGedownload && (
         <div className="fixed bottom-0 left-0 right-0 z-50 bg-indigo-600 text-white px-6 py-3 flex items-center justify-between shadow-lg">
           <span className="text-sm font-medium">

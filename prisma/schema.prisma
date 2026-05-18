@@ -82,6 +82,29 @@ model User {
   bijgewerkt            DateTime  @updatedAt
 }
 
+model FactuurSjabloon {
+  id                 String   @id @default(cuid())
+  naam               String
+  regels             String   @default("[]")
+  notities           String?
+  betalingsCondities String?
+  btwVerlegd         Boolean  @default(false)
+  aangemaakt         DateTime @default(now())
+  bijgewerkt         DateTime @updatedAt
+}
+
+model Document {
+  id           String   @id @default(cuid())
+  naam         String
+  bestandsPad  String
+  type         String
+  referentieId String
+  aangemaakt   DateTime @default(now())
+
+  @@index([referentieId])
+  @@index([type, referentieId])
+}
+
 model Rit {
   id           String   @id @default(cuid())
   datum        DateTime
