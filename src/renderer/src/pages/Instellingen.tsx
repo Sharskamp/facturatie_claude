@@ -208,9 +208,9 @@ export default function InstellingenPagina() {
     const el = previewContainerRef.current;
     if (!el) return;
     const observer = new ResizeObserver(([entry]) => {
-      const { width, height } = entry.contentRect;
-      const scale = Math.min((width - 64) / 794, (height - 64) / 1123);
-      setPreviewSchaal(Math.max(0.35, Math.min(1, scale)));
+      const { width } = entry.contentRect;
+      const scale = (width - 32) / 794;
+      setPreviewSchaal(Math.max(0.35, Math.min(1.2, scale)));
     });
     observer.observe(el);
     return () => observer.disconnect();
@@ -838,23 +838,22 @@ export default function InstellingenPagina() {
                 </p>
                 <div
                   ref={previewContainerRef}
-                  className="flex-1 relative overflow-hidden rounded-xl bg-gray-100 dark:bg-gray-800"
+                  className="flex-1 overflow-y-auto rounded-xl bg-gray-100 dark:bg-gray-800 px-4 py-6"
                   style={{ boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.08)" }}
                 >
-                  <div className="absolute inset-0 flex items-start justify-center pt-8">
-                    <div
-                      style={{
-                        width: `${Math.round(794 * previewSchaal)}px`,
-                        height: `${Math.round(1123 * previewSchaal)}px`,
-                        overflow: "hidden",
-                        borderRadius: "4px",
-                        boxShadow: "0 8px 40px rgba(0,0,0,0.18)",
-                        flexShrink: 0,
-                      }}
-                    >
-                      <div style={{ width: "794px", transformOrigin: "top left", transform: `scale(${previewSchaal})` }}>
-                        <FactuurLayoutPreview inst={instellingen} />
-                      </div>
+                  <div
+                    style={{
+                      width: `${Math.round(794 * previewSchaal)}px`,
+                      height: `${Math.round(1123 * previewSchaal)}px`,
+                      overflow: "hidden",
+                      borderRadius: "4px",
+                      boxShadow: "0 8px 40px rgba(0,0,0,0.18)",
+                      margin: "0 auto",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <div style={{ width: "794px", transformOrigin: "top left", transform: `scale(${previewSchaal})` }}>
+                      <FactuurLayoutPreview inst={instellingen} />
                     </div>
                   </div>
                 </div>

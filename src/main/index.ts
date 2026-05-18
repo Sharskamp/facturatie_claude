@@ -7,6 +7,7 @@ import bcrypt from 'bcryptjs'
 import * as fs from 'fs'
 import * as http from 'http'
 import * as net from 'net'
+import { DOMParser } from '@xmldom/xmldom'
 import { verstuurEmail, maakFactuurEmailHtml } from '../lib/email'
 import { haalAgendaAfspraken, haalKalenderLijst, maakGoogleAfspraak, maakGoogleAuthUrl, wisselCodeVoorTokens, vernieuwAccessToken } from '../lib/google-calendar'
 import { autoUpdater } from 'electron-updater'
@@ -1553,7 +1554,7 @@ function setupIpcHandlers() {
   })
 
   ipcMain.handle('ritten:exportCsv', async (_, csvInhoud: string) => {
-    const focusedWindow = BrowserWindow.getFocusedWindow()
+    const focusedWindow = BrowserWindow.getFocusedWindow() ?? mainWindow
     const result = await dialog.showSaveDialog(focusedWindow!, {
       defaultPath: `ritten-export-${new Date().toISOString().split('T')[0]}.csv`,
       filters: [{ name: 'CSV bestanden', extensions: ['csv'] }]
@@ -1659,17 +1660,73 @@ function setupIpcHandlers() {
 
   // ── Bank CSV import ──
   ipcMain.handle('bank:openBestandDialog', async () => {
-    const focusedWindow = BrowserWindow.getFocusedWindow()
+    const focusedWindow = BrowserWindow.getFocusedWindow() ?? mainWindow
     const result = await dialog.showOpenDialog(focusedWindow!, {
-      filters: [{ name: 'CSV bestanden', extensions: ['csv'] }],
+      filters: [
+        { name: 'Bank bestanden', extensions: ['csv', 'xml'] },
+        { name: 'CSV bestanden', extensions: ['csv'] },
+        { name: 'CAMT.053 XML', extensions: ['xml'] },
+      ],
       properties: ['openFile']
     })
     if (result.canceled || result.filePaths.length === 0) return null
     return result.filePaths[0]
   })
 
-  ipcMain.handle('bank:importeerCsv', async (_, { bank, filePath }: { bank: 'abn' | 'ing' | 'rabobank' | 'knab'; filePath: string }) => {
+  ipcMain.handle('bank:importeerCsv', async (_, { bank, filePath }: { bank: 'abn' | 'ing' | 'rabobank' | 'knab' | 'camt'; filePath: string }) => {
     const inhoud = fs.readFileSync(filePath, 'utf-8')
+
+    // ── CAMT.053 XML parser ─────────────────────────────────────────────────
+    if (bank === 'camt' || filePath.toLowerCase().endsWith('.xml')) {
+      try {
+        const doc = new DOMParser().parseFromString(inhoud, 'text/xml')
+
+        function tekst(node: Element | null, tag: string): string {
+          if (!node) return ''
+          const els = node.getElementsByTagName(tag)
+          return els.length > 0 ? (els[0].textContent ?? '').trim() : ''
+        }
+
+        // Verzamel alle <Ntry> elementen (transacties)
+        const ntryEls = doc.getElementsByTagName('Ntry')
+        const transacties: Array<{ datum: string; omschrijving: string; bedrag: number; type: 'inkomen' | 'uitgave' }> = []
+
+        for (let i = 0; i < ntryEls.length; i++) {
+          const ntry = ntryEls[i] as Element
+          const amtRaw = tekst(ntry, 'Amt').replace(',', '.')
+          const bedrag = Math.abs(parseFloat(amtRaw) || 0)
+          if (bedrag === 0) continue
+
+          const cdtDbt = tekst(ntry, 'CdtDbtInd').toUpperCase()
+          const isDebet = cdtDbt === 'DBIT'
+
+          // Datum: BookgDt > Dt, of ValDt > Dt
+          const bookDt = (ntry.getElementsByTagName('BookgDt')[0] as Element | undefined)
+          const valDt = (ntry.getElementsByTagName('ValDt')[0] as Element | undefined)
+          const datumRaw = tekst(bookDt ?? null, 'Dt') || tekst(valDt ?? null, 'Dt') || tekst(ntry, 'Dt')
+          const datum = datumRaw.slice(0, 10) // ISO YYYY-MM-DD
+
+          // Omschrijving: Ustrd (ongestructureerd), anders tegenpartij naam
+          const txDtls = ntry.getElementsByTagName('TxDtls')
+          let omschrijving = ''
+          for (let j = 0; j < txDtls.length; j++) {
+            const tx = txDtls[j] as Element
+            const ustrd = tekst(tx, 'Ustrd')
+            if (ustrd) { omschrijving = ustrd; break }
+          }
+          if (!omschrijving) {
+            omschrijving = tekst(ntry, 'AddtlNtryInf') || tekst(ntry, 'Nm') || 'Onbekend'
+          }
+
+          transacties.push({ datum, omschrijving: omschrijving || 'Onbekend', bedrag: isDebet ? -bedrag : bedrag, type: isDebet ? 'uitgave' : 'inkomen' })
+        }
+
+        return { transacties, autoHerkend: transacties.length > 0 }
+      } catch (err) {
+        return { transacties: [], autoHerkend: false, fout: String(err) }
+      }
+    }
+
     const regels = inhoud.split('\n').map(r => r.trim()).filter(r => r.length > 0)
 
     function parseerveldCsv(rij: string): string[] {
@@ -2057,19 +2114,19 @@ function setupIpcHandlers() {
 
   // ── Bon uploaden (Uitgaven) ──
   ipcMain.handle('uitgaven:uploadBon', async (_, { uitgaveId }: { uitgaveId: string }) => {
-    const focusedWindow = BrowserWindow.getFocusedWindow()
-    const result = await dialog.showOpenDialog(focusedWindow!, {
-      filters: [{ name: 'Afbeeldingen', extensions: ['jpg', 'jpeg', 'png', 'pdf', 'webp'] }],
+    const venster = BrowserWindow.getFocusedWindow() ?? mainWindow
+    const result = await dialog.showOpenDialog(venster!, {
+      filters: [{ name: 'Afbeeldingen & PDF', extensions: ['jpg', 'jpeg', 'png', 'pdf', 'webp'] }],
       properties: ['openFile']
     })
     if (result.canceled || result.filePaths.length === 0) return { succes: false }
 
     const bronPad = result.filePaths[0]
-    const bestandsnaam = bronPad.split('/').pop() ?? bronPad.split('\\').pop() ?? 'bon'
+    const bestandsnaam = basename(bronPad)
     const bonMap = join(app.getPath('userData'), 'bonnen')
     if (!fs.existsSync(bonMap)) fs.mkdirSync(bonMap, { recursive: true })
 
-    const doelPad = join(bonMap, `${uitgaveId}-${bestandsnaam}`)
+    const doelPad = join(bonMap, `${uitgaveId}-${Date.now()}-${bestandsnaam}`)
     fs.copyFileSync(bronPad, doelPad)
 
     await prisma.uitgave.update({ where: { id: uitgaveId }, data: { bonBestand: doelPad } })
@@ -2084,15 +2141,15 @@ function setupIpcHandlers() {
   // Opens a file dialog and copies the selected file to the bonnen folder.
   // Does NOT require an existing uitgaveId — used for scanning before saving.
   ipcMain.handle('uitgaven:kiesBon', async () => {
-    const focusedWindow = BrowserWindow.getFocusedWindow()
-    const result = await dialog.showOpenDialog(focusedWindow!, {
+    const venster = BrowserWindow.getFocusedWindow() ?? mainWindow
+    const result = await dialog.showOpenDialog(venster!, {
       filters: [{ name: 'Afbeeldingen & PDF', extensions: ['jpg', 'jpeg', 'png', 'pdf', 'webp'] }],
       properties: ['openFile']
     })
     if (result.canceled || result.filePaths.length === 0) return { succes: false }
 
     const bronPad = result.filePaths[0]
-    const bestandsnaam = bronPad.split('/').pop() ?? bronPad.split('\\').pop() ?? 'bon'
+    const bestandsnaam = basename(bronPad)
     const bonMap = join(app.getPath('userData'), 'bonnen')
     if (!fs.existsSync(bonMap)) fs.mkdirSync(bonMap, { recursive: true })
 

@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/table";
 import { formatBedrag, formatDatum } from "@/lib/utils";
 
-type Bank = "abn" | "ing" | "rabobank" | "knab" | "overig";
+type Bank = "abn" | "ing" | "rabobank" | "knab" | "camt" | "overig";
 type Stap = 1 | 2 | 3 | 4 | "mapping";
 
 interface Transactie {
@@ -46,11 +46,12 @@ interface KolomMapping {
   debitCredit: number;
 }
 
-const BANKEN: Array<{ id: Bank; naam: string; kleur: string }> = [
+const BANKEN: Array<{ id: Bank; naam: string; kleur: string; label?: string }> = [
   { id: "abn", naam: "ABN AMRO", kleur: "bg-yellow-400 text-yellow-900" },
   { id: "ing", naam: "ING", kleur: "bg-orange-500 text-white" },
   { id: "rabobank", naam: "Rabobank", kleur: "bg-red-600 text-white" },
   { id: "knab", naam: "Knab", kleur: "bg-blue-600 text-white" },
+  { id: "camt", naam: "CAMT.053", kleur: "bg-emerald-600 text-white", label: "XML" },
   { id: "overig", naam: "Andere bank / CSV", kleur: "bg-gray-500 text-white" },
 ];
 
@@ -108,6 +109,16 @@ export default function BankImportPagina() {
         setCsvAlleRijen(ruwe.alleRijen);
         setMapping({ datum: -1, omschrijving: -1, bedrag: -1, afBij: -1, debitCredit: -1 });
         setStap("mapping");
+      } else if (geselecteerdeBank === "camt" || pad.toLowerCase().endsWith(".xml")) {
+        const result = await window.api.bank.importeerCsv({ bank: "camt", filePath: pad });
+        const data = (result as any).transacties ?? result;
+        if (!Array.isArray(data) || data.length === 0) {
+          toonMelding("fout", "Geen transacties gevonden in het CAMT.053 bestand. Controleer of het een geldig XML bankafschrift is.");
+        } else {
+          const rijen: TransactieRij[] = (data as Transactie[]).map((t, i) => ({ ...t, geselecteerd: true, index: i }));
+          await laadTransactiesMetDuplicaatCheck(rijen);
+          setStap(3);
+        }
       } else {
         const result = await window.api.bank.importeerCsv({ bank: geselecteerdeBank!, filePath: pad });
         const data = (result as any).transacties ?? result;
@@ -315,6 +326,9 @@ export default function BankImportPagina() {
                       {bank.id === "overig" && (
                         <span className="text-xs text-gray-400">Kolomkoppeling handmatig instellen</span>
                       )}
+                      {bank.label && (
+                        <span className="text-xs bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-medium">{bank.label}</span>
+                      )}
                     </div>
                   </button>
                 ))}
@@ -343,13 +357,17 @@ export default function BankImportPagina() {
                   {geselecteerdeBank === "abn" && <p>Log in op Mijn ABN AMRO, ga naar Betaalpassen en download het CSV afschrift.</p>}
                   {geselecteerdeBank === "ing" && <p>Log in op Mijn ING, ga naar Rekeningen en kies &apos;Download transacties&apos; in CSV formaat.</p>}
                   {geselecteerdeBank === "rabobank" && <p>Log in op Rabobank, ga naar je rekening en exporteer als CSV.</p>}
-                  <p className="mt-2 text-blue-600 text-xs">Als het bestand niet automatisch herkend wordt, kun je daarna handmatig kolommen koppelen.</p>
+                  {geselecteerdeBank === "knab" && <p>Log in op Knab, ga naar je rekening en exporteer als CSV.</p>}
+                  {geselecteerdeBank === "camt" && <p>Download het CAMT.053 XML bankafschrift via uw internetbankieren. Dit formaat wordt aangeboden door de meeste Nederlandse banken (ING, Rabobank, ABN AMRO, Triodos, ASN, SNS, etc.).</p>}
+                  {geselecteerdeBank !== "camt" && <p className="mt-2 text-blue-600 text-xs">Als het bestand niet automatisch herkend wordt, kun je daarna handmatig kolommen koppelen.</p>}
                 </div>
               )}
 
               <div className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center">
                 <FileText className="h-10 w-10 text-gray-300 mx-auto mb-3" />
-                <p className="text-gray-600 font-medium mb-4">Selecteer je CSV bankafschrift</p>
+                <p className="text-gray-600 font-medium mb-4">
+                  {geselecteerdeBank === "camt" ? "Selecteer je CAMT.053 XML bankafschrift" : "Selecteer je CSV bankafschrift"}
+                </p>
                 <Button onClick={selecteerBestand} loading={laden}>
                   Bestand selecteren
                 </Button>
