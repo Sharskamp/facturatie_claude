@@ -33,6 +33,8 @@ contextBridge.exposeInMainWorld('api', {
     stuurHerinnering: (id: string) => ipcRenderer.invoke('facturen:stuurHerinnering', id),
     importeerHistorisch: (data: unknown) => ipcRenderer.invoke('facturen:importeerHistorisch', data),
     onbetaaldeMeldingen: () => ipcRenderer.invoke('facturen:onbetaaldeMeldingen'),
+    scanPdf: (data: { pad: string }) => ipcRenderer.invoke('facturen:scanPdf', data),
+    kiesBestanden: () => ipcRenderer.invoke('facturen:kiesBestanden'),
   },
   offertes: {
     list: (params?: unknown) => ipcRenderer.invoke('offertes:list', params),

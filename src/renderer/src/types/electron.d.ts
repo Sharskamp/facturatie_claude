@@ -29,6 +29,8 @@ interface ElectronAPI {
     maakCreditnota: (id: string) => Promise<string>
     stuurHerinneringen: () => Promise<unknown>
     stuurHerinnering: (id: string) => Promise<{ succes: boolean }>
+    scanPdf: (data: { pad: string }) => Promise<{ nummer?: string | null; klantNaam?: string | null; klantEmail?: string | null; klantAdres?: string | null; datum?: string | null; vervaldatum?: string | null; subtotaal?: number | null; btwBedrag?: number | null; totaal?: number | null; status?: string | null; notities?: string | null; error?: string }>
+    kiesBestanden: () => Promise<string[]>
   }
   offertes: {
     list: (params?: { status?: string }) => Promise<unknown[]>

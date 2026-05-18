@@ -2318,6 +2318,105 @@ function setupIpcHandlers() {
     }
   })
 
+  // ── Kies meerdere PDF/afbeelding bestanden voor bulk import ──
+  ipcMain.handle('facturen:kiesBestanden', async () => {
+    const venster = BrowserWindow.getFocusedWindow() ?? mainWindow
+    const result = await dialog.showOpenDialog(venster!, {
+      filters: [{ name: 'Facturen (PDF/afbeelding)', extensions: ['pdf', 'jpg', 'jpeg', 'png', 'webp'] }],
+      properties: ['openFile', 'multiSelections'],
+    })
+    if (result.canceled || result.filePaths.length === 0) return []
+    return result.filePaths
+  })
+
+  // ── Factuur PDF/afbeelding scannen met AI ──
+  ipcMain.handle('facturen:scanPdf', async (_, { pad }: { pad: string }) => {
+    const user = await prisma.user.findFirst()
+    if (!user?.anthropicApiKey) return { error: 'Geen Anthropic API sleutel ingesteld. Ga naar Instellingen > AI.' }
+
+    const ext = pad.split('.').pop()?.toLowerCase() ?? ''
+    const base64 = fs.readFileSync(pad).toString('base64')
+
+    type ContentBlock =
+      | { type: 'document'; source: { type: 'base64'; media_type: 'application/pdf'; data: string } }
+      | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
+      | { type: 'text'; text: string }
+
+    let mediaBlock: ContentBlock
+    if (ext === 'pdf') {
+      mediaBlock = { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } }
+    } else if (ext === 'jpg' || ext === 'jpeg') {
+      mediaBlock = { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: base64 } }
+    } else if (ext === 'png') {
+      mediaBlock = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: base64 } }
+    } else if (ext === 'webp') {
+      mediaBlock = { type: 'image', source: { type: 'base64', media_type: 'image/webp', data: base64 } }
+    } else {
+      return { error: `Bestandstype .${ext} wordt niet ondersteund. Gebruik PDF, JPG, PNG of WEBP.` }
+    }
+
+    const prompt = `Dit is een factuur. Extraheer de volgende gegevens en retourneer ALLEEN geldige JSON zonder uitleg:
+{
+  "nummer": "factuurnummer als string",
+  "klantNaam": "naam van de klant (bedrijf of persoon) aan wie de factuur gericht is",
+  "klantEmail": "e-mailadres van de klant indien zichtbaar, anders null",
+  "klantAdres": "adres van de klant indien zichtbaar, anders null",
+  "datum": "factuurdatum in YYYY-MM-DD formaat",
+  "vervaldatum": "vervaldatum in YYYY-MM-DD formaat, anders null",
+  "subtotaal": getal zonder valuta,
+  "btwBedrag": getal zonder valuta,
+  "totaal": totaalbedrag als getal zonder valuta,
+  "status": "BETAALD of VERZONDEN",
+  "notities": "eventuele notities of referentie, anders null"
+}
+Gebruik null voor velden die je niet kunt vinden. Retourneer ALLEEN JSON.`
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': user.anthropicApiKey,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 512,
+          system: 'Je bent een assistent die facturen uitleest. Reageer ALLEEN met het gevraagde JSON-object, niets anders.',
+          messages: [{ role: 'user', content: [mediaBlock, { type: 'text', text: prompt }] }]
+        })
+      })
+      if (!response.ok) {
+        const fout = await response.text()
+        return { error: `Claude fout (${response.status}): ${fout.slice(0, 200)}` }
+      }
+      const apiResp = await response.json() as { content: Array<{ text: string }> }
+      const tekst = apiResp.content?.[0]?.text ?? '{}'
+      const schoon = tekst.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
+      const parsed = JSON.parse(schoon) as {
+        nummer?: string | null; klantNaam?: string | null; klantEmail?: string | null;
+        klantAdres?: string | null; datum?: string | null; vervaldatum?: string | null;
+        subtotaal?: number | null; btwBedrag?: number | null; totaal?: number | null;
+        status?: string | null; notities?: string | null;
+      }
+      return {
+        nummer: parsed.nummer ?? null,
+        klantNaam: parsed.klantNaam ?? null,
+        klantEmail: parsed.klantEmail ?? null,
+        klantAdres: parsed.klantAdres ?? null,
+        datum: parsed.datum ?? null,
+        vervaldatum: parsed.vervaldatum ?? null,
+        subtotaal: parsed.subtotaal ?? null,
+        btwBedrag: parsed.btwBedrag ?? null,
+        totaal: parsed.totaal ?? null,
+        status: parsed.status ?? 'BETAALD',
+        notities: parsed.notities ?? null,
+      }
+    } catch (e: unknown) {
+      return { error: e instanceof Error ? e.message : 'Onbekende fout bij scannen' }
+    }
+  })
+
   // ── Vaste Activa ──
   ipcMain.handle('vasteActiva:list', async () => {
     return prisma.vasteActiva.findMany({ where: { actief: true }, orderBy: { aanschafDatum: 'desc' } })
