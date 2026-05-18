@@ -158,6 +158,8 @@ export default function InstellingenPagina() {
   const [exportMelding, setExportMelding] = useState<string | null>(null);
   const isGeladen = useRef(false);
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const previewContainerRef = useRef<HTMLDivElement>(null);
+  const [previewSchaal, setPreviewSchaal] = useState(0.65);
 
   const haalInstellingenOp = useCallback(async () => {
     try {
@@ -200,6 +202,19 @@ export default function InstellingenPagina() {
   useEffect(() => {
     window.api.app.getAutoStart().then(setAutoStart).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (actieveTab !== "layout") return;
+    const el = previewContainerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      const scale = Math.min((width - 64) / 794, (height - 64) / 1123);
+      setPreviewSchaal(Math.max(0.35, Math.min(1, scale)));
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [actieveTab]);
 
   const toonMelding = (type: "succes" | "fout", tekst: string) => {
     setMelding({ type, tekst });
@@ -600,9 +615,11 @@ export default function InstellingenPagina() {
           };
 
           return (
-            <div className="flex flex-col lg:flex-row gap-6 items-start">
-              {/* Links: instellingen */}
-              <div className="w-full lg:w-[380px] lg:shrink-0 space-y-4">
+            <div className="flex gap-6" style={{ height: "calc(100vh - 210px)" }}>
+              {/* Links: scrollbaar instellingenpaneel */}
+              <div className="w-[300px] shrink-0 overflow-y-auto space-y-4 pr-1"
+                style={{ scrollbarWidth: "thin" }}
+              >
 
                 {/* Kleur & typografie */}
                 <Card>
@@ -814,22 +831,31 @@ export default function InstellingenPagina() {
 
               </div>
 
-              {/* Rechts: live preview sticky */}
-              <div className="flex-1 sticky top-6 min-w-0">
-                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Live voorbeeld — wijzigingen zie je direct</p>
-                {/* Outer wrapper clips to the scaled dimensions so layout doesn't overflow */}
+              {/* Rechts: groot paginavullend voorbeeld */}
+              <div className="flex-1 flex flex-col min-w-0">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3 shrink-0">
+                  Live voorbeeld — wijzigingen zie je direct
+                </p>
                 <div
-                  style={{
-                    height: `${Math.round(1123 * 0.58)}px`,
-                    width: `${Math.round(794 * 0.58)}px`,
-                    overflow: "hidden",
-                    borderRadius: "8px",
-                    border: "1px solid #e5e7eb",
-                    boxShadow: "0 4px 16px rgba(0,0,0,0.10)",
-                  }}
+                  ref={previewContainerRef}
+                  className="flex-1 relative overflow-hidden rounded-xl bg-gray-100 dark:bg-gray-800"
+                  style={{ boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.08)" }}
                 >
-                  <div style={{ width: "794px", transformOrigin: "top left", transform: "scale(0.58)" }}>
-                    <FactuurLayoutPreview inst={instellingen} />
+                  <div className="absolute inset-0 flex items-start justify-center pt-8">
+                    <div
+                      style={{
+                        width: `${Math.round(794 * previewSchaal)}px`,
+                        height: `${Math.round(1123 * previewSchaal)}px`,
+                        overflow: "hidden",
+                        borderRadius: "4px",
+                        boxShadow: "0 8px 40px rgba(0,0,0,0.18)",
+                        flexShrink: 0,
+                      }}
+                    >
+                      <div style={{ width: "794px", transformOrigin: "top left", transform: `scale(${previewSchaal})` }}>
+                        <FactuurLayoutPreview inst={instellingen} />
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
