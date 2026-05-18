@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld('api', {
     importeerHistorisch: (data: unknown) => ipcRenderer.invoke('facturen:importeerHistorisch', data),
     onbetaaldeMeldingen: () => ipcRenderer.invoke('facturen:onbetaaldeMeldingen'),
     scanPdf: (data: { pad: string }) => ipcRenderer.invoke('facturen:scanPdf', data),
+    scanPdfLokaal: (data: { pad: string }) => ipcRenderer.invoke('facturen:scanPdfLokaal', data),
     kiesBestanden: () => ipcRenderer.invoke('facturen:kiesBestanden'),
   },
   offertes: {
@@ -57,7 +58,7 @@ contextBridge.exposeInMainWorld('api', {
     delete: (id: string) => ipcRenderer.invoke('uitgaven:delete', id),
     uploadBon: (data: unknown) => ipcRenderer.invoke('uitgaven:uploadBon', data),
     openBon: (data: unknown) => ipcRenderer.invoke('uitgaven:openBon', data),
-    scanBon: (data: unknown) => ipcRenderer.invoke('uitgaven:scanBon', data),
+    scanBon: (data: { bonPad: string; lokaal?: boolean }) => ipcRenderer.invoke('uitgaven:scanBon', data),
     kiesBon: () => ipcRenderer.invoke('uitgaven:kiesBon'),
   },
   categorien: {

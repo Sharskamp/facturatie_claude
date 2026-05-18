@@ -12,6 +12,7 @@ import { verstuurEmail, maakFactuurEmailHtml } from '../lib/email'
 import { haalAgendaAfspraken, haalKalenderLijst, maakGoogleAfspraak, maakGoogleAuthUrl, wisselCodeVoorTokens, vernieuwAccessToken } from '../lib/google-calendar'
 import { autoUpdater } from 'electron-updater'
 import * as os from 'os'
+import { scanBestandLokaal } from '../lib/lokale-ocr'
 
 app.setName('Streamline Facturatie')
 
@@ -2230,13 +2231,31 @@ function setupIpcHandlers() {
   // ── Betalingsherinneringen sturen ──
   ipcMain.handle('facturen:stuurHerinneringen', async () => stuurHerinneringen())
 
-  ipcMain.handle('uitgaven:scanBon', async (_, { bonPad }: { bonPad: string }) => {
+  ipcMain.handle('uitgaven:scanBon', async (_, { bonPad, lokaal }: { bonPad: string; lokaal?: boolean }) => {
     const user = await prisma.user.findFirst()
     const model = user?.aiModel ?? 'claude'
 
+    // Lokale OCR pad (geen API nodig)
+    if (lokaal) {
+      const result = await scanBestandLokaal(bonPad)
+      if (result.error) return result
+      return {
+        bedrag: result.totaal ?? null,
+        leverancier: result.klantNaam ?? null,
+        datum: result.datum ?? null,
+      }
+    }
+
     const ext = bonPad.split('.').pop()?.toLowerCase() ?? ''
+    // PDF nu ook ondersteunen via lokale OCR als fallback
     if (ext === 'pdf') {
-      return { error: 'PDF scanning niet ondersteund. Gebruik een afbeelding (JPG, PNG, WEBP).' }
+      const result = await scanBestandLokaal(bonPad)
+      if (result.error) return result
+      return {
+        bedrag: result.totaal ?? null,
+        leverancier: result.klantNaam ?? null,
+        datum: result.datum ?? null,
+      }
     }
 
     let mediaType: string
@@ -2415,6 +2434,11 @@ Gebruik null voor velden die je niet kunt vinden. Retourneer ALLEEN JSON.`
     } catch (e: unknown) {
       return { error: e instanceof Error ? e.message : 'Onbekende fout bij scannen' }
     }
+  })
+
+  // ── Factuur/bon scannen zonder cloud AI (lokale OCR) ──
+  ipcMain.handle('facturen:scanPdfLokaal', async (_, { pad }: { pad: string }) => {
+    return scanBestandLokaal(pad)
   })
 
   // ── Vaste Activa ──

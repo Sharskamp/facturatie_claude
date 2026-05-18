@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft, Plus, Trash2, CheckCircle, AlertCircle, Loader2,
-  Upload, FileText, Download, Info, ScanLine, UserPlus, X, RefreshCw,
+  Upload, FileText, Download, Info, ScanLine, UserPlus, X, RefreshCw, Cpu, Cloud,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -278,6 +278,7 @@ export default function FactuurImportHistorischPage() {
   }
 
   // ── PDF scan modus ────────────────────────────────────────
+  const [scanEngine, setScanEngine] = useState<"ai" | "lokaal">("lokaal");
   const [pdfRijen, setPdfRijen] = useState<CsvRij[]>([]);
   const [pdfFout, setPdfFout] = useState<string | null>(null);
   const [pdfScanBezig, setPdfScanBezig] = useState(false);
@@ -317,7 +318,10 @@ export default function FactuurImportHistorischPage() {
       setPdfRijen(prev => prev.map(r => r._id === rij._id ? { ...r, scanStatus: "bezig" } : r));
 
       try {
-        const resultaat = await window.api.facturen.scanPdf({ pad: rij.bronBestand! });
+        const scanFn = scanEngine === "lokaal"
+          ? window.api.facturen.scanPdfLokaal
+          : window.api.facturen.scanPdf;
+        const resultaat = await scanFn({ pad: rij.bronBestand! });
 
         if (resultaat.error) throw new Error(resultaat.error);
 
@@ -362,7 +366,7 @@ export default function FactuurImportHistorischPage() {
 
     scanningRef.current = false;
     setPdfScanBezig(false);
-  }, [klanten]);
+  }, [klanten, scanEngine]);
 
   useEffect(() => {
     const teScanner = pdfRijen.filter(r => r.scanStatus === "wacht");
@@ -824,12 +828,51 @@ export default function FactuurImportHistorischPage() {
               </div>
             )}
 
+            {/* Scan engine kiezer */}
+            <div className="flex gap-3 p-1 bg-gray-100 dark:bg-gray-800 rounded-xl w-fit">
+              <button
+                onClick={() => setScanEngine("lokaal")}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  scanEngine === "lokaal"
+                    ? "bg-white dark:bg-gray-700 shadow text-gray-900 dark:text-white"
+                    : "text-gray-500 hover:text-gray-700"
+                }`}
+              >
+                <Cpu className="h-4 w-4" />
+                Lokaal (NPU/Tesseract)
+              </button>
+              <button
+                onClick={() => setScanEngine("ai")}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  scanEngine === "ai"
+                    ? "bg-white dark:bg-gray-700 shadow text-gray-900 dark:text-white"
+                    : "text-gray-500 hover:text-gray-700"
+                }`}
+              >
+                <Cloud className="h-4 w-4" />
+                Claude AI (cloud)
+              </button>
+            </div>
+
             {/* Info banner */}
-            <div className="rounded-lg bg-indigo-50 border border-indigo-200 p-4 text-sm text-indigo-800 flex gap-3">
-              <ScanLine className="h-5 w-5 shrink-0 mt-0.5" />
+            <div className={`rounded-lg border p-4 text-sm flex gap-3 ${
+              scanEngine === "lokaal"
+                ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                : "bg-indigo-50 border-indigo-200 text-indigo-800"
+            }`}>
+              {scanEngine === "lokaal" ? <Cpu className="h-5 w-5 shrink-0 mt-0.5" /> : <ScanLine className="h-5 w-5 shrink-0 mt-0.5" />}
               <div>
-                <p className="font-semibold">AI-scan van PDF/afbeeldingen</p>
-                <p className="text-indigo-700 mt-0.5">Bestanden worden automatisch gescand met AI. Controleer alle gegevens voordat je importeert. Nieuwe klanten worden aangemaakt als je dit aanvinkt.</p>
+                {scanEngine === "lokaal" ? (
+                  <>
+                    <p className="font-semibold">Lokale OCR — geen internet nodig</p>
+                    <p className="mt-0.5 opacity-80">Op Windows wordt Windows.Media.Ocr gebruikt (hardware-versneld via NPU/GPU). Op andere systemen valt het terug op Tesseract. Eerste gebruik downloadt taalbestanden (~10 MB).</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="font-semibold">Claude AI-scan (vereist API-sleutel)</p>
+                    <p className="mt-0.5 opacity-80">Bestanden worden naar de Claude API gestuurd. Hogere nauwkeurigheid, maar vereist internetverbinding en API-sleutel in Instellingen.</p>
+                  </>
+                )}
               </div>
             </div>
 
