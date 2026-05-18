@@ -77,6 +77,7 @@ model User {
   onbetaaldeFactuurMelding Boolean @default(true)
   factuurHtmlTemplate   String?
   offerteGeldigheidDagen Int    @default(30)
+  verborgenPaginas      String    @default("[]")
   aangemaakt            DateTime  @default(now())
   bijgewerkt            DateTime  @updatedAt
 }

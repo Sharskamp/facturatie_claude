@@ -20,6 +20,9 @@ import {
   Palette,
   ChevronUp,
   ChevronDown,
+  Eye,
+  EyeOff,
+  Menu,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -34,7 +37,7 @@ import {
 } from "@/components/ui/select";
 import { useTheme } from "@/context/theme";
 
-type Tab = "bedrijf" | "facturen" | "layout" | "email" | "google" | "kor" | "ai" | "overig" | "geavanceerd";
+type Tab = "bedrijf" | "facturen" | "layout" | "email" | "google" | "kor" | "ai" | "overig" | "geavanceerd" | "navigatie";
 
 const TAB_CONFIG: Array<{ id: Tab; label: string; icon: React.ElementType }> = [
   { id: "bedrijf", label: "Bedrijfsgegevens", icon: Building2 },
@@ -45,7 +48,24 @@ const TAB_CONFIG: Array<{ id: Tab; label: string; icon: React.ElementType }> = [
   { id: "kor", label: "KOR", icon: Calculator },
   { id: "ai", label: "AI / OCR", icon: Bot },
   { id: "overig", label: "Overig", icon: MoreHorizontal },
+  { id: "navigatie", label: "Navigatie", icon: Menu },
   { id: "geavanceerd", label: "Geavanceerd", icon: Settings },
+];
+
+const ALLE_PAGINAS = [
+  { href: "/klanten", naam: "Klanten" },
+  { href: "/facturen", naam: "Facturen" },
+  { href: "/offertes", naam: "Offertes" },
+  { href: "/agenda", naam: "Agenda" },
+  { href: "/inkomen", naam: "Inkomen" },
+  { href: "/uitgaven", naam: "Uitgaven" },
+  { href: "/crediteuren", naam: "Crediteuren" },
+  { href: "/uren", naam: "Uren" },
+  { href: "/kilometer", naam: "Kilometer" },
+  { href: "/bank-import", naam: "Bankimport" },
+  { href: "/producten", naam: "Producten" },
+  { href: "/vaste-activa", naam: "Vaste activa" },
+  { href: "/rapporten", naam: "Rapporten" },
 ];
 
 interface Instellingen {
@@ -117,6 +137,7 @@ interface Instellingen {
   onbetaaldeFactuurMelding?: boolean;
   factuurHtmlTemplate?: string;
   offerteGeldigheidDagen?: number;
+  verborgenPaginas?: string;
 }
 
 export default function InstellingenPagina() {
@@ -169,6 +190,11 @@ export default function InstellingenPagina() {
     }, 1500);
     return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
   }, [instellingen]);
+
+  useEffect(() => {
+    if (!isGeladen.current) return;
+    window.dispatchEvent(new CustomEvent('verborgenPaginasGewijzigd', { detail: instellingen.verborgenPaginas ?? '[]' }));
+  }, [instellingen.verborgenPaginas]);
 
   useEffect(() => {
     window.api.app.getAutoStart().then(setAutoStart).catch(() => {});
@@ -1651,6 +1677,55 @@ export default function InstellingenPagina() {
             </Card>
           </div>
         )}
+
+        {actieveTab === "navigatie" && (() => {
+          const verborgen: string[] = JSON.parse(instellingen.verborgenPaginas ?? '[]');
+          const togglePagina = (href: string) => {
+            const nieuw = verborgen.includes(href)
+              ? verborgen.filter(h => h !== href)
+              : [...verborgen, href];
+            updateVeld('verborgenPaginas', JSON.stringify(nieuw));
+          };
+          return (
+            <div className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Navigatie verbergen</CardTitle>
+                  <CardDescription>
+                    Verborgen pagina's verdwijnen uit het hoofdmenu en zijn terug te vinden onder "Meer" onderaan de sidebar.
+                    Dashboard en Instellingen kunnen niet worden verborgen.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {ALLE_PAGINAS.map(pagina => {
+                    const isVerborgen = verborgen.includes(pagina.href);
+                    return (
+                      <div
+                        key={pagina.href}
+                        className="flex items-center justify-between py-2 border-b border-gray-100 dark:border-gray-800 last:border-0"
+                      >
+                        <span className="text-sm font-medium">{pagina.naam}</span>
+                        <button
+                          onClick={() => togglePagina(pagina.href)}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                            isVerborgen
+                              ? 'bg-gray-100 dark:bg-gray-800 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700'
+                              : 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/50'
+                          }`}
+                        >
+                          {isVerborgen
+                            ? <><EyeOff className="h-3.5 w-3.5" /> Verborgen</>
+                            : <><Eye className="h-3.5 w-3.5" /> Zichtbaar</>
+                          }
+                        </button>
+                      </div>
+                    );
+                  })}
+                </CardContent>
+              </Card>
+            </div>
+          );
+        })()}
       </div>
     </div>
   );

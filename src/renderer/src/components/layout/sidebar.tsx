@@ -14,6 +14,8 @@ import {
   Building2,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   Car,
   Landmark,
   Package,
@@ -43,11 +45,15 @@ const navigatie = [
   { naam: "Instellingen", href: "/instellingen", icoon: Settings, uitleg: "Stel je bedrijfsgegevens, e-mail (SMTP), BTW-nummers, Mollie-koppeling en meer in." },
 ];
 
+const ALTIJD_ZICHTBAAR = new Set(["/", "/instellingen"]);
+
 export function Sidebar() {
   const location = useLocation();
   const navigate = useNavigate();
   const { logout } = useAuth();
   const [ingeklapt, setIngeklapt] = useState(window.innerWidth < 1200);
+  const [verborgenPaginas, setVerborgenPaginas] = useState<string[]>([]);
+  const [meerOpen, setMeerOpen] = useState(false);
 
   useEffect(() => {
     const handler = () => setIngeklapt(prev => window.innerWidth < 1200 ? true : prev);
@@ -55,9 +61,59 @@ export function Sidebar() {
     return () => window.removeEventListener("resize", handler);
   }, []);
 
+  useEffect(() => {
+    window.api.instellingen.get().then((data: unknown) => {
+      const inst = data as { verborgenPaginas?: string } | null;
+      if (inst?.verborgenPaginas) {
+        try { setVerborgenPaginas(JSON.parse(inst.verborgenPaginas)); } catch {}
+      }
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const custom = e as CustomEvent<string>;
+      try { setVerborgenPaginas(JSON.parse(custom.detail || '[]')); } catch {}
+    };
+    window.addEventListener('verborgenPaginasGewijzigd', handler);
+    return () => window.removeEventListener('verborgenPaginasGewijzigd', handler);
+  }, []);
+
   function handleLogout() {
     logout();
     navigate("/login");
+  }
+
+  const zichtbareItems = navigatie.filter(
+    item => ALTIJD_ZICHTBAAR.has(item.href) || !verborgenPaginas.includes(item.href)
+  );
+  const verborgenItems = navigatie.filter(
+    item => !ALTIJD_ZICHTBAAR.has(item.href) && verborgenPaginas.includes(item.href)
+  );
+
+  function renderNavItem(item: typeof navigatie[0]) {
+    const actief =
+      item.href === "/"
+        ? location.pathname === "/"
+        : location.pathname.startsWith(item.href);
+    return (
+      <HelpTip key={item.href} tekst={item.uitleg} className="w-full">
+        <Link
+          to={item.href}
+          className={cn(
+            "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors w-full",
+            actief
+              ? "bg-indigo-600 text-white"
+              : "text-gray-400 hover:bg-gray-700 hover:text-white",
+            ingeklapt && "justify-center px-2"
+          )}
+          title={ingeklapt ? item.naam : undefined}
+        >
+          <item.icoon className="h-5 w-5 flex-shrink-0" />
+          {!ingeklapt && <span>{item.naam}</span>}
+        </Link>
+      </HelpTip>
+    );
   }
 
   return (
@@ -103,30 +159,31 @@ export function Sidebar() {
 
       {/* Navigatie */}
       <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-        {navigatie.map((item) => {
-          const actief =
-            item.href === "/"
-              ? location.pathname === "/"
-              : location.pathname.startsWith(item.href);
-          return (
-            <HelpTip key={item.href} tekst={item.uitleg} className="w-full">
-              <Link
-                to={item.href}
-                className={cn(
-                  "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors w-full",
-                  actief
-                    ? "bg-indigo-600 text-white"
-                    : "text-gray-400 hover:bg-gray-700 hover:text-white",
-                  ingeklapt && "justify-center px-2"
-                )}
-                title={ingeklapt ? item.naam : undefined}
-              >
-                <item.icoon className="h-5 w-5 flex-shrink-0" />
-                {!ingeklapt && <span>{item.naam}</span>}
-              </Link>
-            </HelpTip>
-          );
-        })}
+        {zichtbareItems.map(renderNavItem)}
+
+        {verborgenItems.length > 0 && (
+          <div className="pt-1">
+            <button
+              onClick={() => setMeerOpen(prev => !prev)}
+              className={cn(
+                "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-500 hover:bg-gray-700 hover:text-gray-300 transition-colors w-full",
+                ingeklapt && "justify-center px-2"
+              )}
+              title={ingeklapt ? "Meer" : undefined}
+            >
+              {meerOpen
+                ? <ChevronUp className="h-4 w-4 flex-shrink-0" />
+                : <ChevronDown className="h-4 w-4 flex-shrink-0" />
+              }
+              {!ingeklapt && <span>Meer</span>}
+            </button>
+            {meerOpen && (
+              <div className="space-y-1 mt-1">
+                {verborgenItems.map(renderNavItem)}
+              </div>
+            )}
+          </div>
+        )}
       </nav>
 
       {/* Uitloggen */}

@@ -131,6 +131,7 @@ function runMigratie(dbPath: string): void {
   kolomToevoegen('User', 'onbetaaldeFactuurMelding', 'BOOLEAN NOT NULL DEFAULT true')
   kolomToevoegen('User', 'factuurHtmlTemplate', 'TEXT')
   kolomToevoegen('User', 'offerteGeldigheidDagen', 'INTEGER NOT NULL DEFAULT 30')
+  kolomToevoegen('User', 'verborgenPaginas', "TEXT NOT NULL DEFAULT '[]'")
 
   // Klant — nieuwe kolommen
   kolomToevoegen('Klant', 'betaalTermijn', 'INTEGER')
