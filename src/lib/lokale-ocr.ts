@@ -11,6 +11,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { BrowserWindow } from 'electron'
+import Tesseract from 'tesseract.js'
 
 const execAsync = promisify(exec)
 
@@ -93,17 +94,19 @@ async function ocrViaWindowsMediaOcr(imagePad: string): Promise<string> {
   }
 }
 
-// ── Tesseract.js fallback ─────────────────────────────────────────────────────
+// ── Tesseract.js fallback (v4, CJS-compatible) ───────────────────────────────
 async function ocrViaTesseract(imagePad: string): Promise<string> {
-  // Dynamic import omdat tesseract.js ES module is
-  const { createWorker } = await import('tesseract.js')
-  const worker = await createWorker(['nld', 'eng'], 1, {
-    // Gebruik lokale cache in appdata zodat taaldata niet elke keer opnieuw geladen wordt
-    cachePath: path.join(os.homedir(), '.streamline-facturatie', 'tessdata'),
-  })
+  const cacheDir = path.join(os.homedir(), '.streamline-facturatie', 'tessdata')
+  if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true })
+
+  // v4 API: createWorker(taal, oem, opties)
+  const worker = await Tesseract.createWorker('nld+eng', 1, {
+    cachePath: cacheDir,
+    gzip: false,
+  } as Parameters<typeof Tesseract.createWorker>[2])
   try {
-    const { data } = await worker.recognize(imagePad)
-    return data.text
+    const result = await worker.recognize(imagePad)
+    return result.data.text
   } finally {
     await worker.terminate()
   }

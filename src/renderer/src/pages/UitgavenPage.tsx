@@ -9,6 +9,7 @@ import {
   Filter,
   Upload,
   ScanLine,
+  Cpu,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -122,6 +123,7 @@ export default function UitgavenPagina() {
   // Scan-bon state: welke uitgave heeft net een bon gekregen en klaar is om te scannen
   const [bonScanInfo, setBonScanInfo] = useState<{ uitgaveId: string; bonPad: string } | null>(null);
   const [scanLaden, setScanLaden] = useState(false);
+  const [scanEngine, setScanEngine] = useState<"lokaal" | "ai">("lokaal");
 
   const haalUitgavenOp = useCallback(async () => {
     try {
@@ -255,12 +257,7 @@ export default function UitgavenPagina() {
     if (!bonPad) return;
     setModalScanLaden(true);
     try {
-      const res = await window.api.uitgaven.scanBon({ bonPad }) as {
-        bedrag?: number | null;
-        leverancier?: string | null;
-        datum?: string | null;
-        error?: string;
-      };
+      const res = await window.api.uitgaven.scanBon({ bonPad, lokaal: scanEngine === "lokaal" });
       if (res.error) {
         toonMelding("fout", res.error);
       } else {
@@ -337,60 +334,76 @@ export default function UitgavenPagina() {
 
         {/* Bon scan notificatie */}
         {bonScanInfo && (
-          <div className="rounded-lg bg-indigo-50 border border-indigo-200 px-4 py-3 flex items-center justify-between gap-4">
-            <div className="flex items-center gap-2">
-              <ScanLine className="h-4 w-4 text-indigo-600 shrink-0" />
-              <span className="text-sm text-indigo-800 font-medium">
-                Bon opgeslagen. Wil je de gegevens automatisch uitlezen?
-              </span>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <Button
-                size="sm"
-                variant="outline"
-                loading={scanLaden}
-                onClick={async () => {
-                  setScanLaden(true);
-                  try {
-                    const res = await window.api.uitgaven.scanBon({ bonPad: bonScanInfo.bonPad }) as {
-                      bedrag?: number | null;
-                      leverancier?: string | null;
-                      datum?: string | null;
-                      error?: string;
-                    };
-                    if (res.error) {
-                      toonMelding("fout", res.error);
-                    } else {
-                      const updateData: Record<string, unknown> = {};
-                      if (res.bedrag != null) updateData.bedrag = res.bedrag;
-                      if (res.leverancier) updateData.leverancier = res.leverancier;
-                      if (res.datum) updateData.datum = res.datum;
-                      if (Object.keys(updateData).length > 0) {
-                        await window.api.uitgaven.update(bonScanInfo.uitgaveId, updateData);
-                        await haalUitgavenOp();
-                        toonMelding("succes",
-                          `Ingevuld: ${res.bedrag != null ? `€${res.bedrag}` : ""}${res.leverancier ? ` bij ${res.leverancier}` : ""}${res.datum ? ` op ${res.datum}` : ""}`
-                        );
+          <div className="rounded-lg bg-indigo-50 border border-indigo-200 px-4 py-3 space-y-2">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <ScanLine className="h-4 w-4 text-indigo-600 shrink-0" />
+                <span className="text-sm text-indigo-800 font-medium">
+                  Bon opgeslagen. Wil je de gegevens automatisch uitlezen?
+                </span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  loading={scanLaden}
+                  onClick={async () => {
+                    setScanLaden(true);
+                    try {
+                      const res = await window.api.uitgaven.scanBon({ bonPad: bonScanInfo.bonPad, lokaal: scanEngine === "lokaal" });
+                      if (res.error) {
+                        toonMelding("fout", res.error);
                       } else {
-                        toonMelding("fout", "Geen gegevens herkend op de bon");
+                        const updateData: Record<string, unknown> = {};
+                        if (res.bedrag != null) updateData.bedrag = res.bedrag;
+                        if (res.leverancier) updateData.leverancier = res.leverancier;
+                        if (res.datum) updateData.datum = res.datum;
+                        if (Object.keys(updateData).length > 0) {
+                          await window.api.uitgaven.update(bonScanInfo.uitgaveId, updateData);
+                          await haalUitgavenOp();
+                          toonMelding("succes",
+                            `Ingevuld: ${res.bedrag != null ? `€${res.bedrag}` : ""}${res.leverancier ? ` bij ${res.leverancier}` : ""}${res.datum ? ` op ${res.datum}` : ""}`
+                          );
+                        } else {
+                          toonMelding("fout", "Geen gegevens herkend op de bon");
+                        }
                       }
+                    } catch {
+                      toonMelding("fout", "Scannen mislukt");
+                    } finally {
+                      setScanLaden(false);
+                      setBonScanInfo(null);
                     }
-                  } catch {
-                    toonMelding("fout", "Scannen mislukt");
-                  } finally {
-                    setScanLaden(false);
-                    setBonScanInfo(null);
-                  }
-                }}
-              >
-                <ScanLine className="h-4 w-4" />
-                Scannen
-              </Button>
+                  }}
+                >
+                  {scanEngine === "lokaal" ? <Cpu className="h-4 w-4" /> : <ScanLine className="h-4 w-4" />}
+                  Scannen
+                </Button>
+                <button
+                  className="text-sm text-indigo-400 hover:text-indigo-600"
+                  onClick={() => setBonScanInfo(null)}
+                >
+                  Overslaan
+                </button>
+              </div>
+            </div>
+            {/* Scan engine kiezer */}
+            <div className="flex gap-2">
               <button
-                className="text-sm text-indigo-400 hover:text-indigo-600"
-                onClick={() => setBonScanInfo(null)}
+                onClick={() => setScanEngine("lokaal")}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
+                  scanEngine === "lokaal" ? "bg-white shadow text-gray-800 border border-gray-200" : "text-indigo-500 hover:text-indigo-700"
+                }`}
               >
-                Overslaan
+                <Cpu className="h-3 w-3" />Lokaal (NPU)
+              </button>
+              <button
+                onClick={() => setScanEngine("ai")}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
+                  scanEngine === "ai" ? "bg-white shadow text-gray-800 border border-gray-200" : "text-indigo-500 hover:text-indigo-700"
+                }`}
+              >
+                <ScanLine className="h-3 w-3" />Claude AI
               </button>
             </div>
           </div>
@@ -758,17 +771,39 @@ export default function UitgavenPagina() {
                       </Button>
                     </div>
                   </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full"
-                    type="button"
-                    loading={modalScanLaden}
-                    onClick={scanBonInModal}
-                  >
-                    <ScanLine className="h-4 w-4 mr-1" />
-                    Gegevens uitlezen met AI
-                  </Button>
+                  <div className="space-y-1.5">
+                    <div className="flex gap-1 p-0.5 bg-gray-100 rounded-lg">
+                      <button
+                        type="button"
+                        onClick={() => setScanEngine("lokaal")}
+                        className={`flex-1 flex items-center justify-center gap-1.5 py-1 rounded text-xs font-medium transition-colors ${
+                          scanEngine === "lokaal" ? "bg-white shadow text-gray-800" : "text-gray-500"
+                        }`}
+                      >
+                        <Cpu className="h-3 w-3" />Lokaal (NPU)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setScanEngine("ai")}
+                        className={`flex-1 flex items-center justify-center gap-1.5 py-1 rounded text-xs font-medium transition-colors ${
+                          scanEngine === "ai" ? "bg-white shadow text-gray-800" : "text-gray-500"
+                        }`}
+                      >
+                        <ScanLine className="h-3 w-3" />Claude AI
+                      </button>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full"
+                      type="button"
+                      loading={modalScanLaden}
+                      onClick={scanBonInModal}
+                    >
+                      {scanEngine === "lokaal" ? <Cpu className="h-4 w-4 mr-1" /> : <ScanLine className="h-4 w-4 mr-1" />}
+                      {scanEngine === "lokaal" ? "Uitlezen (lokaal)" : "Uitlezen met AI"}
+                    </Button>
+                  </div>
                 </div>
               ) : (
                 <div className="border-2 border-dashed border-gray-200 rounded-lg p-4 text-center">
