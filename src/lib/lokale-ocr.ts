@@ -31,46 +31,53 @@ export interface OcrVelden {
 // ── Windows.Media.Ocr via PowerShell ─────────────────────────────────────────
 // Gebruikt de Windows OCR-engine die op moderne hardware (Intel, AMD, Qualcomm)
 // automatisch de NPU/iGPU inschakelt via Windows ML.
+// WinRT-types worden geladen via ContentType=WindowsRuntime (niet Add-Type -AssemblyName).
 const WINDOWS_OCR_SCRIPT = String.raw`
 param([string]$ImagePath)
 $ErrorActionPreference = 'Stop'
 try {
-  Add-Type -AssemblyName System.Windows.Runtime
+  # System.Runtime.WindowsRuntime levert de AsTask extensiemethoden
   Add-Type -AssemblyName System.Runtime.WindowsRuntime
 
-  # Laad WinRT types
-  $null = [System.Reflection.Assembly]::Load('Windows.Foundation, Version=255.255.255.255, Culture=neutral, PublicKeyToken=null, ContentType=WindowsRuntime')
+  # WinRT types laden via ContentType=WindowsRuntime
+  $null = [Windows.Storage.Streams.IRandomAccessStream,Windows.Storage.Streams,ContentType=WindowsRuntime]
+  $null = [Windows.Graphics.Imaging.BitmapDecoder,Windows.Graphics.Imaging,ContentType=WindowsRuntime]
+  $null = [Windows.Graphics.Imaging.SoftwareBitmap,Windows.Graphics.Imaging,ContentType=WindowsRuntime]
+  $null = [Windows.Media.Ocr.OcrEngine,Windows.Media.Ocr,ContentType=WindowsRuntime]
+  $null = [Windows.Globalization.Language,Windows.Globalization,ContentType=WindowsRuntime]
 
-  # Helper: converteer IAsyncOperation naar .NET Task
-  function AwaitTask($winRtTask) {
-    $methods = [System.WindowsRuntimeSystemExtensions].GetMethods()
-    $asTask = $methods | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.IsGenericMethod } | Select-Object -First 1
-    $resultType = $winRtTask.GetType().GetGenericArguments()[0]
-    $genericMethod = $asTask.MakeGenericMethod($resultType)
-    $task = $genericMethod.Invoke($null, @($winRtTask))
+  # Helper: IAsyncOperation<T> -> wachten op resultaat via .NET Task
+  function Await-WinRT([object]$asyncOp) {
+    $methods = [System.WindowsRuntimeSystemExtensions].GetMethods() |
+      Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.IsGenericMethod }
+    $method = $methods | Select-Object -First 1
+    $resultType = $asyncOp.GetType().GetGenericArguments()[0]
+    $task = $method.MakeGenericMethod($resultType).Invoke($null, @($asyncOp))
     $task.Wait(-1) | Out-Null
     return $task.Result
   }
 
-  # Laad afbeelding als SoftwareBitmap
+  # Afbeelding inladen als SoftwareBitmap
   $stream = [System.IO.File]::OpenRead($ImagePath)
-  $randomAccessStream = [System.IO.WindowsRuntimeStreamExtensions]::AsRandomAccessStream($stream)
-  $decoder = AwaitTask([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($randomAccessStream))
-  $bitmap  = AwaitTask($decoder.GetSoftwareBitmapAsync())
+  $ras    = [System.IO.WindowsRuntimeStreamExtensions]::AsRandomAccessStream($stream)
+  $dec    = Await-WinRT ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($ras))
+  $bmp    = Await-WinRT ($dec.GetSoftwareBitmapAsync())
   $stream.Close()
 
-  # Kies OCR-engine: probeer nl-NL, dan nl-BE, dan OS-taal
-  $talen = @('nl-NL', 'nl-BE', 'en-US')
+  # OCR-engine kiezen: nl-NL -> nl-BE -> en-US -> OS-taal
   $engine = $null
-  foreach ($taal in $talen) {
-    $lang = [Windows.Globalization.Language]::new($taal)
-    $e = [Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage($lang)
-    if ($e) { $engine = $e; break }
+  foreach ($code in @('nl-NL','nl-BE','en-US')) {
+    try {
+      $e = [Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage([Windows.Globalization.Language]::new($code))
+      if ($null -ne $e) { $engine = $e; break }
+    } catch {}
   }
-  if (!$engine) { $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages() }
-  if (!$engine) { throw 'Geen OCR-engine beschikbaar' }
+  if ($null -eq $engine) { $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages() }
+  if ($null -eq $engine) {
+    throw 'Geen OCR-taalpack beschikbaar. Installeer Nederlands of Engels via Windows Instellingen > Tijd en taal > Taal.'
+  }
 
-  $result = AwaitTask($engine.RecognizeAsync($bitmap))
+  $result = Await-WinRT ($engine.RecognizeAsync($bmp))
   Write-Output $result.Text
 } catch {
   Write-Error $_.Exception.Message
@@ -81,9 +88,11 @@ try {
 async function ocrViaWindowsMediaOcr(imagePad: string): Promise<string> {
   const tmpScript = path.join(os.tmpdir(), `sf_windows_ocr_${Date.now()}.ps1`)
   fs.writeFileSync(tmpScript, WINDOWS_OCR_SCRIPT, 'utf8')
+  // Escape dubbele aanhalingstekens in het pad voor PowerShell
+  const psPad = imagePad.replace(/"/g, '`"')
   try {
     const { stdout } = await execAsync(
-      `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${tmpScript}" "${imagePad}"`,
+      `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${tmpScript}" "${psPad}"`,
       { timeout: 30_000 }
     )
     return stdout.trim()
