@@ -46,13 +46,14 @@ try {
   $null = [Windows.Media.Ocr.OcrEngine,Windows.Media.Ocr,ContentType=WindowsRuntime]
   $null = [Windows.Globalization.Language,Windows.Globalization,ContentType=WindowsRuntime]
 
-  # Helper: IAsyncOperation<T> -> wachten op resultaat via .NET Task
-  function Await-WinRT([object]$asyncOp) {
-    $methods = [System.WindowsRuntimeSystemExtensions].GetMethods() |
-      Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.IsGenericMethod }
-    $method = $methods | Select-Object -First 1
-    $resultType = $asyncOp.GetType().GetGenericArguments()[0]
-    $task = $method.MakeGenericMethod($resultType).Invoke($null, @($asyncOp))
+  # Helper: IAsyncOperation<T> -> wachten op resultaat.
+  # ResultType moet EXPLICIET meegegeven worden — auto-detectie via GetGenericArguments()
+  # werkt niet met WinRT-types in PowerShell.
+  function Await-WinRT([object]$asyncOp, [type]$ResultType) {
+    $method = ([System.WindowsRuntimeSystemExtensions].GetMethods() |
+      Where-Object { $_.Name -eq 'AsTask' -and $_.IsGenericMethod -and $_.GetParameters().Count -eq 1 } |
+      Select-Object -First 1).MakeGenericMethod($ResultType)
+    $task = $method.Invoke($null, @($asyncOp))
     $task.Wait(-1) | Out-Null
     return $task.Result
   }
@@ -60,8 +61,8 @@ try {
   # Afbeelding inladen als SoftwareBitmap
   $stream = [System.IO.File]::OpenRead($ImagePath)
   $ras    = [System.IO.WindowsRuntimeStreamExtensions]::AsRandomAccessStream($stream)
-  $dec    = Await-WinRT ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($ras))
-  $bmp    = Await-WinRT ($dec.GetSoftwareBitmapAsync())
+  $dec    = Await-WinRT ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($ras)) ([Windows.Graphics.Imaging.BitmapDecoder])
+  $bmp    = Await-WinRT ($dec.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
   $stream.Close()
 
   # OCR-engine kiezen: nl-NL -> nl-BE -> en-US -> OS-taal
@@ -77,7 +78,7 @@ try {
     throw 'Geen OCR-taalpack beschikbaar. Installeer Nederlands of Engels via Windows Instellingen > Tijd en taal > Taal.'
   }
 
-  $result = Await-WinRT ($engine.RecognizeAsync($bmp))
+  $result = Await-WinRT ($engine.RecognizeAsync($bmp)) ([Windows.Media.Ocr.OcrResult])
   Write-Output $result.Text
 } catch {
   Write-Error $_.Exception.Message
