@@ -165,81 +165,24 @@ export function extraheerFactuurVelden(tekst: string): Omit<OcrVelden, 'error'> 
   const regels = tekst.split('\n').map(r => r.trim()).filter(Boolean)
   const alles = tekst.replace(/\n/g, ' ')
 
-  // Factuurnummer
-  const nummerMatch = alles.match(
-    /(?:factuur(?:nummer)?|invoice(?:\s*no\.?)?|inv\.?\s*nr\.?|nummer)\s*[:#]?\s*([A-Z0-9][-A-Z0-9/_.]{1,20})/i
-  )
-  const nummer = nummerMatch?.[1]?.trim() ?? null
+  // ── Hulpfuncties ────────────────────────────────────────────────────────────
 
-  // Bedragen — NL-formaat: 1.234,56 of 1234.56 of €1.234,56
   function parseerBedrag(s: string): number | null {
     const schoon = s.replace(/\s/g, '').replace(/[€$£]/g, '')
-    // NL-stijl: 1.234,56
-    if (/^\d{1,3}(?:\.\d{3})*,\d{2}$/.test(schoon)) {
+    if (/^\d{1,3}(?:\.\d{3})*,\d{2}$/.test(schoon))
       return parseFloat(schoon.replace(/\./g, '').replace(',', '.'))
-    }
-    // EN-stijl: 1,234.56
-    if (/^\d{1,3}(?:,\d{3})*\.\d{2}$/.test(schoon)) {
+    if (/^\d{1,3}(?:,\d{3})*\.\d{2}$/.test(schoon))
       return parseFloat(schoon.replace(/,/g, ''))
-    }
-    // Eenvoudig getal
     const n = parseFloat(schoon.replace(',', '.'))
     return isNaN(n) ? null : n
   }
 
-  // Zoek regels met bedragen, sla nummers < 0.01 en > 999999 over
-  const bedragRgx = /[€$]?\s*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|\d+[.,]\d{2})/g
-  const gevondenBedragen: number[] = []
-  let m: RegExpExecArray | null
-  while ((m = bedragRgx.exec(alles)) !== null) {
-    const n = parseerBedrag(m[1])
-    if (n !== null && n >= 0.01 && n < 999_999) gevondenBedragen.push(n)
-  }
-
-  // Verwijder duplicaten en sorteer aflopend
-  const uniekeBedragen = [...new Set(gevondenBedragen)].sort((a, b) => b - a)
-  const totaal = uniekeBedragen[0] ?? null
-
-  // Zoek expliciete BTW-regel
-  let btwBedrag: number | null = null
-  let subtotaal: number | null = null
-
-  const btwRegel = regels.find(r =>
-    /\b(?:btw|omzetbelasting|vat|tax)\b.*\d/i.test(r) && !/excl|exclu/i.test(r)
-  )
-  if (btwRegel) {
-    const bm = btwRegel.match(/(\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|\d+[.,]\d{2})/)
-    if (bm) btwBedrag = parseerBedrag(bm[1])
-  }
-
-  // Zoek expliciete subtotaal-regel
-  const subRegel = regels.find(r =>
-    /\b(?:subtotaal|sub(?:total)?|excl(?:\.|usief)?\.?\s*btw|netto(?:bedrag)?)\b.*\d/i.test(r)
-  )
-  if (subRegel) {
-    const sm = subRegel.match(/(\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|\d+[.,]\d{2})/)
-    if (sm) subtotaal = parseerBedrag(sm[1])
-  }
-
-  // Bereken ontbrekende waarden
-  if (totaal !== null && btwBedrag !== null && subtotaal === null) {
-    subtotaal = Math.round((totaal - btwBedrag) * 100) / 100
-  } else if (totaal !== null && subtotaal !== null && btwBedrag === null) {
-    btwBedrag = Math.round((totaal - subtotaal) * 100) / 100
-  } else if (totaal !== null && btwBedrag === null && subtotaal === null) {
-    // Schat op basis van standaard 21% BTW
-    subtotaal = Math.round((totaal / 1.21) * 100) / 100
-    btwBedrag = Math.round((totaal - subtotaal) * 100) / 100
-  }
-
-  // Datum — NL-formaten
   const MAANDEN: Record<string, string> = {
     jan: '01', feb: '02', mrt: '03', maa: '03', apr: '04', mei: '05',
     jun: '06', jul: '07', aug: '08', sep: '09', okt: '10', nov: '11', dec: '12',
     january: '01', february: '02', march: '03', april: '04', may: '05', june: '06',
     july: '07', august: '08', september: '09', october: '10', november: '11', december: '12',
   }
-
   function normaliseerDatum(s: string): string | null {
     s = s.trim()
     if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s
@@ -253,78 +196,176 @@ export function extraheerFactuurVelden(tekst: string): Omit<OcrVelden, 'error'> 
     return null
   }
 
-  const datumPatronen = [
+  const DATUM_PATRONEN = [
     /\b(\d{4}-\d{2}-\d{2})\b/,
     /\b(\d{1,2}[-/.]\d{1,2}[-/.]\d{4})\b/,
     /\b(\d{1,2}\s+[a-zA-Zà-ü]{3,9}\.?\s+\d{4})\b/i,
   ]
+  function vindDatumInRegel(r: string): string | null {
+    for (const pat of DATUM_PATRONEN) {
+      const m = r.match(pat)
+      if (m) { const d = normaliseerDatum(m[1]); if (d) return d }
+    }
+    return null
+  }
 
+  // ── KOR / BTW-vrijstelling detecteren ───────────────────────────────────────
+  const korActief = /\b(?:kor|kleineondernemersregeling|vrijgesteld\s+van\s+btw|niet\s+btw.?plichtig|btw\s+niet\s+van\s+toepassing|article\s+25|art\.?\s*25|reverse\s+charge|btw\s+verlegd)\b/i.test(alles)
+
+  // ── Factuurnummer ────────────────────────────────────────────────────────────
+  const nummerMatch = alles.match(
+    /(?:factuur(?:nummer)?|invoice(?:\s*no\.?)?|inv\.?\s*nr\.?|rekening(?:nummer)?)\s*[:#]?\s*([A-Z0-9][-A-Z0-9/_.]{1,20})/i
+  )
+  const nummer = nummerMatch?.[1]?.trim() ?? null
+
+  // ── Bedragen ─────────────────────────────────────────────────────────────────
+  const bedragRgx = /[€$]?\s*(\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|\d+[.,]\d{2})/g
+  const gevondenBedragen: number[] = []
+  let m: RegExpExecArray | null
+  while ((m = bedragRgx.exec(alles)) !== null) {
+    const n = parseerBedrag(m[1])
+    if (n !== null && n >= 0.01 && n < 999_999) gevondenBedragen.push(n)
+  }
+  const uniekeBedragen = [...new Set(gevondenBedragen)].sort((a, b) => b - a)
+
+  // Totaal: zoek expliciet "totaal"-label, anders grootste bedrag
+  let totaal: number | null = null
+  const totaalRegel = regels.find(r =>
+    /\b(?:totaal|total|te\s+betalen|amount\s+due|grand\s+total)\b/i.test(r) &&
+    !/subtotaal|excl/i.test(r)
+  )
+  if (totaalRegel) {
+    const tm = totaalRegel.match(/(\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|\d+[.,]\d{2})/)
+    if (tm) totaal = parseerBedrag(tm[1])
+  }
+  if (totaal === null) totaal = uniekeBedragen[0] ?? null
+
+  // BTW
+  let btwBedrag: number | null = null
+  let subtotaal: number | null = null
+
+  if (korActief) {
+    // KOR: geen BTW
+    btwBedrag = 0
+    subtotaal = totaal
+  } else {
+    const btwRegel = regels.find(r =>
+      /\b(?:btw|omzetbelasting|vat|tax)\b.*\d/i.test(r) && !/excl|exclu/i.test(r)
+    )
+    if (btwRegel) {
+      const bm = btwRegel.match(/(\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|\d+[.,]\d{2})/)
+      if (bm) btwBedrag = parseerBedrag(bm[1])
+    }
+    const subRegel = regels.find(r =>
+      /\b(?:subtotaal|sub(?:total)?|excl(?:\.|usief)?\.?\s*btw|netto(?:bedrag)?)\b.*\d/i.test(r)
+    )
+    if (subRegel) {
+      const sm = subRegel.match(/(\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|\d+[.,]\d{2})/)
+      if (sm) subtotaal = parseerBedrag(sm[1])
+    }
+    // Bereken ontbrekende waarde
+    if (totaal !== null && btwBedrag !== null && subtotaal === null) {
+      subtotaal = Math.round((totaal - btwBedrag) * 100) / 100
+    } else if (totaal !== null && subtotaal !== null && btwBedrag === null) {
+      btwBedrag = Math.round((totaal - subtotaal) * 100) / 100
+    } else if (totaal !== null && btwBedrag === null && subtotaal === null) {
+      // Controleer of totaal ≈ subtotaal (geen BTW): verschil < 0.01
+      // Anders schat op 21%
+      subtotaal = Math.round((totaal / 1.21) * 100) / 100
+      btwBedrag = Math.round((totaal - subtotaal) * 100) / 100
+    }
+    // Als BTW = 0 maar KOR niet expliciet: zet toch op 0
+    if (btwBedrag !== null && btwBedrag === 0) subtotaal = totaal
+  }
+
+  // ── Datum en vervaldatum ─────────────────────────────────────────────────────
   let datum: string | null = null
   let vervaldatum: string | null = null
 
-  // Zoek vervaldatum eerst op gelabelde regels
   const vervalRegel = regels.find(r =>
     /verval|due\s*date|betaal.*voor|uiterlijk|payment\s*due/i.test(r)
   )
-  if (vervalRegel) {
-    for (const pat of datumPatronen) {
-      const vd = vervalRegel.match(pat)
-      if (vd) { vervaldatum = normaliseerDatum(vd[1]); break }
-    }
-  }
+  if (vervalRegel) vervaldatum = vindDatumInRegel(vervalRegel)
 
-  // Zoek factuurdatum
   const datumRegel = regels.find(r =>
     /factuur(?:datum)?|invoice\s*date|datum\s*(?:van\s*)?(?:factuur|rekening)|bill\s*date/i.test(r)
   )
   const zoekIn = datumRegel ? [datumRegel, ...regels] : regels
   for (const regel of zoekIn) {
-    for (const pat of datumPatronen) {
-      const dd = regel.match(pat)
-      if (dd) {
-        const d = normaliseerDatum(dd[1])
-        if (d && d !== vervaldatum) { datum = d; break }
-      }
-    }
-    if (datum) break
+    const d = vindDatumInRegel(regel)
+    if (d && d !== vervaldatum) { datum = d; break }
   }
 
-  // E-mail
+  // ── E-mail ───────────────────────────────────────────────────────────────────
   const emailMatch = alles.match(/\b([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b/)
   const klantEmail = emailMatch?.[1] ?? null
 
-  // Leverancier/klantnaam:
-  // 1. Zoek gelabelde regel ("klant:", "aan:", "bill to:", etc.) → factuur
-  // 2. Zoek eerste zinvolle regel bovenaan → kassabon
-  const klantRegel = regels.find(r =>
-    /^(?:klant|aan|t\.?\s*a\.?\s*v\.?|bill\s+to|invoice\s+to|geleverd\s+aan|sold\s+to)[:\s]/i.test(r)
-  )
+  // ── Klantnaam / Leverancier ──────────────────────────────────────────────────
+  // Volgorde:
+  // 1. Gelabelde klant-regel ("Aan:", "Klant:", "Bill to:", "Geleverd aan:")
+  // 2. Bedrijfsnaam met rechtsvorm (BV, NV, VOF, Inc, Ltd, GmbH)
+  // 3. Eerste zinvolle niet-numerieke bovenregel (kassabon)
+
   let klantNaam: string | null = null
-  if (klantRegel) {
-    klantNaam = klantRegel.replace(/^[^:]+:\s*/i, '').trim() || null
-  } else {
-    // Voor kassabonnen: eerste regel die eruitziet als een bedrijfsnaam
-    // (niet leeg, niet puur numeriek, niet te lang, geen adres/postcode)
+
+  // 1. Gelabeld
+  const gelabeldeKlantRegel = regels.find(r =>
+    /^(?:klant|aan|t\.?\s*a\.?\s*v\.?|bill\s+to|invoice\s+to|geleverd\s+aan|sold\s+to|ontvanger|recipient|besteld\s+door)[:\s]/i.test(r)
+  )
+  if (gelabeldeKlantRegel) {
+    klantNaam = gelabeldeKlantRegel.replace(/^[^:]+:\s*/i, '').trim() || null
+  }
+
+  // 2. Bedrijfsnaam met rechtsvorm ergens in document
+  if (!klantNaam) {
+    const rechtsvormen = /\b(?:b\.?v\.?|n\.?v\.?|v\.?o\.?f\.?|bvba|gmbh|inc\.?|ltd\.?|llc|s\.?a\.?r\.?l\.?|eenmanszaak|holding|groep|group)\b/i
+    const bedrijfsRegel = regels.find(r =>
+      rechtsvormen.test(r) && r.length >= 3 && r.length <= 60 &&
+      !/factuur|invoice|btw|vat|kvk|iban|datum|nummer/i.test(r)
+    )
+    if (bedrijfsRegel) klantNaam = bedrijfsRegel.trim()
+  }
+
+  // 3. Eerste zinvolle regel (kassabon fallback)
+  if (!klantNaam) {
     klantNaam = regels.find(r =>
-      r.length >= 2 &&
-      r.length <= 50 &&
-      !/^\d[\d\s.,]*$/.test(r) &&              // niet puur getal
-      !/^\d{4}\s?[A-Z]{2}\b/.test(r) &&       // geen postcode
-      !/^[+]?[(]?[0-9]{3}[)]?[-\s.]/.test(r) && // geen telefoonnummer
-      !/^(www\.|http)/i.test(r) &&             // geen url
-      !/^(btw|vat|tax|kvk|iban|subtotaal|totaal|bedrag|datum)/i.test(r)
+      r.length >= 2 && r.length <= 60 &&
+      !/^\d[\d\s.,€*-]*$/.test(r) &&
+      !/^\d{4}\s?[A-Z]{2}\b/.test(r) &&
+      !/^[+]?[(]?[0-9]{2,}[)]?[-\s.]/.test(r) &&
+      !/^(www\.|http)/i.test(r) &&
+      !/^(btw|vat|tax|kvk|iban|subtotaal|totaal|bedrag|datum|factuur|invoice|nummer|nr\.)/i.test(r)
     ) ?? null
   }
 
-  // Omschrijving: samenvatting voor het dagboek
-  // Gebruik leverancier als basis; voeg datum toe indien gevonden
+  // ── Artikelregels / omschrijving ────────────────────────────────────────────
+  // Herken inhoudsregels: tekst gevolgd door een bedrag, maar geen kop/voet/totaal-regels
+  const SKIP_PATRONEN = /^(?:btw|vat|tax|omzetbelasting|subtotaal|totaal|total|te\s+betalen|amount\s+due|korting|discount|verzend|shipping|porto|aanbetaling|deposit|iban|kvk|datum|factuur|invoice|aan|klant|bill\s+to|tel\.|fax|www\.|http|pagina|page)/i
+  const BEDRAG_ACHTERAAN = /[€$]?\s*\d{1,3}(?:[.,]\d{3})*[.,]\d{2}\s*$/
+
+  const artikelRegels: string[] = []
+  for (const regel of regels) {
+    // Sla koptekst (eerste 3 en laatste 5 regels) over
+    const idx = regels.indexOf(regel)
+    if (idx < 3 || idx >= regels.length - 5) continue
+    if (SKIP_PATRONEN.test(regel)) continue
+    if (BEDRAG_ACHTERAAN.test(regel) && regel.length > 5) {
+      // Haal bedrag weg aan het einde → omschrijving
+      const omschr = regel.replace(/[€$]?\s*\d{1,3}(?:[.,]\d{3})*[.,]\d{2}\s*$/, '').trim()
+      if (omschr.length >= 3 && !/^\d+$/.test(omschr)) artikelRegels.push(omschr)
+    }
+  }
+
+  // Omschrijving samenstellen
   let omschrijving: string | null = null
-  if (klantNaam && datum) {
+  if (artikelRegels.length > 0) {
+    // Meerdere regels: combineer, max 5 voor leesbaarheid
+    omschrijving = artikelRegels.slice(0, 5).join('; ')
+    if (artikelRegels.length > 5) omschrijving += ` (+${artikelRegels.length - 5} meer)`
+  } else if (klantNaam && datum) {
     omschrijving = `${klantNaam} – ${datum}`
   } else if (klantNaam) {
     omschrijving = klantNaam
-  } else if (datum) {
-    omschrijving = `Bon van ${datum}`
   }
 
   return {
@@ -338,7 +379,7 @@ export function extraheerFactuurVelden(tekst: string): Omit<OcrVelden, 'error'> 
     btwBedrag,
     totaal,
     status: 'BETAALD',
-    notities: null,
+    notities: korActief ? 'KOR – geen BTW' : null,
     omschrijving,
   }
 }
