@@ -2243,6 +2243,7 @@ function setupIpcHandlers() {
         bedrag: result.totaal ?? null,
         leverancier: result.klantNaam ?? null,
         datum: result.datum ?? null,
+        omschrijving: result.omschrijving ?? null,
       }
     }
 

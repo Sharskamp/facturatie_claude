@@ -266,6 +266,7 @@ export default function UitgavenPagina() {
           ...(res.bedrag != null ? { bedrag: String(res.bedrag) } : {}),
           ...(res.leverancier ? { leverancier: res.leverancier } : {}),
           ...(res.datum ? { datum: res.datum } : {}),
+          ...(res.omschrijving && !prev.omschrijving ? { omschrijving: res.omschrijving } : {}),
         }));
         toonMelding("succes", "Gegevens uitgelezen en ingevuld");
       }
@@ -358,6 +359,7 @@ export default function UitgavenPagina() {
                         if (res.bedrag != null) updateData.bedrag = res.bedrag;
                         if (res.leverancier) updateData.leverancier = res.leverancier;
                         if (res.datum) updateData.datum = res.datum;
+                        if (res.omschrijving) updateData.omschrijving = res.omschrijving;
                         if (Object.keys(updateData).length > 0) {
                           await window.api.uitgaven.update(bonScanInfo.uitgaveId, updateData);
                           await haalUitgavenOp();

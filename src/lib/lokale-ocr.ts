@@ -25,6 +25,7 @@ export interface OcrVelden {
   totaal?: number | null
   status?: string | null
   notities?: string | null
+  omschrijving?: string | null
   error?: string
 }
 
@@ -292,13 +293,38 @@ export function extraheerFactuurVelden(tekst: string): Omit<OcrVelden, 'error'> 
   const emailMatch = alles.match(/\b([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b/)
   const klantEmail = emailMatch?.[1] ?? null
 
-  // Klantnaam — zoek na "klant:", "aan:", "bill to:", "geleverd aan"
+  // Leverancier/klantnaam:
+  // 1. Zoek gelabelde regel ("klant:", "aan:", "bill to:", etc.) → factuur
+  // 2. Zoek eerste zinvolle regel bovenaan → kassabon
   const klantRegel = regels.find(r =>
     /^(?:klant|aan|t\.?\s*a\.?\s*v\.?|bill\s+to|invoice\s+to|geleverd\s+aan|sold\s+to)[:\s]/i.test(r)
   )
   let klantNaam: string | null = null
   if (klantRegel) {
     klantNaam = klantRegel.replace(/^[^:]+:\s*/i, '').trim() || null
+  } else {
+    // Voor kassabonnen: eerste regel die eruitziet als een bedrijfsnaam
+    // (niet leeg, niet puur numeriek, niet te lang, geen adres/postcode)
+    klantNaam = regels.find(r =>
+      r.length >= 2 &&
+      r.length <= 50 &&
+      !/^\d[\d\s.,]*$/.test(r) &&              // niet puur getal
+      !/^\d{4}\s?[A-Z]{2}\b/.test(r) &&       // geen postcode
+      !/^[+]?[(]?[0-9]{3}[)]?[-\s.]/.test(r) && // geen telefoonnummer
+      !/^(www\.|http)/i.test(r) &&             // geen url
+      !/^(btw|vat|tax|kvk|iban|subtotaal|totaal|bedrag|datum)/i.test(r)
+    ) ?? null
+  }
+
+  // Omschrijving: samenvatting voor het dagboek
+  // Gebruik leverancier als basis; voeg datum toe indien gevonden
+  let omschrijving: string | null = null
+  if (klantNaam && datum) {
+    omschrijving = `${klantNaam} – ${datum}`
+  } else if (klantNaam) {
+    omschrijving = klantNaam
+  } else if (datum) {
+    omschrijving = `Bon van ${datum}`
   }
 
   return {
@@ -313,6 +339,7 @@ export function extraheerFactuurVelden(tekst: string): Omit<OcrVelden, 'error'> 
     totaal,
     status: 'BETAALD',
     notities: null,
+    omschrijving,
   }
 }
 

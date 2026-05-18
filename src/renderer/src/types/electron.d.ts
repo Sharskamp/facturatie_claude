@@ -54,7 +54,7 @@ interface ElectronAPI {
     delete: (id: string) => Promise<{ succes: boolean }>
     uploadBon: (data: unknown) => Promise<unknown>
     openBon: (data: unknown) => Promise<unknown>
-    scanBon: (data: { bonPad: string; lokaal?: boolean }) => Promise<{ bedrag?: number | null; leverancier?: string | null; datum?: string | null; error?: string }>
+    scanBon: (data: { bonPad: string; lokaal?: boolean }) => Promise<{ bedrag?: number | null; leverancier?: string | null; datum?: string | null; omschrijving?: string | null; error?: string }>
     kiesBon: () => Promise<{ succes: boolean; pad?: string }>
   }
   categorien: {
