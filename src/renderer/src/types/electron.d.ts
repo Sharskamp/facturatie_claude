@@ -112,6 +112,7 @@ interface ElectronAPI {
     haalAfspraken: (params?: { van?: string; tot?: string }) => Promise<unknown>
     haalKalenders: () => Promise<unknown>
     maakAfspraak: (data: unknown) => Promise<unknown>
+    maakFacturenVanAfspraak: (data: { eventId: string }) => Promise<{ succes: boolean; facturen?: Array<{ id: string; nummer: string; klantNaam: string }>; fout?: string }>
   }
   producten: {
     list: () => Promise<unknown[]>

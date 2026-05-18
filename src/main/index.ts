@@ -176,10 +176,12 @@ function runMigratie(dbPath: string): void {
     "id" TEXT NOT NULL PRIMARY KEY,
     "eventId" TEXT NOT NULL,
     "klantId" TEXT,
+    "klantIds" TEXT,
     "locatie" TEXT,
     "regels" TEXT,
     "aangemaakt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`)
+  try { db.exec('ALTER TABLE "AgendaAfspraakData" ADD COLUMN "klantIds" TEXT') } catch {}
   try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS "AgendaAfspraakData_eventId_key" ON "AgendaAfspraakData"("eventId")') } catch {}
   try { db.exec('CREATE INDEX IF NOT EXISTS "AgendaAfspraakData_eventId_idx" ON "AgendaAfspraakData"("eventId")') } catch {}
 
@@ -1340,7 +1342,7 @@ function setupIpcHandlers() {
   })
 
   ipcMain.handle('agenda:maak-afspraak', async (_, data: {
-    klantId?: string
+    klantIds?: string[]
     locatie?: string
     startDatumTijd: string
     eindDatumTijd: string
@@ -1353,13 +1355,19 @@ function setupIpcHandlers() {
     const accessToken = await refreshTokenIfNeeded(user)
     if (!accessToken) throw new Error('Token vernieuwen mislukt.')
 
+    const klantIds = data.klantIds ?? []
     const titelDelen: string[] = []
-    if (data.klantId) {
-      const klant = await prisma.klant.findUnique({ where: { id: data.klantId } })
-      if (klant) titelDelen.push(klant.bedrijf || klant.naam)
+    if (klantIds.length > 0) {
+      const klanten = await prisma.klant.findMany({ where: { id: { in: klantIds } } })
+      // Preserve order from klantIds array
+      const gesorteerdNamen = klantIds
+        .map(id => klanten.find(k => k.id === id))
+        .filter(Boolean)
+        .map(k => k!.bedrijf || k!.naam)
+      titelDelen.push(...gesorteerdNamen)
     }
     if (data.locatie) titelDelen.push(data.locatie)
-    const titel = titelDelen.length > 0 ? titelDelen.join(' - ') : 'Afspraak'
+    const titel = titelDelen.length > 0 ? titelDelen.join(' – ') : 'Afspraak'
 
     const calendarId = data.calendarId
       || (user as Record<string, unknown>).googlePrimaryCalendarId as string | null
@@ -1378,13 +1386,76 @@ function setupIpcHandlers() {
       data: {
         id: randomUUID(),
         eventId,
-        klantId: data.klantId ?? null,
+        klantId: klantIds[0] ?? null,
+        klantIds: klantIds.length > 0 ? JSON.stringify(klantIds) : null,
         locatie: data.locatie ?? null,
         regels: data.regels ? JSON.stringify(data.regels) : null,
-      }
+      } as Parameters<typeof prisma.agendaAfspraakData.create>[0]['data']
     })
 
     return { succes: true, eventId, titel }
+  })
+
+  ipcMain.handle('agenda:maak-facturen-van-afspraak', async (_, { eventId }: { eventId: string }) => {
+    const user = await prisma.user.findFirst()
+    if (!user) throw new Error('Geen gebruiker')
+
+    const afspraakData = await prisma.agendaAfspraakData.findUnique({ where: { eventId } }) as (Record<string, unknown> & { klantIds?: string; regels?: string; klantId?: string }) | null
+
+    if (!afspraakData) return { succes: false, fout: 'Geen afspraakgegevens gevonden.' }
+
+    // Parse klantIds — fall back to single klantId for backwards compatibility
+    let klantIds: string[] = []
+    if (afspraakData.klantIds) {
+      try { klantIds = JSON.parse(afspraakData.klantIds as string) } catch {}
+    } else if (afspraakData.klantId) {
+      klantIds = [afspraakData.klantId as string]
+    }
+
+    if (klantIds.length === 0) return { succes: false, fout: 'Geen klanten gekoppeld aan deze afspraak.' }
+
+    const regels: Array<{ omschrijving: string; aantal: number; prijs: number; btwPercentage: number; eenheid?: string }> = afspraakData.regels
+      ? (() => { try { return JSON.parse(afspraakData.regels as string) } catch { return [] } })()
+      : []
+
+    const aangemaakteFacturen: Array<{ id: string; nummer: string; klantNaam: string }> = []
+
+    for (const klantId of klantIds) {
+      const klant = await prisma.klant.findUnique({ where: { id: klantId } })
+      if (!klant) continue
+      const effectieveBetaalTermijn = klant.betaalTermijn ?? user.standaardBetaalTermijn
+      const nummer = await genereerNummer(user.factuurPrefix, 'factuur')
+
+      let subtotaal = 0
+      let btwBedrag = 0
+      const berekendeRegels = regels.map((regel, index) => {
+        const netto = regel.prijs * regel.aantal
+        const btw = (netto * regel.btwPercentage) / 100
+        subtotaal += netto
+        btwBedrag += btw
+        return { ...regel, kortingPercentage: 0, totaal: netto + btw, volgorde: index }
+      })
+
+      const factuur = await prisma.factuur.create({
+        data: {
+          nummer,
+          klantId,
+          datum: new Date(),
+          vervaldatum: berekenVervaldatum(effectieveBetaalTermijn),
+          subtotaal,
+          btwBedrag,
+          kortingBedrag: 0,
+          totaal: subtotaal + btwBedrag,
+          status: 'CONCEPT',
+          regels: { create: berekendeRegels },
+        },
+        select: { id: true, nummer: true },
+      })
+
+      aangemaakteFacturen.push({ id: factuur.id, nummer: factuur.nummer, klantNaam: klant.bedrijf || klant.naam })
+    }
+
+    return { succes: true, facturen: aangemaakteFacturen }
   })
 
   // ── Ritten (Kilometerregistratie) ──

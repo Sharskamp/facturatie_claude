@@ -422,11 +422,32 @@ function MaandWeergave({ jaar, maand, afspraken, onDagKlik, onAfspraakKlik }: {
 
 // ── AfspraakDetail ────────────────────────────────────────────────────────────
 
-function AfspraakDetail({ afspraak, onSluit, onFactuur }: {
+function AfspraakDetail({ afspraak, onSluit, onFacturenAangemaakt }: {
   afspraak: Afspraak;
   onSluit: () => void;
-  onFactuur: (a: Afspraak) => void;
+  onFacturenAangemaakt: (facturen: Array<{ id: string; nummer: string; klantNaam: string }>) => void;
 }) {
+  const [makenLaden, setMakenLaden] = useState(false);
+  const [fout, setFout] = useState<string | null>(null);
+
+  const maakFacturen = async () => {
+    setMakenLaden(true);
+    setFout(null);
+    try {
+      const res = await window.api.agenda.maakFacturenVanAfspraak({ eventId: afspraak.id });
+      if (!res.succes || !res.facturen?.length) {
+        setFout(res.fout ?? "Geen klanten gekoppeld aan deze afspraak.");
+        return;
+      }
+      onSluit();
+      onFacturenAangemaakt(res.facturen);
+    } catch (e) {
+      setFout(e instanceof Error ? e.message : "Aanmaken mislukt");
+    } finally {
+      setMakenLaden(false);
+    }
+  };
+
   return (
     <>
       <div className="fixed inset-0 z-40" onClick={onSluit} />
@@ -460,10 +481,13 @@ function AfspraakDetail({ afspraak, onSluit, onFactuur }: {
             </div>
           )}
         </div>
+        {fout && (
+          <p className="mt-2 text-xs text-red-600 bg-red-50 rounded px-2 py-1">{fout}</p>
+        )}
         <div className="mt-3 pt-3 border-t border-gray-100">
-          <Button size="sm" className="w-full" onClick={() => { onSluit(); onFactuur(afspraak); }}>
+          <Button size="sm" className="w-full" loading={makenLaden} onClick={maakFacturen}>
             <FileText className="h-3.5 w-3.5" />
-            Maak factuur van afspraak
+            Facturen aanmaken van afspraak
           </Button>
         </div>
       </div>
@@ -483,7 +507,8 @@ function NieuwAfspraakModal({ open, onOpenChange, kalenders, primaryKalenderId, 
   voorafUur: number;
   onOpgeslagen: () => void;
 }) {
-  const [klantId, setKlantId] = useState("");
+  const [klantIds, setKlantIds] = useState<string[]>([]);
+  const [klantZoek, setKlantZoek] = useState("");
   const [locatie, setLocatie] = useState("");
   const [datum, setDatum] = useState(voorafDatum);
   const [geheledag, setGeheledag] = useState(false);
@@ -501,18 +526,30 @@ function NieuwAfspraakModal({ open, onOpenChange, kalenders, primaryKalenderId, 
       setEindTijd(`${String(Math.min(voorafUur + 1, 23)).padStart(2,"0")}:00`);
       setKalenderId(primaryKalenderId || "primary");
       setFout(null);
+      setKlantIds([]);
+      setKlantZoek("");
     }
   }, [open, voorafDatum, voorafUur, primaryKalenderId]);
 
+  const toggleKlant = (id: string) =>
+    setKlantIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+
+  const gefilterdKlanten = useMemo(() =>
+    klanten.filter(k => {
+      const q = klantZoek.toLowerCase();
+      return !q || k.naam.toLowerCase().includes(q) || (k.bedrijf ?? "").toLowerCase().includes(q);
+    }),
+  [klanten, klantZoek]);
+
   const titelPreview = useMemo(() => {
     const parts: string[] = [];
-    if (klantId) {
-      const k = klanten.find(k => k.id === klantId);
+    for (const id of klantIds) {
+      const k = klanten.find(k => k.id === id);
       if (k) parts.push(k.bedrijf || k.naam);
     }
     if (locatie) parts.push(locatie);
     return parts.length > 0 ? parts.join(" – ") : "Afspraak";
-  }, [klantId, locatie, klanten]);
+  }, [klantIds, locatie, klanten]);
 
   const voegRegelToe = () => setRegels(r => [...r, { omschrijving: "", aantal: 1, eenheid: "uur", prijs: 0, btwPercentage: 21 }]);
   const verwijderRegel = (i: number) => setRegels(r => r.filter((_, j) => j !== i));
@@ -531,7 +568,7 @@ function NieuwAfspraakModal({ open, onOpenChange, kalenders, primaryKalenderId, 
         eindDatumTijd = `${datum}T${eindTijd}:00`;
       }
       await window.api.agenda.maakAfspraak({
-        klantId: klantId || undefined,
+        klantIds: klantIds.length > 0 ? klantIds : undefined,
         locatie: locatie || undefined,
         startDatumTijd,
         eindDatumTijd,
@@ -541,7 +578,7 @@ function NieuwAfspraakModal({ open, onOpenChange, kalenders, primaryKalenderId, 
       });
       onOpgeslagen();
       onOpenChange(false);
-      setKlantId(""); setLocatie(""); setRegels([]);
+      setKlantIds([]); setLocatie(""); setRegels([]);
     } catch (e) {
       setFout(e instanceof Error ? e.message : "Opslaan mislukt");
     } finally {
@@ -569,17 +606,42 @@ function NieuwAfspraakModal({ open, onOpenChange, kalenders, primaryKalenderId, 
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            {/* Klant */}
+            {/* Klanten (multi-select) */}
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">Klant (optioneel)</label>
-              <select
-                value={klantId}
-                onChange={e => setKlantId(e.target.value)}
-                className="w-full h-9 rounded-lg border border-gray-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              >
-                <option value="">— Geen klant —</option>
-                {klanten.map(k => <option key={k.id} value={k.id}>{k.bedrijf ? `${k.bedrijf} (${k.naam})` : k.naam}</option>)}
-              </select>
+              <label className="block text-xs font-medium text-gray-700 mb-1">
+                Klanten (optioneel)
+                {klantIds.length > 0 && (
+                  <span className="ml-1.5 inline-flex items-center justify-center h-4 w-4 rounded-full bg-indigo-600 text-white text-[9px] font-bold">
+                    {klantIds.length}
+                  </span>
+                )}
+              </label>
+              <div className="border border-gray-300 rounded-lg overflow-hidden">
+                <input
+                  type="text"
+                  value={klantZoek}
+                  onChange={e => setKlantZoek(e.target.value)}
+                  placeholder="Zoek klant..."
+                  className="w-full h-8 px-3 text-xs border-b border-gray-200 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-indigo-400"
+                />
+                <div className="max-h-32 overflow-y-auto">
+                  {gefilterdKlanten.length === 0 ? (
+                    <p className="text-xs text-gray-400 px-3 py-2">Geen klanten gevonden</p>
+                  ) : gefilterdKlanten.map(k => (
+                    <label key={k.id} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={klantIds.includes(k.id)}
+                        onChange={() => toggleKlant(k.id)}
+                        className="w-3.5 h-3.5 rounded border-gray-300 text-indigo-600 shrink-0"
+                      />
+                      <span className="text-xs text-gray-800 truncate">
+                        {k.bedrijf ? `${k.bedrijf} (${k.naam})` : k.naam}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
             </div>
             {/* Locatie */}
             <div>
@@ -751,6 +813,7 @@ export default function AgendaPagina() {
   const [fout, setFout] = useState<string | null>(null);
   const [googleNietGekoppeld, setGoogleNietGekoppeld] = useState(false);
   const [geselecteerdeAfspraak, setGeselecteerdeAfspraak] = useState<Afspraak | null>(null);
+  const [factuurMelding, setFactuurMelding] = useState<Array<{ id: string; nummer: string; klantNaam: string }> | null>(null);
   const [nieuwAfspraakOpen, setNieuwAfspraakOpen] = useState(false);
   const [voorafDatum, setVoorafDatum] = useState(dagSleutel(new Date()));
   const [voorafUur, setVoorafUur] = useState(9);
@@ -930,15 +993,37 @@ export default function AgendaPagina() {
         )}
       </div>
 
+      {/* Facturen aangemaakt melding */}
+      {factuurMelding && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-white rounded-xl shadow-2xl border border-gray-200 px-5 py-4 min-w-[300px] max-w-sm">
+          <div className="flex items-start justify-between gap-3 mb-3">
+            <p className="text-sm font-semibold text-gray-900">
+              {factuurMelding.length === 1 ? "Factuur aangemaakt" : `${factuurMelding.length} facturen aangemaakt`}
+            </p>
+            <button onClick={() => setFactuurMelding(null)} className="text-gray-400 hover:text-gray-600 shrink-0"><X className="h-4 w-4" /></button>
+          </div>
+          <div className="space-y-1.5">
+            {factuurMelding.map(f => (
+              <div key={f.id} className="flex items-center justify-between text-sm">
+                <span className="text-gray-600">{f.klantNaam}</span>
+                <button
+                  onClick={() => { setFactuurMelding(null); navigate(`/facturen/${f.id}`); }}
+                  className="text-indigo-600 hover:text-indigo-800 font-medium text-xs"
+                >
+                  {f.nummer} →
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Afspraak detail */}
       {geselecteerdeAfspraak && (
         <AfspraakDetail
           afspraak={geselecteerdeAfspraak}
           onSluit={() => setGeselecteerdeAfspraak(null)}
-          onFactuur={a => {
-            const params = new URLSearchParams({ titel: a.samenvatting, datum: a.start.split("T")[0] });
-            navigate(`/facturen/nieuw?${params}`);
-          }}
+          onFacturenAangemaakt={facturen => setFactuurMelding(facturen)}
         />
       )}
 

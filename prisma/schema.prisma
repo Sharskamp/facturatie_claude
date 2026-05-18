@@ -352,6 +352,7 @@ model AgendaAfspraakData {
   id        String   @id @default(cuid())
   eventId   String   @unique
   klantId   String?
+  klantIds  String?
   locatie   String?
   regels    String?
   aangemaakt DateTime @default(now())
