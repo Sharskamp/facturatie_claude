@@ -156,6 +156,7 @@ function runMigratie(dbPath: string): void {
   kolomToevoegen('User', 'factuurHtmlTemplate', 'TEXT')
   kolomToevoegen('User', 'offerteGeldigheidDagen', 'INTEGER NOT NULL DEFAULT 30')
   kolomToevoegen('User', 'verborgenPaginas', "TEXT NOT NULL DEFAULT '[]'")
+  kolomToevoegen('User', 'korIngangsDatum', 'TEXT')
 
   // Klant — nieuwe kolommen
   kolomToevoegen('Klant', 'betaalTermijn', 'INTEGER')
@@ -1218,7 +1219,7 @@ function setupIpcHandlers() {
       'factuurPrefix', 'offertePrefix', 'factuurVolgNummer', 'offerteVolgNummer',
       'factuurNummerFormaat', 'standaardCreditnotaPrefix',
       'emailSmtpHost', 'emailSmtpPort', 'emailSmtpUser', 'emailSmtpSecure', 'emailSmtpPass',
-      'korActief', 'korDrempel', 'korWaarschuwing',
+      'korActief', 'korDrempel', 'korWaarschuwing', 'korIngangsDatum',
       'standaardBetaalTermijn', 'standaardBtwTarief', 'betalingsCondities',
       'betalingsherinneringen', 'herinneringDagen',
       'kmVergoeding', 'anthropicApiKey', 'openaiApiKey', 'aiModel', 'mollieApiKey', 'googlePrimaryCalendarId',

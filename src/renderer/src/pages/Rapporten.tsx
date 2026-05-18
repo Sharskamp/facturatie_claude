@@ -271,6 +271,8 @@ export default function RapportenPagina() {
   const [inkomens, setInkomens] = useState<InkomenRecord[]>([]);
   const [uitgaven, setUitgaven] = useState<UitgaveRecord[]>([]);
   const [laden, setLaden] = useState(true);
+  const [korActief, setKorActief] = useState(false);
+  const [korIngangsDatum, setKorIngangsDatum] = useState<string | null>(null);
 
   // BTW selectors
   const [btwKwartaal, setBtwKwartaal] = useState(huidigKwartaal());
@@ -287,14 +289,18 @@ export default function RapportenPagina() {
   const haalDataOp = useCallback(async () => {
     setLaden(true);
     try {
-      const [fData, iData, uData] = await Promise.all([
+      const [fData, iData, uData, inst] = await Promise.all([
         window.api.facturen.list(),
         window.api.inkomen.list(),
         window.api.uitgaven.list(),
+        window.api.instellingen.get(),
       ]);
       setFacturen(Array.isArray(fData) ? fData : (fData as any).facturen ?? []);
       setInkomens(Array.isArray(iData) ? iData : (iData as any).inkomens ?? []);
       setUitgaven(Array.isArray(uData) ? uData : (uData as any).uitgaven ?? []);
+      const i = inst as Record<string, unknown>;
+      setKorActief(!!i.korActief);
+      setKorIngangsDatum((i.korIngangsDatum as string | null) ?? null);
     } catch {
       // stil falen
     } finally {
@@ -305,6 +311,13 @@ export default function RapportenPagina() {
   useEffect(() => {
     haalDataOp();
   }, [haalDataOp]);
+
+  // ─── KOR helper: bepaal of een periode volledig/gedeeltelijk na ingangsdatum valt ──
+  // periodeEindDatum: laatste dag van de geselecteerde periode (YYYY-MM-DD string)
+  function korBlokkeertPeriode(periodeBeginDatum: string): boolean {
+    if (!korActief || !korIngangsDatum) return false;
+    return periodeBeginDatum >= korIngangsDatum;
+  }
 
   // ─── BTW berekeningen ───────────────────────────────────────────────────────
   const kwartaalMaanden: Record<string, number[]> = {
@@ -674,8 +687,31 @@ export default function RapportenPagina() {
         {!laden && (
           <>
             {/* ── BTW Overzicht ── */}
-            {actieveTab === "btw" && (
+            {actieveTab === "btw" && (() => {
+              const btwMaandNr = (kwartaalMaanden[btwKwartaal] ?? [0])[0];
+              const btwBeginStr = `${btwJaar}-${String(btwMaandNr + 1).padStart(2, "0")}-01`;
+              const korBlokkeert = korBlokkeertPeriode(btwBeginStr);
+              return (
               <div className="space-y-6">
+                {korBlokkeert && (
+                  <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-5 flex gap-3 items-start">
+                    <span className="text-2xl">🚫</span>
+                    <div>
+                      <p className="font-semibold text-indigo-900">KOR actief — geen BTW-rapportage</p>
+                      <p className="text-sm text-indigo-700 mt-1">
+                        Uw Kleineondernemersregeling is ingegaan op <strong>{korIngangsDatum}</strong>.
+                        Vanaf die datum bent u vrijgesteld van BTW-aangifte en hoeft u geen BTW te berekenen of af te dragen.
+                        BTW-rapportage is daarom niet van toepassing voor de geselecteerde periode.
+                      </p>
+                      {!korIngangsDatum && (
+                        <p className="text-xs text-indigo-600 mt-2">
+                          Stel de KOR ingangsdatum in via Instellingen → KOR voor correcte rapportages.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {!korBlokkeert && (<>
                 {/* Selectors */}
                 <div className="flex flex-wrap gap-3 items-center justify-between">
                   <div className="flex flex-wrap gap-3 items-center">
@@ -803,7 +839,10 @@ export default function RapportenPagina() {
                   </CardContent>
                 </Card>
               </div>
-            )}
+              </>)}
+              </div>
+              );
+            })()}
 
             {/* ── Winst & Verlies ── */}
             {actieveTab === "winstverlies" && (
@@ -1159,8 +1198,25 @@ export default function RapportenPagina() {
             )}
 
             {/* ── BTW-aangifte ── */}
-            {actieveTab === "btwAangifte" && (
+            {actieveTab === "btwAangifte" && (() => {
+              const aanvangMaand = aangifteMaanden[0] ?? 0;
+              const aanvangStr = `${aangifteJaar}-${String(aanvangMaand + 1).padStart(2, "0")}-01`;
+              const korBlokkeertAangifte = korBlokkeertPeriode(aanvangStr);
+              return (
               <div className="space-y-6">
+                {korBlokkeertAangifte && (
+                  <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-5 flex gap-3 items-start">
+                    <span className="text-2xl">🚫</span>
+                    <div>
+                      <p className="font-semibold text-indigo-900">KOR actief — geen BTW-aangifte</p>
+                      <p className="text-sm text-indigo-700 mt-1">
+                        Uw Kleineondernemersregeling is ingegaan op <strong>{korIngangsDatum}</strong>.
+                        U hoeft geen BTW-aangifte te doen voor periodes na de ingangsdatum.
+                      </p>
+                    </div>
+                  </div>
+                )}
+                {!korBlokkeertAangifte && (<>
                 {/* Export BTW CSV knop + melding */}
                 <div className="flex flex-wrap gap-3 items-center">
                   <Button
@@ -1304,7 +1360,10 @@ export default function RapportenPagina() {
                   Dit overzicht is ter voorbereiding op uw BTW-aangifte via het Mijn Belastingdienst Zakelijk portaal.
                 </p>
               </div>
-            )}
+              </>)}
+              </div>
+              );
+            })()}
 
             {/* ── Balans ── */}
             {actieveTab === "balans" && (

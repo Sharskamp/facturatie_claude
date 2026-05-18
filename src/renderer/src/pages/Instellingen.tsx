@@ -101,6 +101,7 @@ interface Instellingen {
   // KOR
   korActief?: boolean;
   korDrempel?: number;
+  korIngangsDatum?: string;
   // AI / OCR
   anthropicApiKey?: string;
   openaiApiKey?: string;
@@ -1184,6 +1185,15 @@ export default function InstellingenPagina() {
                   />
                 </button>
               </div>
+
+              <Input
+                label="KOR ingangsdatum"
+                type="date"
+                value={instellingen.korIngangsDatum ?? ""}
+                onChange={(e) => updateVeld("korIngangsDatum", e.target.value)}
+                onBlur={() => slaOp({ korIngangsDatum: instellingen.korIngangsDatum })}
+                helperText="Datum waarop de KOR is ingegaan. Rapportages na deze datum tonen geen BTW meer."
+              />
 
               <div>
                 <Input

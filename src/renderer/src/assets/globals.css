@@ -2,6 +2,11 @@
 
 @variant dark (&:where(.dark, .dark *));
 
+html.dark body {
+  background-color: #111827;
+  color: #f9fafb;
+}
+
 @media print {
   .no-print {
     display: none !important;

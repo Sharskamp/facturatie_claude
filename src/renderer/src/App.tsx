@@ -3,6 +3,7 @@ import { AuthProvider, useAuth } from './context/auth'
 import { ThemeProvider } from './context/theme'
 import { HelpProvider } from './context/help'
 import { Loader2 } from 'lucide-react'
+import { useEffect } from 'react'
 
 // Pages
 import Login from './pages/Login'
@@ -84,11 +85,26 @@ function AppRoutes() {
   )
 }
 
+function LogoCacheEffect() {
+  useEffect(() => {
+    window.api.instellingen.get().then((data: unknown) => {
+      const inst = data as { logoBase64?: string } | null
+      if (inst?.logoBase64) {
+        localStorage.setItem('sf_logo', inst.logoBase64)
+      } else {
+        localStorage.removeItem('sf_logo')
+      }
+    }).catch(() => {})
+  }, [])
+  return null
+}
+
 export default function App() {
   return (
     <ThemeProvider>
       <HelpProvider>
         <AuthProvider>
+          <LogoCacheEffect />
           <AppRoutes />
           <OnbetaaldeFactuurMelding />
         </AuthProvider>

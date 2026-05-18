@@ -95,6 +95,9 @@ interface CsvKlantRij {
   notities: string;
   fout?: string;
   geimporteerd?: boolean;
+  // Duplicate conflict handling
+  bestaandeId?: string;
+  conflictKeuze?: "vervangen" | "index";
 }
 
 const VOORBEELD_CSV = `naam;bedrijf;email;telefoon;adres;postcode;stad;land;kvkNummer;btwNummer;iban;notities
@@ -296,7 +299,14 @@ export default function KlantenPage() {
         alert("Geen geldige rijen gevonden. Controleer het CSV-formaat.");
         return;
       }
-      setCsvRijen(rijen);
+      // Detect duplicates against current klanten list
+      const rijMetConflicten = rijen.map((rij) => {
+        const match = klanten.find(
+          (k) => k.naam.trim().toLowerCase() === rij.naam.trim().toLowerCase()
+        );
+        return match ? { ...rij, bestaandeId: match.id, conflictKeuze: "index" as const } : rij;
+      });
+      setCsvRijen(rijMetConflicten);
       setCsvStap("review");
     };
     reader.readAsText(bestand, "utf-8");
@@ -330,12 +340,25 @@ export default function KlantenPage() {
     let succes = 0;
     let fouten = 0;
     const bijgewerkt = csvRijen.map((r) => ({ ...r }));
+    // Track all names used so far (existing + newly imported) for unique index generation
+    const gebruikteNamen = new Set(klanten.map((k) => k.naam.trim().toLowerCase()));
 
     for (let i = 0; i < bijgewerkt.length; i++) {
       const rij = bijgewerkt[i];
       try {
-        await window.api.klanten.create({
-          naam: rij.naam,
+        const heeftConflict = !!rij.bestaandeId;
+
+        let naamVoorImport = rij.naam;
+        if (heeftConflict && rij.conflictKeuze === "index") {
+          // Find unique name with numeric suffix
+          let teller = 2;
+          while (gebruikteNamen.has(`${rij.naam.trim().toLowerCase()} (${teller})`)) teller++;
+          naamVoorImport = `${rij.naam.trim()} (${teller})`;
+        }
+        gebruikteNamen.add(naamVoorImport.toLowerCase());
+
+        const data = {
+          naam: naamVoorImport,
           bedrijf: rij.bedrijf || null,
           email: rij.email || null,
           telefoon: rij.telefoon || null,
@@ -346,7 +369,14 @@ export default function KlantenPage() {
           kvkNummer: rij.kvkNummer || null,
           btwNummer: rij.btwNummer || null,
           notities: rij.notities || null,
-        });
+        };
+
+        if (heeftConflict && rij.conflictKeuze === "vervangen" && rij.bestaandeId) {
+          await window.api.klanten.update(rij.bestaandeId, data);
+        } else {
+          await window.api.klanten.create(data);
+        }
+        bijgewerkt[i].naam = naamVoorImport;
         bijgewerkt[i].geimporteerd = true;
         succes++;
       } catch (e: unknown) {
@@ -750,33 +780,92 @@ export default function KlantenPage() {
             </div>
           )}
 
-          {csvStap === "review" && (
+          {csvStap === "review" && (() => {
+            const aantalConflicten = csvRijen.filter((r) => r.bestaandeId).length;
+            return (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <p className="text-sm text-gray-600">
-                  <strong>{csvRijen.length}</strong> klant{csvRijen.length !== 1 ? "en" : ""} gevonden. Controleer de gegevens en klik op Importeren.
-                </p>
+                <div>
+                  <p className="text-sm text-gray-600">
+                    <strong>{csvRijen.length}</strong> klant{csvRijen.length !== 1 ? "en" : ""} gevonden.
+                    {aantalConflicten > 0 && (
+                      <span className="ml-2 text-amber-700 font-medium">
+                        {aantalConflicten} naam{aantalConflicten !== 1 ? "en bestaan" : " bestaat"} al — kies hieronder wat te doen.
+                      </span>
+                    )}
+                  </p>
+                </div>
                 <button
                   onClick={() => setCsvStap("upload")}
-                  className="text-xs text-gray-500 hover:text-gray-700 underline"
+                  className="text-xs text-gray-500 hover:text-gray-700 underline shrink-0 ml-3"
                 >
                   Ander bestand kiezen
                 </button>
               </div>
 
+              {aantalConflicten > 0 && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-3">
+                  <p className="text-xs font-semibold text-amber-800">Naam al in gebruik — kies per klant wat te doen:</p>
+                  {csvRijen.filter((r) => r.bestaandeId).map((rij) => (
+                    <div key={rij._id} className="flex items-start gap-3 bg-white border border-amber-200 rounded-lg p-3">
+                      <AlertCircle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-800 truncate">{rij.naam}</p>
+                        <p className="text-xs text-amber-600 mb-2">Naam bestaat al in uw klantenlijst</p>
+                        <div className="flex gap-3">
+                          <label className="flex items-center gap-1.5 cursor-pointer">
+                            <input
+                              type="radio"
+                              name={`conflict-${rij._id}`}
+                              value="index"
+                              checked={rij.conflictKeuze === "index"}
+                              onChange={() => setCsvRijen((prev) => prev.map((r) => r._id === rij._id ? { ...r, conflictKeuze: "index" } : r))}
+                              className="text-indigo-600"
+                            />
+                            <span className="text-xs text-gray-700">
+                              Importeer als <strong>"{rij.naam} (2)"</strong>
+                            </span>
+                          </label>
+                          <label className="flex items-center gap-1.5 cursor-pointer">
+                            <input
+                              type="radio"
+                              name={`conflict-${rij._id}`}
+                              value="vervangen"
+                              checked={rij.conflictKeuze === "vervangen"}
+                              onChange={() => setCsvRijen((prev) => prev.map((r) => r._id === rij._id ? { ...r, conflictKeuze: "vervangen" } : r))}
+                              className="text-indigo-600"
+                            />
+                            <span className="text-xs text-gray-700">
+                              <strong>Bestaande klant bijwerken</strong> met nieuwe gegevens
+                            </span>
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <div className="overflow-x-auto border border-gray-200 rounded-lg">
                 <table className="text-xs w-full border-collapse">
                   <thead>
                     <tr className="bg-gray-50 border-b border-gray-200">
-                      {["Naam", "Bedrijf", "E-mail", "Telefoon", "Adres", "Postcode", "Stad", "Land", "KVK", "BTW", "IBAN", "Notities"].map((h) => (
+                      <th className="px-3 py-2 text-left text-gray-600 font-medium whitespace-nowrap">Naam</th>
+                      {["Bedrijf", "E-mail", "Telefoon", "Adres", "Postcode", "Stad", "Land", "KVK", "BTW", "IBAN", "Notities"].map((h) => (
                         <th key={h} className="px-3 py-2 text-left text-gray-600 font-medium whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {csvRijen.map((rij) => (
-                      <tr key={rij._id} className="border-b border-gray-100 hover:bg-gray-50">
-                        {[rij.naam, rij.bedrijf, rij.email, rij.telefoon, rij.adres, rij.postcode, rij.stad, rij.land, rij.kvkNummer, rij.btwNummer, rij.iban, rij.notities].map((waarde, i) => (
+                      <tr key={rij._id} className={`border-b border-gray-100 hover:bg-gray-50 ${rij.bestaandeId ? "bg-amber-50" : ""}`}>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          <div className="flex items-center gap-1.5">
+                            {rij.bestaandeId && <AlertCircle className="h-3.5 w-3.5 text-amber-500 shrink-0" />}
+                            <span className={`truncate max-w-[120px] ${rij.bestaandeId ? "text-amber-800 font-medium" : "text-gray-700"}`}>{rij.naam}</span>
+                          </div>
+                        </td>
+                        {[rij.bedrijf, rij.email, rij.telefoon, rij.adres, rij.postcode, rij.stad, rij.land, rij.kvkNummer, rij.btwNummer, rij.iban, rij.notities].map((waarde, i) => (
                           <td key={i} className="px-3 py-2 text-gray-700 whitespace-nowrap max-w-[120px] truncate">
                             {waarde || <span className="text-gray-300">—</span>}
                           </td>
@@ -797,7 +886,8 @@ export default function KlantenPage() {
                 </Button>
               </ModalFooter>
             </div>
-          )}
+            );
+          })()}
 
           {csvStap === "klaar" && (
             <div className="space-y-4">
