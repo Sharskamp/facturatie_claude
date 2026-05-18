@@ -711,7 +711,8 @@ export default function RapportenPagina() {
                     </div>
                   </div>
                 )}
-                {!korBlokkeert && (<>
+                {!korBlokkeert && (
+                <div className="contents">
                 {/* Selectors */}
                 <div className="flex flex-wrap gap-3 items-center justify-between">
                   <div className="flex flex-wrap gap-3 items-center">
@@ -838,8 +839,8 @@ export default function RapportenPagina() {
                     </Table>
                   </CardContent>
                 </Card>
-              </div>
-              </>)}
+                </div>
+                )}
               </div>
               );
             })()}
@@ -1216,7 +1217,8 @@ export default function RapportenPagina() {
                     </div>
                   </div>
                 )}
-                {!korBlokkeertAangifte && (<>
+                {!korBlokkeertAangifte && (
+                <div className="contents">
                 {/* Export BTW CSV knop + melding */}
                 <div className="flex flex-wrap gap-3 items-center">
                   <Button
@@ -1359,8 +1361,8 @@ export default function RapportenPagina() {
                 <p className="text-sm text-gray-500 italic">
                   Dit overzicht is ter voorbereiding op uw BTW-aangifte via het Mijn Belastingdienst Zakelijk portaal.
                 </p>
-              </div>
-              </>)}
+                </div>
+                )}
               </div>
               );
             })()}
