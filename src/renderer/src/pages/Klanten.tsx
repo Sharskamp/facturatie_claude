@@ -11,6 +11,10 @@ import {
   FileText,
   Archive,
   ArchiveRestore,
+  Upload,
+  Download,
+  CheckCircle2,
+  AlertCircle,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -75,6 +79,62 @@ const LEEG_FORMULIER: Partial<Klant> = {
   taal: "nl",
 };
 
+interface CsvKlantRij {
+  _id: string;
+  naam: string;
+  bedrijf: string;
+  email: string;
+  telefoon: string;
+  adres: string;
+  postcode: string;
+  stad: string;
+  land: string;
+  kvkNummer: string;
+  btwNummer: string;
+  iban: string;
+  notities: string;
+  fout?: string;
+  geimporteerd?: boolean;
+}
+
+const VOORBEELD_CSV = `naam;bedrijf;email;telefoon;adres;postcode;stad;land;kvkNummer;btwNummer;iban;notities
+Jan de Vries;De Vries BV;jan@devries.nl;+31612345678;Hoofdstraat 1;1234 AB;Amsterdam;Nederland;12345678;NL123456789B01;NL02ABNA0123456789;VIP klant
+Petra Smit;;petra@smit.nl;0612345679;Kerkstraat 5;2345 BC;Rotterdam;Nederland;;;;Particulier`;
+
+function parseerKlantenCsv(tekst: string): CsvKlantRij[] {
+  const regels = tekst.split(/\r?\n/).filter((r) => r.trim());
+  if (regels.length < 2) return [];
+  const sep = regels[0].includes(";") ? ";" : ",";
+  const headers = regels[0].split(sep).map((h) => h.trim().toLowerCase().replace(/['"]/g, ""));
+
+  function kol(rij: string[], namen: string[]): string {
+    for (const n of namen) {
+      const idx = headers.indexOf(n);
+      if (idx !== -1 && rij[idx] !== undefined) return rij[idx].trim().replace(/^["']|["']$/g, "");
+    }
+    return "";
+  }
+
+  return regels.slice(1).map((regel, i) => {
+    const cellen = regel.split(sep);
+    return {
+      _id: String(i),
+      naam: kol(cellen, ["naam", "name", "contactpersoon"]),
+      bedrijf: kol(cellen, ["bedrijf", "company", "bedrijfsnaam"]),
+      email: kol(cellen, ["email", "e-mail", "emailadres"]),
+      telefoon: kol(cellen, ["telefoon", "phone", "tel", "mobiel"]),
+      adres: kol(cellen, ["adres", "address", "straat"]),
+      postcode: kol(cellen, ["postcode", "zip", "zipcode"]),
+      stad: kol(cellen, ["stad", "city", "plaats"]),
+      land: kol(cellen, ["land", "country"]) || "Nederland",
+      kvkNummer: kol(cellen, ["kvknummer", "kvk", "kvk-nummer", "chamberofcommerce"]),
+      btwNummer: kol(cellen, ["btwnummer", "btw", "btw-nummer", "vatnumber", "vat"]),
+      iban: kol(cellen, ["iban", "rekeningnummer", "banknummer"]),
+      notities: kol(cellen, ["notities", "notes", "opmerking", "opmerkingen"]),
+    };
+  }).filter((r) => r.naam.trim());
+}
+
 export default function KlantenPage() {
   const navigate = useNavigate();
   const [klanten, setKlanten] = useState<Klant[]>([]);
@@ -88,6 +148,15 @@ export default function KlantenPage() {
   const [fout, setFout] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
+
+  // CSV import state
+  const [csvModalOpen, setCsvModalOpen] = useState(false);
+  const [csvStap, setCsvStap] = useState<"upload" | "review" | "klaar">("upload");
+  const [csvRijen, setCsvRijen] = useState<CsvKlantRij[]>([]);
+  const [csvImportBezig, setCsvImportBezig] = useState(false);
+  const [csvResultaat, setCsvResultaat] = useState<{ succes: number; fouten: number }>({ succes: 0, fouten: 0 });
+  const [csvDragOver, setCsvDragOver] = useState(false);
+  const csvBestandRef = useRef<HTMLInputElement>(null);
 
   const laadKlanten = useCallback(async (zoek = "") => {
     try {
@@ -211,16 +280,104 @@ export default function KlantenPage() {
     setFormulier((prev) => ({ ...prev, [veld]: waarde }));
   }
 
+  function openCsvImport() {
+    setCsvStap("upload");
+    setCsvRijen([]);
+    setCsvResultaat({ succes: 0, fouten: 0 });
+    setCsvModalOpen(true);
+  }
+
+  function verwerkCsvBestand(bestand: File) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const tekst = e.target?.result as string;
+      const rijen = parseerKlantenCsv(tekst);
+      if (rijen.length === 0) {
+        alert("Geen geldige rijen gevonden. Controleer het CSV-formaat.");
+        return;
+      }
+      setCsvRijen(rijen);
+      setCsvStap("review");
+    };
+    reader.readAsText(bestand, "utf-8");
+  }
+
+  function handleCsvDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setCsvDragOver(false);
+    const bestand = e.dataTransfer.files[0];
+    if (bestand) verwerkCsvBestand(bestand);
+  }
+
+  function handleCsvKiezen(e: React.ChangeEvent<HTMLInputElement>) {
+    const bestand = e.target.files?.[0];
+    if (bestand) verwerkCsvBestand(bestand);
+    e.target.value = "";
+  }
+
+  function downloadVoorbeeldCsv() {
+    const blob = new Blob([VOORBEELD_CSV], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "voorbeeld-klanten.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function importeerAlleKlanten() {
+    setCsvImportBezig(true);
+    let succes = 0;
+    let fouten = 0;
+    const bijgewerkt = csvRijen.map((r) => ({ ...r }));
+
+    for (let i = 0; i < bijgewerkt.length; i++) {
+      const rij = bijgewerkt[i];
+      try {
+        await window.api.klanten.create({
+          naam: rij.naam,
+          bedrijf: rij.bedrijf || null,
+          email: rij.email || null,
+          telefoon: rij.telefoon || null,
+          adres: rij.adres || null,
+          postcode: rij.postcode || null,
+          stad: rij.stad || null,
+          land: rij.land || "Nederland",
+          kvkNummer: rij.kvkNummer || null,
+          btwNummer: rij.btwNummer || null,
+          notities: rij.notities || null,
+        });
+        bijgewerkt[i].geimporteerd = true;
+        succes++;
+      } catch (e: unknown) {
+        bijgewerkt[i].fout = e instanceof Error ? e.message : "Mislukt";
+        fouten++;
+      }
+      setCsvRijen([...bijgewerkt]);
+    }
+
+    setCsvResultaat({ succes, fouten });
+    setCsvStap("klaar");
+    setCsvImportBezig(false);
+    laadKlanten(zoekterm);
+  }
+
   return (
     <div>
       <Header
         titel="Klanten"
         subtitel={`${klanten.filter(k => k.actief).length} actieve klant${klanten.filter(k => k.actief).length !== 1 ? "en" : ""}`}
         acties={
-          <Button onClick={openNieuw} className="gap-2">
-            <Plus className="h-4 w-4" />
-            Nieuwe klant
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={openCsvImport} className="gap-2">
+              <Upload className="h-4 w-4" />
+              Importeer via CSV
+            </Button>
+            <Button onClick={openNieuw} className="gap-2">
+              <Plus className="h-4 w-4" />
+              Nieuwe klant
+            </Button>
+          </div>
         }
       />
 
@@ -529,6 +686,168 @@ export default function KlantenPage() {
               {geselecteerdeKlant ? "Opslaan" : "Aanmaken"}
             </Button>
           </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* CSV import modal */}
+      <Modal open={csvModalOpen} onOpenChange={(open) => { if (!csvImportBezig) setCsvModalOpen(open); }}>
+        <ModalContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <ModalHeader>
+            <ModalTitle>Klanten importeren via CSV</ModalTitle>
+          </ModalHeader>
+
+          {csvStap === "upload" && (
+            <div className="space-y-5">
+              {/* Formaat uitleg */}
+              <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 space-y-2">
+                <p className="text-sm font-semibold text-blue-800">Verwacht CSV-formaat</p>
+                <p className="text-xs text-blue-700">
+                  Gebruik een komma (<code>,</code>) of puntkomma (<code>;</code>) als scheidingsteken.
+                  De eerste rij moet de kolomnamen bevatten. Alleen <strong>naam</strong> is verplicht.
+                </p>
+                <div className="overflow-x-auto">
+                  <table className="text-xs border-collapse w-full mt-2">
+                    <thead>
+                      <tr className="bg-blue-100">
+                        {["naam *", "bedrijf", "email", "telefoon", "adres", "postcode", "stad", "land", "kvkNummer", "btwNummer", "iban", "notities"].map((k) => (
+                          <th key={k} className="border border-blue-200 px-2 py-1 text-left text-blue-800 whitespace-nowrap">{k}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr className="bg-white">
+                        {["Jan de Vries", "De Vries BV", "jan@devries.nl", "+31612345678", "Hoofdstraat 1", "1234 AB", "Amsterdam", "Nederland", "12345678", "NL123456789B01", "NL02ABNA...", "VIP klant"].map((v, i) => (
+                          <td key={i} className="border border-blue-200 px-2 py-1 text-blue-700 whitespace-nowrap">{v}</td>
+                        ))}
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <button
+                  onClick={downloadVoorbeeldCsv}
+                  className="inline-flex items-center gap-1.5 text-xs text-blue-700 hover:text-blue-900 underline mt-1"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  Download voorbeeldbestand
+                </button>
+              </div>
+
+              {/* Upload area */}
+              <div
+                onDragOver={(e) => { e.preventDefault(); setCsvDragOver(true); }}
+                onDragLeave={() => setCsvDragOver(false)}
+                onDrop={handleCsvDrop}
+                onClick={() => csvBestandRef.current?.click()}
+                className={`border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-colors ${
+                  csvDragOver ? "border-indigo-400 bg-indigo-50" : "border-gray-300 hover:border-indigo-300 hover:bg-gray-50"
+                }`}
+              >
+                <Upload className="h-10 w-10 mx-auto text-gray-300 mb-3" />
+                <p className="text-sm font-medium text-gray-700">Sleep uw CSV-bestand hierheen</p>
+                <p className="text-xs text-gray-400 mt-1">of klik om een bestand te kiezen</p>
+                <input ref={csvBestandRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleCsvKiezen} />
+              </div>
+            </div>
+          )}
+
+          {csvStap === "review" && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-gray-600">
+                  <strong>{csvRijen.length}</strong> klant{csvRijen.length !== 1 ? "en" : ""} gevonden. Controleer de gegevens en klik op Importeren.
+                </p>
+                <button
+                  onClick={() => setCsvStap("upload")}
+                  className="text-xs text-gray-500 hover:text-gray-700 underline"
+                >
+                  Ander bestand kiezen
+                </button>
+              </div>
+
+              <div className="overflow-x-auto border border-gray-200 rounded-lg">
+                <table className="text-xs w-full border-collapse">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-200">
+                      {["Naam", "Bedrijf", "E-mail", "Telefoon", "Adres", "Postcode", "Stad", "Land", "KVK", "BTW", "IBAN", "Notities"].map((h) => (
+                        <th key={h} className="px-3 py-2 text-left text-gray-600 font-medium whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {csvRijen.map((rij) => (
+                      <tr key={rij._id} className="border-b border-gray-100 hover:bg-gray-50">
+                        {[rij.naam, rij.bedrijf, rij.email, rij.telefoon, rij.adres, rij.postcode, rij.stad, rij.land, rij.kvkNummer, rij.btwNummer, rij.iban, rij.notities].map((waarde, i) => (
+                          <td key={i} className="px-3 py-2 text-gray-700 whitespace-nowrap max-w-[120px] truncate">
+                            {waarde || <span className="text-gray-300">—</span>}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <ModalFooter className="gap-2 pt-0">
+                <ModalClose asChild>
+                  <Button variant="outline" disabled={csvImportBezig}>Annuleren</Button>
+                </ModalClose>
+                <Button onClick={importeerAlleKlanten} disabled={csvImportBezig} className="gap-2">
+                  {csvImportBezig && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {csvImportBezig ? "Bezig met importeren..." : `${csvRijen.length} klanten importeren`}
+                </Button>
+              </ModalFooter>
+            </div>
+          )}
+
+          {csvStap === "klaar" && (
+            <div className="space-y-4">
+              <div className="flex gap-4">
+                <div className="flex-1 rounded-lg bg-green-50 border border-green-200 p-4 flex items-center gap-3">
+                  <CheckCircle2 className="h-8 w-8 text-green-500 shrink-0" />
+                  <div>
+                    <p className="text-lg font-bold text-green-700">{csvResultaat.succes}</p>
+                    <p className="text-sm text-green-600">Succesvol geïmporteerd</p>
+                  </div>
+                </div>
+                {csvResultaat.fouten > 0 && (
+                  <div className="flex-1 rounded-lg bg-red-50 border border-red-200 p-4 flex items-center gap-3">
+                    <AlertCircle className="h-8 w-8 text-red-500 shrink-0" />
+                    <div>
+                      <p className="text-lg font-bold text-red-700">{csvResultaat.fouten}</p>
+                      <p className="text-sm text-red-600">Mislukt</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {csvResultaat.fouten > 0 && (
+                <div className="border border-gray-200 rounded-lg overflow-x-auto">
+                  <table className="text-xs w-full border-collapse">
+                    <thead>
+                      <tr className="bg-gray-50 border-b border-gray-200">
+                        <th className="px-3 py-2 text-left text-gray-600 font-medium">Naam</th>
+                        <th className="px-3 py-2 text-left text-gray-600 font-medium">Status</th>
+                        <th className="px-3 py-2 text-left text-gray-600 font-medium">Fout</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {csvRijen.filter((r) => r.fout).map((rij) => (
+                        <tr key={rij._id} className="border-b border-gray-100 bg-red-50">
+                          <td className="px-3 py-2 font-medium text-gray-800">{rij.naam}</td>
+                          <td className="px-3 py-2 text-red-600">Mislukt</td>
+                          <td className="px-3 py-2 text-red-600">{rij.fout}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <ModalFooter className="gap-2 pt-0">
+                <Button onClick={() => setCsvModalOpen(false)}>Sluiten</Button>
+              </ModalFooter>
+            </div>
+          )}
         </ModalContent>
       </Modal>
 
