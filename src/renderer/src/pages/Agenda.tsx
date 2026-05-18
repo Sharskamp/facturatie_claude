@@ -7,7 +7,7 @@ import {
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Modal, ModalContent, ModalHeader, ModalTitle, ModalFooter, ModalClose } from "@/components/ui/modal";
+import { Modal, ModalContent, ModalTitle } from "@/components/ui/modal";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -551,12 +551,17 @@ function NieuwAfspraakModal({ open, onOpenChange, kalenders, primaryKalenderId, 
 
   return (
     <Modal open={open} onOpenChange={onOpenChange}>
-      <ModalContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-        <ModalHeader>
+      <ModalContent
+        className="max-w-3xl p-0 overflow-hidden gap-0"
+        style={{ display: "flex", flexDirection: "column", maxHeight: "90vh" }}
+      >
+        {/* Header — buiten scroll */}
+        <div className="px-6 pt-6 pb-4 border-b border-gray-100 shrink-0">
           <ModalTitle>Nieuwe afspraak</ModalTitle>
-        </ModalHeader>
+        </div>
 
-        <div className="space-y-4 py-2">
+        {/* Scrollbaar formulier */}
+        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4 min-h-0">
           {/* Titel preview */}
           <div className="rounded-lg bg-indigo-50 border border-indigo-100 px-3 py-2">
             <p className="text-[10px] font-medium text-indigo-500 uppercase tracking-wide mb-0.5">Titel in Google Calendar</p>
@@ -719,15 +724,14 @@ function NieuwAfspraakModal({ open, onOpenChange, kalenders, primaryKalenderId, 
           )}
         </div>
 
-        <ModalFooter>
-          <ModalClose asChild>
-            <Button variant="outline" disabled={opslaan}>Annuleren</Button>
-          </ModalClose>
+        {/* Footer — buiten scroll */}
+        <div className="px-6 py-4 border-t border-gray-100 shrink-0 flex justify-end gap-2">
+          <Button variant="outline" disabled={opslaan} onClick={() => onOpenChange(false)}>Annuleren</Button>
           <Button onClick={slaOp} disabled={opslaan}>
-            {opslaan ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+            {opslaan && <Loader2 className="h-4 w-4 animate-spin mr-1" />}
             Afspraak aanmaken
           </Button>
-        </ModalFooter>
+        </div>
       </ModalContent>
     </Modal>
   );
