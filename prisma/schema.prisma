@@ -57,6 +57,7 @@ model User {
   // Google OAuth credentials (stored by user in settings)
   googleClientId        String?
   googleClientSecret    String?
+  googlePrimaryCalendarId String?
   // Invoice layout settings
   layoutPrimairKleur    String    @default("#4f46e5")
   layoutSecundairKleur  String?
@@ -345,4 +346,15 @@ model Crediteur {
 
   @@index([status])
   @@index([vervaldatum])
+}
+
+model AgendaAfspraakData {
+  id        String   @id @default(cuid())
+  eventId   String   @unique
+  klantId   String?
+  locatie   String?
+  regels    String?
+  aangemaakt DateTime @default(now())
+
+  @@index([eventId])
 }

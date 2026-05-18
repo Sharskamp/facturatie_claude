@@ -8,7 +8,7 @@ import * as fs from 'fs'
 import * as http from 'http'
 import * as net from 'net'
 import { verstuurEmail, maakFactuurEmailHtml } from '../lib/email'
-import { haalAgendaAfspraken, maakGoogleAuthUrl, wisselCodeVoorTokens, vernieuwAccessToken } from '../lib/google-calendar'
+import { haalAgendaAfspraken, haalKalenderLijst, maakGoogleAfspraak, maakGoogleAuthUrl, wisselCodeVoorTokens, vernieuwAccessToken } from '../lib/google-calendar'
 import { autoUpdater } from 'electron-updater'
 import * as os from 'os'
 
@@ -170,6 +170,19 @@ function runMigratie(dbPath: string): void {
   try { db.exec('CREATE INDEX IF NOT EXISTS "Uitgave_datum_idx" ON "Uitgave"("datum")') } catch {}
   try { db.exec('CREATE INDEX IF NOT EXISTS "Uitgave_categorieId_idx" ON "Uitgave"("categorieId")') } catch {}
 
+  kolomToevoegen('User', 'googlePrimaryCalendarId', 'TEXT')
+
+  db.exec(`CREATE TABLE IF NOT EXISTS "AgendaAfspraakData" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "eventId" TEXT NOT NULL,
+    "klantId" TEXT,
+    "locatie" TEXT,
+    "regels" TEXT,
+    "aangemaakt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`)
+  try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS "AgendaAfspraakData_eventId_key" ON "AgendaAfspraakData"("eventId")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "AgendaAfspraakData_eventId_idx" ON "AgendaAfspraakData"("eventId")') } catch {}
+
   db.close()
 }
 
@@ -177,6 +190,33 @@ function initPrisma() {
   const dbPath = getDbPath()
   const adapter = new PrismaBetterSqlite3({ url: dbPath })
   prisma = new PrismaClient({ adapter })
+}
+
+async function refreshTokenIfNeeded(user: {
+  googleRefreshToken?: string | null
+  googleAccessToken?: string | null
+  googleTokenExpiry?: Date | null
+  googleClientId?: string | null
+  googleClientSecret?: string | null
+}): Promise<string | null> {
+  const tokenVerlopen = !user.googleAccessToken
+    || !user.googleTokenExpiry
+    || new Date() >= new Date(user.googleTokenExpiry.getTime() - 60_000)
+  if (!tokenVerlopen) return user.googleAccessToken!
+  if (!user.googleRefreshToken || !user.googleClientId || !user.googleClientSecret) return null
+  try {
+    const nieuwTokens = await vernieuwAccessToken(user.googleRefreshToken, user.googleClientId, user.googleClientSecret)
+    const accessToken = nieuwTokens.access_token
+    await prisma.user.updateMany({
+      data: {
+        googleAccessToken: accessToken,
+        googleTokenExpiry: nieuwTokens.expires_in
+          ? new Date(Date.now() + nieuwTokens.expires_in * 1000)
+          : new Date(Date.now() + 3600_000),
+      }
+    })
+    return accessToken
+  } catch { return null }
 }
 
 const gotTheLock = app.requestSingleInstanceLock()
@@ -1089,7 +1129,7 @@ function setupIpcHandlers() {
         korActief: true, korDrempel: true, korWaarschuwing: true,
         standaardBetaalTermijn: true, standaardBtwTarief: true,
         betalingsherinneringen: true, herinneringDagen: true,
-        googleRefreshToken: true, googleClientId: true, googleClientSecret: true, kmVergoeding: true,
+        googleRefreshToken: true, googleClientId: true, googleClientSecret: true, googlePrimaryCalendarId: true, kmVergoeding: true,
         anthropicApiKey: true, openaiApiKey: true, aiModel: true, factuurHtmlTemplate: true, offerteGeldigheidDagen: true,
         donkerModus: true, autoStart: true, pdfMapPad: true, mollieApiKey: true,
         layoutPrimairKleur: true, layoutSecundairKleur: true, layoutLettertype: true,
@@ -1113,7 +1153,7 @@ function setupIpcHandlers() {
       'korActief', 'korDrempel', 'korWaarschuwing',
       'standaardBetaalTermijn', 'standaardBtwTarief', 'betalingsCondities',
       'betalingsherinneringen', 'herinneringDagen',
-      'kmVergoeding', 'anthropicApiKey', 'openaiApiKey', 'aiModel', 'mollieApiKey',
+      'kmVergoeding', 'anthropicApiKey', 'openaiApiKey', 'aiModel', 'mollieApiKey', 'googlePrimaryCalendarId',
       'factuurHtmlTemplate', 'offerteGeldigheidDagen',
       'donkerModus', 'autoStart', 'pdfMapPad',
       'emailAanhef', 'emailAfsluitingsTekst',
@@ -1232,45 +1272,102 @@ function setupIpcHandlers() {
   // Agenda
   ipcMain.handle('agenda:haal-afspraken', async (_, params?: { van?: string; tot?: string }) => {
     const user = await prisma.user.findFirst()
-    if (!user?.googleRefreshToken) {
-      return { afspraken: [], googleNietGekoppeld: true }
-    }
+    if (!user?.googleRefreshToken) return { afspraken: [], googleNietGekoppeld: true }
     if (!user.googleClientId || !user.googleClientSecret) {
-      return { afspraken: [], fout: 'Google OAuth-gegevens ontbreken. Vul Client ID en Client Secret in bij Instellingen → Google Agenda.' }
+      return { afspraken: [], fout: 'Google OAuth-gegevens ontbreken.' }
     }
-
-    // Vernieuw het access token als: geen token, verlopen, of geen verlooptijd bekend
-    const tokenVerlopen = !user.googleAccessToken
-      || !user.googleTokenExpiry
-      || new Date() >= new Date(user.googleTokenExpiry.getTime() - 60_000) // 1 min marge
-    let accessToken = user.googleAccessToken
-    if (tokenVerlopen) {
-      try {
-        const nieuwTokens = await vernieuwAccessToken(user.googleRefreshToken, user.googleClientId, user.googleClientSecret)
-        accessToken = nieuwTokens.access_token
-        await prisma.user.updateMany({
-          data: {
-            googleAccessToken: accessToken,
-            googleTokenExpiry: nieuwTokens.expires_in
-              ? new Date(Date.now() + nieuwTokens.expires_in * 1000)
-              : new Date(Date.now() + 3600_000),
-          }
-        })
-      } catch (e) {
-        return { afspraken: [], fout: `Token vernieuwen mislukt: ${e instanceof Error ? e.message : 'Onbekende fout'}. Koppel Google Agenda opnieuw via Instellingen.` }
-      }
-    }
+    const accessToken = await refreshTokenIfNeeded(user)
+    if (!accessToken) return { afspraken: [], fout: 'Token vernieuwen mislukt. Koppel Google Agenda opnieuw via Instellingen.' }
 
     const nu = new Date()
     const vanDatum = params?.van ? new Date(params.van) : new Date(nu.getFullYear(), nu.getMonth(), 1)
-    const totDatum = params?.tot ? new Date(params.tot) : new Date(nu.getFullYear(), nu.getMonth() + 2, 0)
+    const totDatum = params?.tot ? new Date(params.tot) : new Date(nu.getFullYear(), nu.getMonth() + 1, 0, 23, 59, 59)
 
     try {
-      const afspraken = await haalAgendaAfspraken(accessToken!, vanDatum, totDatum)
-      return { afspraken }
+      const kalenders = await haalKalenderLijst(accessToken).catch(() => [{ id: 'primary', primair: true, samenvatting: 'Primair' }])
+      const primaryId = (user as Record<string, unknown>).googlePrimaryCalendarId as string | null
+        || kalenders.find((k) => k.primair)?.id
+        || 'primary'
+      const alleAfspraken = (await Promise.all(
+        kalenders.map((kal) =>
+          haalAgendaAfspraken(accessToken, vanDatum, totDatum, kal.id)
+            .then((items) => items.map((a) => ({
+              ...a,
+              kalenderId: kal.id,
+              kalenderKleur: kal.achtergrondKleur,
+              isPrimair: kal.id === primaryId,
+            })))
+            .catch(() => [])
+        )
+      )).flat()
+      return { afspraken: alleAfspraken }
     } catch (e) {
       return { afspraken: [], fout: e instanceof Error ? e.message : 'Agenda ophalen mislukt' }
     }
+  })
+
+  ipcMain.handle('agenda:haal-kalenders', async () => {
+    const user = await prisma.user.findFirst()
+    if (!user?.googleRefreshToken) return { kalenders: [], googleNietGekoppeld: true }
+    const accessToken = await refreshTokenIfNeeded(user)
+    if (!accessToken) return { kalenders: [], fout: 'Token vernieuwen mislukt.' }
+    try {
+      const kalenders = await haalKalenderLijst(accessToken)
+      const primaryId = (user as Record<string, unknown>).googlePrimaryCalendarId as string | null
+        || kalenders.find((k) => k.primair)?.id
+        || 'primary'
+      return { kalenders, primaryKalenderId: primaryId }
+    } catch (e) {
+      return { kalenders: [], fout: e instanceof Error ? e.message : 'Kalenders ophalen mislukt' }
+    }
+  })
+
+  ipcMain.handle('agenda:maak-afspraak', async (_, data: {
+    klantId?: string
+    locatie?: string
+    startDatumTijd: string
+    eindDatumTijd: string
+    geheledag?: boolean
+    calendarId?: string
+    regels?: Array<{ omschrijving: string; aantal: number; eenheid?: string; prijs: number; btwPercentage: number }>
+  }) => {
+    const user = await prisma.user.findFirst()
+    if (!user?.googleRefreshToken) throw new Error('Google Agenda niet gekoppeld.')
+    const accessToken = await refreshTokenIfNeeded(user)
+    if (!accessToken) throw new Error('Token vernieuwen mislukt.')
+
+    const titelDelen: string[] = []
+    if (data.klantId) {
+      const klant = await prisma.klant.findUnique({ where: { id: data.klantId } })
+      if (klant) titelDelen.push(klant.bedrijf || klant.naam)
+    }
+    if (data.locatie) titelDelen.push(data.locatie)
+    const titel = titelDelen.length > 0 ? titelDelen.join(' - ') : 'Afspraak'
+
+    const calendarId = data.calendarId
+      || (user as Record<string, unknown>).googlePrimaryCalendarId as string | null
+      || 'primary'
+
+    const eventId = await maakGoogleAfspraak(accessToken, calendarId, {
+      titel,
+      startDatumTijd: data.startDatumTijd,
+      eindDatumTijd: data.eindDatumTijd,
+      geheledag: data.geheledag,
+      locatie: data.locatie,
+    })
+
+    const { randomUUID } = require('crypto')
+    await prisma.agendaAfspraakData.create({
+      data: {
+        id: randomUUID(),
+        eventId,
+        klantId: data.klantId ?? null,
+        locatie: data.locatie ?? null,
+        regels: data.regels ? JSON.stringify(data.regels) : null,
+      }
+    })
+
+    return { succes: true, eventId, titel }
   })
 
   // ── Ritten (Kilometerregistratie) ──

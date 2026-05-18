@@ -109,6 +109,8 @@ interface ElectronAPI {
   }
   agenda: {
     haalAfspraken: (params?: { van?: string; tot?: string }) => Promise<unknown>
+    haalKalenders: () => Promise<unknown>
+    maakAfspraak: (data: unknown) => Promise<unknown>
   }
   producten: {
     list: () => Promise<unknown[]>
