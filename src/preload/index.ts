@@ -55,6 +55,7 @@ contextBridge.exposeInMainWorld('api', {
     uploadBon: (data: unknown) => ipcRenderer.invoke('uitgaven:uploadBon', data),
     openBon: (data: unknown) => ipcRenderer.invoke('uitgaven:openBon', data),
     scanBon: (data: unknown) => ipcRenderer.invoke('uitgaven:scanBon', data),
+    kiesBon: () => ipcRenderer.invoke('uitgaven:kiesBon'),
   },
   categorien: {
     list: () => ipcRenderer.invoke('categorien:list'),

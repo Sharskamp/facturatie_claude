@@ -1944,6 +1944,26 @@ function setupIpcHandlers() {
     return { succes: true }
   })
 
+  // Opens a file dialog and copies the selected file to the bonnen folder.
+  // Does NOT require an existing uitgaveId — used for scanning before saving.
+  ipcMain.handle('uitgaven:kiesBon', async () => {
+    const focusedWindow = BrowserWindow.getFocusedWindow()
+    const result = await dialog.showOpenDialog(focusedWindow!, {
+      filters: [{ name: 'Afbeeldingen & PDF', extensions: ['jpg', 'jpeg', 'png', 'pdf', 'webp'] }],
+      properties: ['openFile']
+    })
+    if (result.canceled || result.filePaths.length === 0) return { succes: false }
+
+    const bronPad = result.filePaths[0]
+    const bestandsnaam = bronPad.split('/').pop() ?? bronPad.split('\\').pop() ?? 'bon'
+    const bonMap = join(app.getPath('userData'), 'bonnen')
+    if (!fs.existsSync(bonMap)) fs.mkdirSync(bonMap, { recursive: true })
+
+    const doelPad = join(bonMap, `tmp-${Date.now()}-${bestandsnaam}`)
+    fs.copyFileSync(bronPad, doelPad)
+    return { succes: true, pad: doelPad }
+  })
+
   // ── Producten (catalogus) ──
   ipcMain.handle('producten:list', async () => {
     return prisma.product.findMany({ where: { actief: true }, orderBy: { naam: 'asc' } })

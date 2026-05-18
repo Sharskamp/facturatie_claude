@@ -117,6 +117,8 @@ export default function UitgavenPagina() {
 
   const [formulier, setFormulier] = useState(LEEG_FORMULIER);
   const [huidigeBon, setHuidigeBon] = useState<string | null>(null);
+  const [pendingBonPad, setPendingBonPad] = useState<string | null>(null);
+  const [modalScanLaden, setModalScanLaden] = useState(false);
   // Scan-bon state: welke uitgave heeft net een bon gekregen en klaar is om te scannen
   const [bonScanInfo, setBonScanInfo] = useState<{ uitgaveId: string; bonPad: string } | null>(null);
   const [scanLaden, setScanLaden] = useState(false);
@@ -160,6 +162,7 @@ export default function UitgavenPagina() {
     setFormulier(LEEG_FORMULIER);
     setBewerkenId(null);
     setHuidigeBon(null);
+    setPendingBonPad(null);
   };
 
   const openBewerken = (uitgave: Uitgave) => {
@@ -205,7 +208,10 @@ export default function UitgavenPagina() {
       if (bewerkenId) {
         await window.api.uitgaven.update(bewerkenId, payload);
       } else {
-        await window.api.uitgaven.create(payload);
+        const nieuw = await window.api.uitgaven.create(payload) as { id: string };
+        if (pendingBonPad && nieuw.id) {
+          await window.api.uitgaven.update(nieuw.id, { bonBestand: pendingBonPad });
+        }
       }
       toonMelding("succes", bewerkenId ? "Uitgave bijgewerkt" : "Uitgave toegevoegd");
       setModalOpen(false);
@@ -226,6 +232,50 @@ export default function UitgavenPagina() {
       haalUitgavenOp();
     } catch {
       toonMelding("fout", "Verwijderen mislukt");
+    }
+  };
+
+  const kiesBonHandler = async () => {
+    if (bewerkenId) {
+      const res = await window.api.uitgaven.uploadBon({ uitgaveId: bewerkenId }) as { succes: boolean; pad?: string };
+      if (res.succes && res.pad) {
+        setHuidigeBon(res.pad);
+        haalUitgavenOp();
+      }
+    } else {
+      const res = await window.api.uitgaven.kiesBon();
+      if (res.succes && res.pad) {
+        setPendingBonPad(res.pad);
+      }
+    }
+  };
+
+  const scanBonInModal = async () => {
+    const bonPad = huidigeBon || pendingBonPad;
+    if (!bonPad) return;
+    setModalScanLaden(true);
+    try {
+      const res = await window.api.uitgaven.scanBon({ bonPad }) as {
+        bedrag?: number | null;
+        leverancier?: string | null;
+        datum?: string | null;
+        error?: string;
+      };
+      if (res.error) {
+        toonMelding("fout", res.error);
+      } else {
+        setFormulier((prev) => ({
+          ...prev,
+          ...(res.bedrag != null ? { bedrag: String(res.bedrag) } : {}),
+          ...(res.leverancier ? { leverancier: res.leverancier } : {}),
+          ...(res.datum ? { datum: res.datum } : {}),
+        }));
+        toonMelding("succes", "Gegevens uitgelezen en ingevuld");
+      }
+    } catch {
+      toonMelding("fout", "Scannen mislukt");
+    } finally {
+      setModalScanLaden(false);
     }
   };
 
@@ -680,74 +730,63 @@ export default function UitgavenPagina() {
               rows={2}
             />
 
-            {/* Bon uploaden */}
-            {bewerkenId && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Bon</label>
-                {huidigeBon ? (
+            {/* Bon uploaden (werkt voor zowel nieuwe als bestaande uitgaven) */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Bon / factuur</label>
+              {(huidigeBon || pendingBonPad) ? (
+                <div className="space-y-2">
                   <div className="flex items-center justify-between rounded-lg border border-green-200 bg-green-50 px-3 py-2">
                     <div className="flex items-center gap-2 min-w-0">
                       <Upload className="h-4 w-4 text-green-600 shrink-0" />
                       <span className="text-sm text-green-800 truncate">
-                        {huidigeBon.split(/[/\\]/).pop()}
+                        {(huidigeBon || pendingBonPad)!.split(/[/\\]/).pop()}
                       </span>
                     </div>
                     <div className="flex items-center gap-2 shrink-0 ml-2">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        type="button"
-                        onClick={() => window.api.uitgaven.openBon({ pad: huidigeBon })}
-                      >
-                        Openen
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        type="button"
-                        onClick={async () => {
-                          const res = await window.api.uitgaven.uploadBon({ uitgaveId: bewerkenId }) as { succes: boolean; pad?: string };
-                          if (res.succes && res.pad) {
-                            setHuidigeBon(res.pad);
-                            setBonScanInfo({ uitgaveId: bewerkenId, bonPad: res.pad });
-                            haalUitgavenOp();
-                          }
-                        }}
-                      >
+                      {huidigeBon && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          type="button"
+                          onClick={() => window.api.uitgaven.openBon({ pad: huidigeBon })}
+                        >
+                          Openen
+                        </Button>
+                      )}
+                      <Button variant="outline" size="sm" type="button" onClick={kiesBonHandler}>
                         Vervangen
                       </Button>
                     </div>
                   </div>
-                ) : (
-                  <div className="border-2 border-dashed border-gray-200 rounded-lg p-4 text-center">
-                    <Upload className="h-6 w-6 text-gray-300 mx-auto mb-2" />
-                    <p className="text-sm text-gray-400">Nog geen bon gekoppeld</p>
-                    <p className="text-xs text-gray-300 mt-1">PDF, JPG, PNG, WEBP</p>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="mt-2"
-                      type="button"
-                      onClick={async () => {
-                        if (!bewerkenId) return;
-                        try {
-                          const res = await window.api.uitgaven.uploadBon({ uitgaveId: bewerkenId }) as { succes: boolean; pad?: string };
-                          if (res.succes && res.pad) {
-                            setHuidigeBon(res.pad);
-                            setBonScanInfo({ uitgaveId: bewerkenId, bonPad: res.pad });
-                            haalUitgavenOp();
-                          }
-                        } catch {
-                          toonMelding("fout", "Uploaden mislukt");
-                        }
-                      }}
-                    >
-                      Bestand kiezen
-                    </Button>
-                  </div>
-                )}
-              </div>
-            )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    type="button"
+                    loading={modalScanLaden}
+                    onClick={scanBonInModal}
+                  >
+                    <ScanLine className="h-4 w-4 mr-1" />
+                    Gegevens uitlezen met AI
+                  </Button>
+                </div>
+              ) : (
+                <div className="border-2 border-dashed border-gray-200 rounded-lg p-4 text-center">
+                  <Upload className="h-6 w-6 text-gray-300 mx-auto mb-2" />
+                  <p className="text-sm text-gray-400">Bon of factuur bijvoegen</p>
+                  <p className="text-xs text-gray-300 mt-1">PDF, JPG, PNG, WEBP</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-2"
+                    type="button"
+                    onClick={kiesBonHandler}
+                  >
+                    Bestand kiezen
+                  </Button>
+                </div>
+              )}
+            </div>
           </div>
           <ModalFooter className="mt-2">
             <ModalClose asChild>

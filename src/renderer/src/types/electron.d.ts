@@ -51,6 +51,7 @@ interface ElectronAPI {
     uploadBon: (data: unknown) => Promise<unknown>
     openBon: (data: unknown) => Promise<unknown>
     scanBon: (data: unknown) => Promise<unknown>
+    kiesBon: () => Promise<{ succes: boolean; pad?: string }>
   }
   categorien: {
     list: () => Promise<unknown[]>
