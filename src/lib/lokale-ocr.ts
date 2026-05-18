@@ -1,7 +1,6 @@
 /**
  * Lokale OCR zonder cloud API.
  * - Windows: Windows.Media.Ocr via PowerShell (hardware-versneld, gebruikt NPU/GPU indien beschikbaar)
- * - Fallback: Tesseract.js (WebAssembly, cross-platform)
  * - PDF → afbeelding via Electron offscreen BrowserWindow (Chromium PDF renderer)
  */
 
@@ -93,33 +92,6 @@ async function ocrViaWindowsMediaOcr(imagePad: string): Promise<string> {
   }
 }
 
-// ── Tesseract.js fallback (v4, lazy require) ─────────────────────────────────
-// Lazy geladen zodat de app niet crasht als tesseract.js niet is geïnstalleerd.
-async function ocrViaTesseract(imagePad: string): Promise<string> {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  let Tesseract: typeof import('tesseract.js')
-  try {
-    Tesseract = require('tesseract.js')
-  } catch {
-    throw new Error(
-      'Tesseract.js niet gevonden. Voer "npm install" uit in de projectmap en herstart de app.'
-    )
-  }
-
-  const cacheDir = path.join(os.homedir(), '.streamline-facturatie', 'tessdata')
-  if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true })
-
-  const worker = await Tesseract.createWorker('nld+eng', 1, {
-    cachePath: cacheDir,
-    gzip: false,
-  } as Parameters<typeof Tesseract.createWorker>[2])
-  try {
-    const result = await worker.recognize(imagePad)
-    return result.data.text
-  } finally {
-    await worker.terminate()
-  }
-}
 
 // ── PDF → PNG via Electron offscreen BrowserWindow ───────────────────────────
 // Gebruikt Chromium's ingebouwde PDF-renderer, geen extra dependencies nodig.
@@ -343,10 +315,6 @@ export async function scanBestandLokaal(pad: string): Promise<OcrVelden> {
     return { error: `Bestandstype .${ext} wordt niet ondersteund voor lokale OCR.` }
   }
 
-  // Zorg dat tessdata-cache map bestaat
-  const cacheDir = path.join(os.homedir(), '.streamline-facturatie', 'tessdata')
-  if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true })
-
   let beeldPad = pad
   let tmpPng: string | null = null
 
@@ -362,14 +330,12 @@ export async function scanBestandLokaal(pad: string): Promise<OcrVelden> {
     let tekst: string
 
     if (process.platform === 'win32') {
-      try {
-        tekst = await ocrViaWindowsMediaOcr(beeldPad)
-      } catch {
-        // Windows OCR niet beschikbaar (oudere versie of taal niet geïnstalleerd)
-        tekst = await ocrViaTesseract(beeldPad)
-      }
+      tekst = await ocrViaWindowsMediaOcr(beeldPad)
     } else {
-      tekst = await ocrViaTesseract(beeldPad)
+      throw new Error(
+        'Lokale OCR is momenteel alleen beschikbaar op Windows (Windows.Media.Ocr). ' +
+        'Gebruik de Claude AI-scan optie of draai de app op Windows.'
+      )
     }
 
     if (!tekst || tekst.trim().length < 10) {
