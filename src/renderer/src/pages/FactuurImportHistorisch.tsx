@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft, Plus, Trash2, CheckCircle, AlertCircle, Loader2,
-  Upload, FileText, Download, Info,
+  Upload, FileText, Download, Info, ScanLine, UserPlus, X, RefreshCw,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ interface Klant {
   id: string;
   naam: string;
   bedrijf?: string | null;
+  email?: string | null;
 }
 
 interface Regel {
@@ -39,6 +40,15 @@ interface CsvRij {
   status: string;
   notities: string;
   fout?: string;
+  // PDF scan velden
+  bronBestand?: string;
+  bronNaam?: string;
+  scanStatus?: "wacht" | "bezig" | "klaar" | "fout";
+  scanFout?: string;
+  klantEmail?: string;
+  klantAdres?: string;
+  isNieuweKlant?: boolean;
+  nieuweKlantAanmaken?: boolean;
 }
 
 function vandaagString() {
@@ -82,10 +92,18 @@ F2023-001;Acme BV;2023-01-15;2023-02-14;1210.00;210.00;1000.00;BETAALD;
 F2023-002;Klant Naam;2023-02-01;2023-03-03;605.00;105.00;500.00;BETAALD;
 F2023-003;Ander Bedrijf;2023-03-10;2023-04-09;363.00;63.00;300.00;VERZONDEN;`;
 
+const SCAN_STATUSLABELS: Record<string, string> = {
+  wacht: "Wacht...",
+  bezig: "Scannen...",
+  klaar: "Gescand",
+  fout: "Fout",
+};
+
 export default function FactuurImportHistorischPage() {
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [modus, setModus] = useState<"handmatig" | "bulk">("handmatig");
+  const pdfInputRef = useRef<HTMLInputElement>(null);
+  const [modus, setModus] = useState<"handmatig" | "bulk" | "pdf">("handmatig");
 
   // ── Klanten (gedeeld) ─────────────────────────────────────
   const [klanten, setKlanten] = useState<Klant[]>([]);
@@ -189,7 +207,6 @@ export default function FactuurImportHistorischPage() {
             const statusWaarde = kolomWaarde(rij, headers, "status").toUpperCase() || "BETAALD";
             const notitiesWaarde = kolomWaarde(rij, headers, "notities", "notes", "opmerkingen");
 
-            // Auto-match klant op naam of bedrijf
             const gevondenKlant = klanten.find(k =>
               k.naam.toLowerCase() === klantNaam.toLowerCase() ||
               (k.bedrijf ?? "").toLowerCase() === klantNaam.toLowerCase()
@@ -260,6 +277,182 @@ export default function FactuurImportHistorischPage() {
     if (fouten.length === 0) setCsvRijen([]);
   }
 
+  // ── PDF scan modus ────────────────────────────────────────
+  const [pdfRijen, setPdfRijen] = useState<CsvRij[]>([]);
+  const [pdfFout, setPdfFout] = useState<string | null>(null);
+  const [pdfScanBezig, setPdfScanBezig] = useState(false);
+  const [pdfImportResultaat, setPdfImportResultaat] = useState<{ succes: number; fouten: string[] } | null>(null);
+  const scanningRef = useRef(false);
+
+  function voegPdfBestandenToe(paden: string[]) {
+    const nieuw: CsvRij[] = paden.map(pad => ({
+      _id: crypto.randomUUID(),
+      nummer: "",
+      klantNaam: "",
+      klantId: "",
+      datum: vandaagString(),
+      vervaldatum: vandaagString(),
+      subtotaal: "0.00",
+      btwBedrag: "0.00",
+      totaal: "0.00",
+      status: "BETAALD",
+      notities: "",
+      bronBestand: pad,
+      bronNaam: pad.split(/[\\/]/).pop() ?? pad,
+      scanStatus: "wacht",
+      isNieuweKlant: false,
+      nieuweKlantAanmaken: true,
+    }));
+    setPdfRijen(prev => [...prev, ...nieuw]);
+  }
+
+  const startScannen = useCallback(async (rijen: CsvRij[]) => {
+    if (scanningRef.current) return;
+    scanningRef.current = true;
+    setPdfScanBezig(true);
+
+    for (const rij of rijen) {
+      if (rij.scanStatus !== "wacht") continue;
+
+      setPdfRijen(prev => prev.map(r => r._id === rij._id ? { ...r, scanStatus: "bezig" } : r));
+
+      try {
+        const resultaat = await window.api.facturen.scanPdf({ pad: rij.bronBestand! });
+
+        if (resultaat.error) throw new Error(resultaat.error);
+
+        const klantNaam = resultaat.klantNaam ?? "";
+        const gevondenKlant = klantNaam
+          ? klanten.find(k =>
+              k.naam.toLowerCase() === klantNaam.toLowerCase() ||
+              (k.bedrijf ?? "").toLowerCase() === klantNaam.toLowerCase()
+            )
+          : undefined;
+
+        const totaal = resultaat.totaal ?? 0;
+        const btw = resultaat.btwBedrag ?? 0;
+        const sub = resultaat.subtotaal ?? (totaal - btw);
+
+        setPdfRijen(prev => prev.map(r => r._id === rij._id ? {
+          ...r,
+          scanStatus: "klaar",
+          nummer: resultaat.nummer ?? "",
+          klantNaam,
+          klantId: gevondenKlant?.id ?? "",
+          klantEmail: resultaat.klantEmail ?? "",
+          klantAdres: resultaat.klantAdres ?? "",
+          datum: resultaat.datum ?? vandaagString(),
+          vervaldatum: resultaat.vervaldatum ?? vandaagString(),
+          subtotaal: sub.toFixed(2),
+          btwBedrag: btw.toFixed(2),
+          totaal: totaal.toFixed(2),
+          status: resultaat.status ?? "BETAALD",
+          notities: resultaat.notities ?? "",
+          isNieuweKlant: !!klantNaam && !gevondenKlant,
+          nieuweKlantAanmaken: !!klantNaam && !gevondenKlant,
+        } : r));
+      } catch (e: unknown) {
+        setPdfRijen(prev => prev.map(r => r._id === rij._id ? {
+          ...r,
+          scanStatus: "fout",
+          scanFout: e instanceof Error ? e.message : "Scan mislukt",
+        } : r));
+      }
+    }
+
+    scanningRef.current = false;
+    setPdfScanBezig(false);
+  }, [klanten]);
+
+  useEffect(() => {
+    const teScanner = pdfRijen.filter(r => r.scanStatus === "wacht");
+    if (teScanner.length > 0 && !scanningRef.current) {
+      startScannen(pdfRijen);
+    }
+  }, [pdfRijen, startScannen]);
+
+  function updatePdfRij(id: string, veld: keyof CsvRij, waarde: string | boolean) {
+    setPdfRijen(prev => prev.map(r => r._id === id ? { ...r, [veld]: waarde } : r));
+  }
+
+  function herScanRij(id: string) {
+    setPdfRijen(prev => prev.map(r => r._id === id ? { ...r, scanStatus: "wacht", scanFout: undefined } : r));
+  }
+
+  async function importeerPdfFacturen() {
+    const teImporteren = pdfRijen.filter(r => r.scanStatus === "klaar");
+    const ongeldig = teImporteren.filter(r => !r.nummer || !r.klantId || !r.datum);
+    if (ongeldig.length > 0) {
+      const nieuweKlantProblemen = ongeldig.filter(r => r.isNieuweKlant && r.nieuweKlantAanmaken && !r.klantNaam);
+      if (nieuweKlantProblemen.length > 0) {
+        setPdfFout(`${nieuweKlantProblemen.length} nieuwe klanten hebben geen naam.`);
+        return;
+      }
+      setPdfFout(`${ongeldig.length} facturen zijn niet volledig (nummer, klant en datum zijn verplicht).`);
+      return;
+    }
+
+    setBulkLaden(true); setPdfFout(null);
+    const importFn = (window.api.facturen as unknown as { importeerHistorisch: (d: unknown) => Promise<{ id: string; nummer: string }> }).importeerHistorisch;
+    let succesCount = 0;
+    const fouten: string[] = [];
+
+    for (const rij of teImporteren) {
+      try {
+        let effectiefKlantId = rij.klantId;
+
+        // Nieuwe klant aanmaken indien gewenst
+        if (rij.isNieuweKlant && rij.nieuweKlantAanmaken && rij.klantNaam && !rij.klantId) {
+          const nieuweKlant = await window.api.klanten.create({
+            naam: rij.klantNaam,
+            email: rij.klantEmail || undefined,
+            adres: rij.klantAdres || undefined,
+          }) as Klant;
+          effectiefKlantId = nieuweKlant.id;
+          setKlanten(prev => [...prev, nieuweKlant]);
+        }
+
+        if (!effectiefKlantId) {
+          fouten.push(`${rij.nummer || rij.bronNaam}: geen klant gekoppeld`);
+          continue;
+        }
+
+        const totaal = parseFloat(rij.totaal) || 0;
+        const btw = parseFloat(rij.btwBedrag) || 0;
+        const sub = parseFloat(rij.subtotaal) || (totaal - btw);
+
+        await importFn({
+          nummer: rij.nummer, klantId: effectiefKlantId,
+          datum: rij.datum, vervaldatum: rij.vervaldatum, status: rij.status,
+          subtotaal: sub, btwBedrag: btw, totaal, handmatigBedrag: true,
+          notities: rij.notities || undefined,
+          betaaldOp: rij.status === "BETAALD" ? rij.datum : undefined,
+          regels: [{ omschrijving: `Factuur ${rij.nummer}`, aantal: 1, prijs: sub, btwPercentage: sub > 0 ? (btw / sub) * 100 : 0, kortingPercentage: 0, totaal }],
+        });
+        succesCount++;
+      } catch (e: unknown) {
+        fouten.push(`${rij.nummer || rij.bronNaam}: ${e instanceof Error ? e.message : "mislukt"}`);
+      }
+    }
+
+    setBulkLaden(false);
+    setPdfImportResultaat({ succes: succesCount, fouten });
+    if (fouten.length === 0) setPdfRijen([]);
+  }
+
+  async function kiesBestandenViaPicker() {
+    try {
+      const paden = await window.api.facturen.kiesBestanden();
+      if (paden && paden.length > 0) voegPdfBestandenToe(paden);
+    } catch { /* gebruiker annuleerde */ }
+  }
+
+  const MODI = [
+    { id: "handmatig" as const, label: "Eén factuur" },
+    { id: "bulk" as const, label: "Bulk via CSV" },
+    { id: "pdf" as const, label: "Bulk via PDF/scan" },
+  ];
+
   return (
     <div className="flex flex-col min-h-screen">
       <Header
@@ -277,17 +470,17 @@ export default function FactuurImportHistorischPage() {
 
         {/* Modus kiezer */}
         <div className="flex gap-2 p-1 bg-gray-100 dark:bg-gray-800 rounded-xl w-fit">
-          {(["handmatig", "bulk"] as const).map(m => (
+          {MODI.map(m => (
             <button
-              key={m}
-              onClick={() => setModus(m)}
+              key={m.id}
+              onClick={() => setModus(m.id)}
               className={`px-5 py-2 rounded-lg text-sm font-medium transition-colors ${
-                modus === m
+                modus === m.id
                   ? "bg-white dark:bg-gray-700 shadow text-gray-900 dark:text-white"
                   : "text-gray-500 hover:text-gray-700"
               }`}
             >
-              {m === "handmatig" ? "Eén factuur" : "Bulk via CSV"}
+              {m.label}
             </button>
           ))}
         </div>
@@ -461,7 +654,6 @@ export default function FactuurImportHistorischPage() {
               </div>
             )}
 
-            {/* Stap 1: upload */}
             {csvRijen.length === 0 && !bulkResultaat && (
               <div className="space-y-4">
                 <Card>
@@ -521,20 +713,19 @@ export default function FactuurImportHistorischPage() {
               </div>
             )}
 
-            {/* Stap 2: review en koppelen */}
             {csvRijen.length > 0 && (
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="font-semibold text-gray-900">{csvRijen.length} facturen gevonden</h3>
-                    <p className="text-sm text-gray-500">Controleer de gegevens en koppel de klant aan elke factuur. Rijen met een oranje rand hebben aandacht nodig.</p>
+                    <p className="text-sm text-gray-500">Controleer de gegevens en koppel de klant aan elke factuur.</p>
                   </div>
                   <div className="flex gap-2">
                     <Button variant="outline" size="sm" onClick={() => { setCsvRijen([]); setBulkResultaat(null); }}>
                       Ander bestand
                     </Button>
                     <Button onClick={importeerAlles} loading={bulkLaden}>
-                      {bulkLaden ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
+                      <CheckCircle className="h-4 w-4" />
                       Importeer {csvRijen.length} facturen
                     </Button>
                   </div>
@@ -546,48 +737,37 @@ export default function FactuurImportHistorischPage() {
                     return (
                       <div key={rij._id} className={`rounded-xl border p-4 space-y-3 ${heeftFout ? "border-amber-300 bg-amber-50/40" : "border-gray-200 bg-white"}`}>
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                          {/* Nummer */}
                           <div>
                             <label className="block text-xs text-gray-500 mb-1">Factuurnummer *</label>
                             <input value={rij.nummer} onChange={e => updateCsvRij(rij._id, "nummer", e.target.value)} className={`w-full h-8 rounded-lg border px-3 text-sm ${!rij.nummer ? "border-red-300 bg-red-50" : "border-gray-300"} focus:outline-none focus:ring-1 focus:ring-indigo-500`} />
                           </div>
-                          {/* Klant */}
                           <div>
                             <label className="block text-xs text-gray-500 mb-1">
                               Klant * {rij.klantNaam && <span className="text-gray-400">— {rij.klantNaam}</span>}
                             </label>
-                            <select
-                              value={rij.klantId}
-                              onChange={e => updateCsvRij(rij._id, "klantId", e.target.value)}
-                              className={`w-full h-8 rounded-lg border px-2 text-sm ${!rij.klantId ? "border-red-300 bg-red-50" : "border-gray-300"} focus:outline-none focus:ring-1 focus:ring-indigo-500`}
-                            >
+                            <select value={rij.klantId} onChange={e => updateCsvRij(rij._id, "klantId", e.target.value)} className={`w-full h-8 rounded-lg border px-2 text-sm ${!rij.klantId ? "border-red-300 bg-red-50" : "border-gray-300"} focus:outline-none focus:ring-1 focus:ring-indigo-500`}>
                               <option value="">— kies klant —</option>
                               {klanten.map(k => <option key={k.id} value={k.id}>{k.bedrijf ?? k.naam}</option>)}
                             </select>
                           </div>
-                          {/* Datum */}
                           <div>
                             <label className="block text-xs text-gray-500 mb-1">Factuurdatum *</label>
                             <input type="date" value={rij.datum} onChange={e => updateCsvRij(rij._id, "datum", e.target.value)} className={`w-full h-8 rounded-lg border px-3 text-sm ${!rij.datum ? "border-red-300 bg-red-50" : "border-gray-300"} focus:outline-none focus:ring-1 focus:ring-indigo-500`} />
                           </div>
-                          {/* Vervaldatum */}
                           <div>
                             <label className="block text-xs text-gray-500 mb-1">Vervaldatum *</label>
                             <input type="date" value={rij.vervaldatum} onChange={e => updateCsvRij(rij._id, "vervaldatum", e.target.value)} className={`w-full h-8 rounded-lg border px-3 text-sm ${!rij.vervaldatum ? "border-red-300 bg-red-50" : "border-gray-300"} focus:outline-none focus:ring-1 focus:ring-indigo-500`} />
                           </div>
                         </div>
                         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 items-end">
-                          {/* Totaal */}
                           <div>
                             <label className="block text-xs text-gray-500 mb-1">Totaal (incl. BTW)</label>
                             <div className="relative"><span className="absolute left-2.5 top-1.5 text-xs text-gray-400">€</span><input type="number" step="0.01" value={rij.totaal} onChange={e => updateCsvRij(rij._id, "totaal", e.target.value)} className="w-full h-8 rounded-lg border border-gray-300 pl-6 pr-2 text-sm text-right focus:outline-none focus:ring-1 focus:ring-indigo-500" /></div>
                           </div>
-                          {/* BTW */}
                           <div>
                             <label className="block text-xs text-gray-500 mb-1">BTW-bedrag</label>
                             <div className="relative"><span className="absolute left-2.5 top-1.5 text-xs text-gray-400">€</span><input type="number" step="0.01" value={rij.btwBedrag} onChange={e => updateCsvRij(rij._id, "btwBedrag", e.target.value)} className="w-full h-8 rounded-lg border border-gray-300 pl-6 pr-2 text-sm text-right focus:outline-none focus:ring-1 focus:ring-indigo-500" /></div>
                           </div>
-                          {/* Status */}
                           <div>
                             <label className="block text-xs text-gray-500 mb-1">Status</label>
                             <select value={rij.status} onChange={e => updateCsvRij(rij._id, "status", e.target.value)} className="w-full h-8 rounded-lg border border-gray-300 px-2 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500">
@@ -597,7 +777,6 @@ export default function FactuurImportHistorischPage() {
                               <option value="CONCEPT">Concept</option>
                             </select>
                           </div>
-                          {/* Notities */}
                           <div className="sm:col-span-2">
                             <label className="block text-xs text-gray-500 mb-1">Notities</label>
                             <input value={rij.notities} onChange={e => updateCsvRij(rij._id, "notities", e.target.value)} placeholder="Optioneel" className="w-full h-8 rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500" />
@@ -610,10 +789,283 @@ export default function FactuurImportHistorischPage() {
 
                 <div className="flex justify-end pt-2">
                   <Button onClick={importeerAlles} loading={bulkLaden} size="lg">
-                    {bulkLaden ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
+                    <CheckCircle className="h-4 w-4" />
                     Importeer {csvRijen.length} facturen
                   </Button>
                 </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── BULK PDF / SCAN ── */}
+        {modus === "pdf" && (
+          <div className="space-y-6">
+            {pdfFout && (
+              <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0" />{pdfFout}
+              </div>
+            )}
+
+            {pdfImportResultaat && (
+              <div className={`rounded-lg border px-4 py-4 text-sm space-y-2 ${pdfImportResultaat.fouten.length === 0 ? "bg-green-50 border-green-200 text-green-800" : "bg-amber-50 border-amber-200 text-amber-800"}`}>
+                <p className="font-semibold flex items-center gap-2">
+                  <CheckCircle className="h-4 w-4" />
+                  {pdfImportResultaat.succes} factuur{pdfImportResultaat.succes !== 1 ? "en" : ""} succesvol geïmporteerd
+                </p>
+                {pdfImportResultaat.fouten.length > 0 && (
+                  <ul className="list-disc list-inside space-y-0.5 text-xs">
+                    {pdfImportResultaat.fouten.map((f, i) => <li key={i}>{f}</li>)}
+                  </ul>
+                )}
+                {pdfImportResultaat.fouten.length === 0 && (
+                  <Button size="sm" variant="outline" onClick={() => navigate("/facturen")}>Ga naar facturen</Button>
+                )}
+              </div>
+            )}
+
+            {/* Info banner */}
+            <div className="rounded-lg bg-indigo-50 border border-indigo-200 p-4 text-sm text-indigo-800 flex gap-3">
+              <ScanLine className="h-5 w-5 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold">AI-scan van PDF/afbeeldingen</p>
+                <p className="text-indigo-700 mt-0.5">Bestanden worden automatisch gescand met AI. Controleer alle gegevens voordat je importeert. Nieuwe klanten worden aangemaakt als je dit aanvinkt.</p>
+              </div>
+            </div>
+
+            {/* Upload zone */}
+            <Card>
+              <CardContent className="pt-6">
+                <div
+                  onClick={kiesBestandenViaPicker}
+                  onDragOver={e => e.preventDefault()}
+                  onDrop={e => {
+                    e.preventDefault();
+                    const paden: string[] = [];
+                    Array.from(e.dataTransfer.files).forEach(f => {
+                      if (/\.(pdf|jpg|jpeg|png|webp)$/i.test(f.name)) paden.push((f as File & { path?: string }).path ?? f.name);
+                    });
+                    if (paden.length > 0) voegPdfBestandenToe(paden);
+                  }}
+                  className="border-2 border-dashed border-gray-300 rounded-xl p-10 text-center cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/40 transition-colors"
+                >
+                  <Upload className="h-8 w-8 text-gray-400 mx-auto mb-3" />
+                  <p className="text-sm font-medium text-gray-700">Klik of sleep PDF/afbeeldingen hier</p>
+                  <p className="text-xs text-gray-500 mt-1">PDF, JPG, PNG of WEBP — meerdere bestanden tegelijk mogelijk</p>
+                  <input
+                    ref={pdfInputRef}
+                    type="file"
+                    accept=".pdf,.jpg,.jpeg,.png,.webp"
+                    multiple
+                    className="hidden"
+                    onChange={e => {
+                      const files = Array.from(e.target.files ?? []);
+                      const paden = files.map(f => (f as File & { path?: string }).path ?? f.name).filter(Boolean);
+                      if (paden.length > 0) voegPdfBestandenToe(paden);
+                      e.target.value = "";
+                    }}
+                  />
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Scan wachtrij + review */}
+            {pdfRijen.length > 0 && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-semibold text-gray-900 dark:text-white">
+                      {pdfRijen.length} bestand{pdfRijen.length !== 1 ? "en" : ""}
+                      {pdfScanBezig && <span className="ml-2 text-sm text-indigo-600 font-normal flex items-center gap-1 inline-flex"><Loader2 className="h-3.5 w-3.5 animate-spin" />Scannen...</span>}
+                    </h3>
+                    <p className="text-sm text-gray-500">
+                      {pdfRijen.filter(r => r.scanStatus === "klaar").length} gescand &middot;&nbsp;
+                      {pdfRijen.filter(r => r.scanStatus === "wacht" || r.scanStatus === "bezig").length} wacht &middot;&nbsp;
+                      {pdfRijen.filter(r => r.scanStatus === "fout").length} fout
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm" onClick={() => { setPdfRijen([]); setPdfImportResultaat(null); setPdfFout(null); }}>
+                      <X className="h-4 w-4" />Wissen
+                    </Button>
+                    {pdfRijen.some(r => r.scanStatus === "klaar") && (
+                      <Button onClick={importeerPdfFacturen} loading={bulkLaden} disabled={pdfScanBezig}>
+                        <CheckCircle className="h-4 w-4" />
+                        Importeer {pdfRijen.filter(r => r.scanStatus === "klaar").length} facturen
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  {pdfRijen.map((rij) => (
+                    <div
+                      key={rij._id}
+                      className={`rounded-xl border p-4 space-y-3 ${
+                        rij.scanStatus === "fout" ? "border-red-300 bg-red-50/40 dark:bg-red-950/20" :
+                        rij.scanStatus === "bezig" ? "border-indigo-300 bg-indigo-50/40 dark:bg-indigo-950/20" :
+                        rij.scanStatus === "wacht" ? "border-gray-200 bg-gray-50/60" :
+                        (!rij.nummer || (!rij.klantId && !(rij.isNieuweKlant && rij.nieuweKlantAanmaken))) ? "border-amber-300 bg-amber-50/40" :
+                        "border-gray-200 bg-white dark:bg-gray-800"
+                      }`}
+                    >
+                      {/* Header rij */}
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <FileText className="h-4 w-4 shrink-0 text-gray-400" />
+                          <span className="text-sm font-medium text-gray-700 dark:text-gray-300 truncate">{rij.bronNaam}</span>
+                          {/* Scan status badge */}
+                          <span className={`shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
+                            rij.scanStatus === "bezig" ? "bg-indigo-100 text-indigo-700" :
+                            rij.scanStatus === "klaar" ? "bg-green-100 text-green-700" :
+                            rij.scanStatus === "fout" ? "bg-red-100 text-red-700" :
+                            "bg-gray-100 text-gray-600"
+                          }`}>
+                            {rij.scanStatus === "bezig" && <Loader2 className="h-3 w-3 animate-spin" />}
+                            {rij.scanStatus === "klaar" && <CheckCircle className="h-3 w-3" />}
+                            {rij.scanStatus === "fout" && <AlertCircle className="h-3 w-3" />}
+                            {SCAN_STATUSLABELS[rij.scanStatus ?? "wacht"]}
+                          </span>
+                          {/* Nieuwe klant badge */}
+                          {rij.isNieuweKlant && (
+                            <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+                              <UserPlus className="h-3 w-3" />Nieuwe klant
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex gap-1 shrink-0">
+                          {rij.scanStatus === "fout" && (
+                            <button onClick={() => herScanRij(rij._id)} className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50" title="Opnieuw scannen">
+                              <RefreshCw className="h-4 w-4" />
+                            </button>
+                          )}
+                          <button onClick={() => setPdfRijen(prev => prev.filter(r => r._id !== rij._id))} className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50" title="Verwijderen">
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Scan fout */}
+                      {rij.scanStatus === "fout" && rij.scanFout && (
+                        <p className="text-xs text-red-600">{rij.scanFout}</p>
+                      )}
+
+                      {/* Bezig indicator */}
+                      {rij.scanStatus === "bezig" && (
+                        <div className="h-1.5 bg-indigo-100 rounded-full overflow-hidden">
+                          <div className="h-full bg-indigo-500 rounded-full animate-pulse w-2/3" />
+                        </div>
+                      )}
+
+                      {/* Bewerkvelden (zichtbaar als klaar) */}
+                      {rij.scanStatus === "klaar" && (
+                        <>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                            <div>
+                              <label className="block text-xs text-gray-500 mb-1">Factuurnummer *</label>
+                              <input value={rij.nummer} onChange={e => updatePdfRij(rij._id, "nummer", e.target.value)} className={`w-full h-8 rounded-lg border px-3 text-sm ${!rij.nummer ? "border-red-300 bg-red-50" : "border-gray-300"} focus:outline-none focus:ring-1 focus:ring-indigo-500`} />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-gray-500 mb-1">Factuurdatum *</label>
+                              <input type="date" value={rij.datum} onChange={e => updatePdfRij(rij._id, "datum", e.target.value)} className="w-full h-8 rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-gray-500 mb-1">Vervaldatum</label>
+                              <input type="date" value={rij.vervaldatum} onChange={e => updatePdfRij(rij._id, "vervaldatum", e.target.value)} className="w-full h-8 rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-gray-500 mb-1">Status</label>
+                              <select value={rij.status} onChange={e => updatePdfRij(rij._id, "status", e.target.value)} className="w-full h-8 rounded-lg border border-gray-300 px-2 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                                <option value="BETAALD">Betaald</option>
+                                <option value="VERZONDEN">Verzonden</option>
+                                <option value="VERLOPEN">Verlopen</option>
+                                <option value="CONCEPT">Concept</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                            <div>
+                              <label className="block text-xs text-gray-500 mb-1">Totaal (incl. BTW)</label>
+                              <div className="relative"><span className="absolute left-2.5 top-1.5 text-xs text-gray-400">€</span><input type="number" step="0.01" value={rij.totaal} onChange={e => updatePdfRij(rij._id, "totaal", e.target.value)} className="w-full h-8 rounded-lg border border-gray-300 pl-6 pr-2 text-sm text-right focus:outline-none focus:ring-1 focus:ring-indigo-500" /></div>
+                            </div>
+                            <div>
+                              <label className="block text-xs text-gray-500 mb-1">BTW-bedrag</label>
+                              <div className="relative"><span className="absolute left-2.5 top-1.5 text-xs text-gray-400">€</span><input type="number" step="0.01" value={rij.btwBedrag} onChange={e => updatePdfRij(rij._id, "btwBedrag", e.target.value)} className="w-full h-8 rounded-lg border border-gray-300 pl-6 pr-2 text-sm text-right focus:outline-none focus:ring-1 focus:ring-indigo-500" /></div>
+                            </div>
+                            <div className="sm:col-span-2">
+                              <label className="block text-xs text-gray-500 mb-1">Notities</label>
+                              <input value={rij.notities} onChange={e => updatePdfRij(rij._id, "notities", e.target.value)} className="w-full h-8 rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                            </div>
+                          </div>
+
+                          {/* Klant sectie */}
+                          {rij.isNieuweKlant ? (
+                            <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 space-y-3">
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs font-semibold text-amber-800 flex items-center gap-1.5">
+                                  <UserPlus className="h-3.5 w-3.5" />Nieuwe klant: {rij.klantNaam}
+                                </span>
+                                <label className="flex items-center gap-1.5 text-xs text-amber-800 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={rij.nieuweKlantAanmaken ?? true}
+                                    onChange={e => updatePdfRij(rij._id, "nieuweKlantAanmaken", e.target.checked)}
+                                    className="h-3.5 w-3.5 text-amber-600 rounded"
+                                  />
+                                  Nieuwe klant aanmaken
+                                </label>
+                              </div>
+                              {rij.nieuweKlantAanmaken ? (
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                  <div>
+                                    <label className="block text-xs text-gray-500 mb-1">Naam *</label>
+                                    <input value={rij.klantNaam} onChange={e => updatePdfRij(rij._id, "klantNaam", e.target.value)} className="w-full h-8 rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                                  </div>
+                                  <div>
+                                    <label className="block text-xs text-gray-500 mb-1">E-mailadres</label>
+                                    <input type="email" value={rij.klantEmail ?? ""} onChange={e => updatePdfRij(rij._id, "klantEmail", e.target.value)} className="w-full h-8 rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                                  </div>
+                                  <div>
+                                    <label className="block text-xs text-gray-500 mb-1">Adres</label>
+                                    <input value={rij.klantAdres ?? ""} onChange={e => updatePdfRij(rij._id, "klantAdres", e.target.value)} className="w-full h-8 rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                                  </div>
+                                </div>
+                              ) : (
+                                <div>
+                                  <label className="block text-xs text-gray-500 mb-1">Koppel aan bestaande klant</label>
+                                  <select value={rij.klantId} onChange={e => updatePdfRij(rij._id, "klantId", e.target.value)} className="w-full h-8 rounded-lg border border-gray-300 px-2 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                                    <option value="">— kies klant —</option>
+                                    {klanten.map(k => <option key={k.id} value={k.id}>{k.bedrijf ?? k.naam}</option>)}
+                                  </select>
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div>
+                              <label className="block text-xs text-gray-500 mb-1">
+                                Klant * {rij.klantNaam && <span className="text-gray-400">— herkend: {rij.klantNaam}</span>}
+                              </label>
+                              <select value={rij.klantId} onChange={e => updatePdfRij(rij._id, "klantId", e.target.value)} className={`w-full h-8 rounded-lg border px-2 text-sm ${!rij.klantId ? "border-red-300 bg-red-50" : "border-gray-300"} focus:outline-none focus:ring-1 focus:ring-indigo-500`}>
+                                <option value="">— kies klant —</option>
+                                {klanten.map(k => <option key={k.id} value={k.id}>{k.bedrijf ?? k.naam}</option>)}
+                              </select>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {pdfRijen.some(r => r.scanStatus === "klaar") && (
+                  <div className="flex justify-end pt-2">
+                    <Button onClick={importeerPdfFacturen} loading={bulkLaden} disabled={pdfScanBezig} size="lg">
+                      <CheckCircle className="h-4 w-4" />
+                      Importeer {pdfRijen.filter(r => r.scanStatus === "klaar").length} facturen
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
           </div>
