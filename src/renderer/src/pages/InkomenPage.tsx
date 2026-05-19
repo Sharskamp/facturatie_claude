@@ -116,18 +116,35 @@ export default function InkomenPagina() {
     }
   }, []);
 
-  useEffect(() => {
-    haalInkomensOp();
-    haalFacturenOp();
-    window.api.instellingen.get().then((inst: any) => {
+  const haalInstellingenOp = useCallback(async () => {
+    try {
+      const inst = await window.api.instellingen.get() as any;
       if (inst?.bankWeergaveVelden) {
         try {
           const velden = JSON.parse(inst.bankWeergaveVelden);
           if (Array.isArray(velden) && velden.length > 0) setBankVelden(velden);
         } catch {}
       }
-    }).catch(() => {});
-  }, [haalInkomensOp, haalFacturenOp]);
+      if (inst?.spaarrekeningen) {
+        try {
+          const spaar = JSON.parse(inst.spaarrekeningen);
+          if (Array.isArray(spaar)) setSpaarVelden(spaar);
+        } catch {}
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    haalInkomensOp();
+    haalFacturenOp();
+    haalInstellingenOp();
+  }, [haalInkomensOp, haalFacturenOp, haalInstellingenOp]);
+
+  useEffect(() => {
+    const handler = () => haalInstellingenOp();
+    window.addEventListener('bankVeldenGewijzigd', handler);
+    return () => window.removeEventListener('bankVeldenGewijzigd', handler);
+  }, [haalInstellingenOp]);
 
   const toonMelding = (type: "succes" | "fout", tekst: string) => {
     setMelding({ type, tekst });
@@ -438,7 +455,9 @@ export default function InkomenPagina() {
                     )}
                     {bankVelden.includes('bron') && (
                       <TableCell>
-                        {inkomen.bron === "Bankimport" && !inkomen.factuurId && !inkomen.geboektAlsOmzet ? (
+                        {inkomen.tegenrekening && spaarVelden.includes(inkomen.tegenrekening) ? (
+                          <Badge className="text-purple-600 border-purple-300 bg-purple-50">Spaarrekening</Badge>
+                        ) : inkomen.bron === "Bankimport" && !inkomen.factuurId && !inkomen.geboektAlsOmzet ? (
                           <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50">Wacht op koppeling</Badge>
                         ) : inkomen.bron === "Bankimport" && inkomen.geboektAlsOmzet ? (
                           <Badge variant="outline" className="text-green-600 border-green-300 bg-green-50">Losse omzet</Badge>
@@ -460,23 +479,27 @@ export default function InkomenPagina() {
                     )}
                     <TableCell>
                       <div className="flex items-center justify-end gap-1">
-                        {inkomen.factuurId ? (
-                          <Button variant="ghost" size="icon-sm" title="Ontkoppelen" onClick={() => ontkoppel(inkomen.id)}>
-                            <Unlink className="h-4 w-4 text-gray-400" />
-                          </Button>
-                        ) : inkomen.bron === "Bankimport" && !inkomen.geboektAlsOmzet ? (
+                        {inkomen.tegenrekening && spaarVelden.includes(inkomen.tegenrekening) ? null : (
                           <>
-                            <Button variant="ghost" size="icon-sm" title="Koppel aan factuur" onClick={() => openSmartKoppel(inkomen)}>
-                              <Link className="h-4 w-4 text-indigo-500" />
-                            </Button>
-                            <Button variant="ghost" size="icon-sm" title="Boek als losse zakelijke omzet" onClick={() => boekAlsOmzet(inkomen.id)}>
-                              <BookOpen className="h-4 w-4 text-green-600" />
-                            </Button>
+                            {inkomen.factuurId ? (
+                              <Button variant="ghost" size="icon-sm" title="Ontkoppelen" onClick={() => ontkoppel(inkomen.id)}>
+                                <Unlink className="h-4 w-4 text-gray-400" />
+                              </Button>
+                            ) : inkomen.bron === "Bankimport" && !inkomen.geboektAlsOmzet ? (
+                              <>
+                                <Button variant="ghost" size="icon-sm" title="Koppel aan factuur" onClick={() => openSmartKoppel(inkomen)}>
+                                  <Link className="h-4 w-4 text-indigo-500" />
+                                </Button>
+                                <Button variant="ghost" size="icon-sm" title="Boek als losse zakelijke omzet" onClick={() => boekAlsOmzet(inkomen.id)}>
+                                  <BookOpen className="h-4 w-4 text-green-600" />
+                                </Button>
+                              </>
+                            ) : (
+                              <Button variant="ghost" size="icon-sm" title="Koppel aan factuur" onClick={() => openSmartKoppel(inkomen)}>
+                                <Link className="h-4 w-4 text-indigo-500" />
+                              </Button>
+                            )}
                           </>
-                        ) : (
-                          <Button variant="ghost" size="icon-sm" title="Koppel aan factuur" onClick={() => openSmartKoppel(inkomen)}>
-                            <Link className="h-4 w-4 text-indigo-500" />
-                          </Button>
                         )}
                         <Button variant="ghost" size="icon-sm" onClick={() => openBewerken(inkomen)}>
                           <Pencil className="h-4 w-4" />

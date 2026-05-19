@@ -10,6 +10,7 @@ import {
   Upload,
   ScanLine,
   Cpu,
+  Settings2,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -115,6 +116,9 @@ export default function UitgavenPagina() {
   const [bewerkenId, setBewerkenId] = useState<string | null>(null);
   const [melding, setMelding] = useState<{ type: "succes" | "fout"; tekst: string } | null>(null);
   const [opslaan, setOpslaan] = useState(false);
+
+  const [categorieModalOpen, setCategorieModalOpen] = useState(false);
+  const [nieuwCategorie, setNieuwCategorie] = useState({ naam: '', kleur: '#6366f1' });
 
   const [formulier, setFormulier] = useState(LEEG_FORMULIER);
   const [huidigeBon, setHuidigeBon] = useState<string | null>(null);
@@ -487,6 +491,10 @@ export default function UitgavenPagina() {
               ))}
             </SelectContent>
           </Select>
+          <Button variant="outline" size="sm" onClick={() => setCategorieModalOpen(true)}>
+            <Settings2 className="h-4 w-4 mr-1" />
+            Categorieën beheren
+          </Button>
         </div>
 
         {/* Tabel */}
@@ -832,6 +840,89 @@ export default function UitgavenPagina() {
             <Button onClick={slaOp} loading={opslaan}>
               {bewerkenId ? "Opslaan" : "Toevoegen"}
             </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* Categorieën beheren Modal */}
+      <Modal open={categorieModalOpen} onOpenChange={setCategorieModalOpen}>
+        <ModalContent className="max-w-md">
+          <ModalHeader>
+            <ModalTitle>Categorieën beheren</ModalTitle>
+          </ModalHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              {categorieen.map((cat) => (
+                <div key={cat.id} className="flex items-center justify-between gap-2 py-1.5">
+                  <div className="flex items-center gap-2">
+                    <div
+                      className="h-3 w-3 rounded-full shrink-0"
+                      style={{ backgroundColor: cat.kleur ?? '#6366f1' }}
+                    />
+                    <span className="text-sm text-gray-800">{cat.naam}</span>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    title="Verwijderen"
+                    onClick={async () => {
+                      try {
+                        await window.api.categorien.delete(cat.id);
+                        await haalCategorieenOp();
+                      } catch {
+                        toonMelding("fout", "Kan categorie niet verwijderen (heeft nog gekoppelde uitgaven)");
+                      }
+                    }}
+                  >
+                    <Trash2 className="h-4 w-4 text-red-400" />
+                  </Button>
+                </div>
+              ))}
+              {categorieen.length === 0 && (
+                <p className="text-sm text-gray-400">Geen categorieën aangemaakt.</p>
+              )}
+            </div>
+            <div className="border-t border-gray-100 pt-4">
+              <p className="text-xs font-medium text-gray-500 mb-2 uppercase tracking-wide">Nieuwe categorie</p>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={nieuwCategorie.kleur}
+                  onChange={(e) => setNieuwCategorie((prev) => ({ ...prev, kleur: e.target.value }))}
+                  className="h-8 w-8 rounded border border-gray-200 cursor-pointer p-0.5"
+                  title="Kies kleur"
+                />
+                <Input
+                  placeholder="Naam categorie"
+                  value={nieuwCategorie.naam}
+                  onChange={(e) => setNieuwCategorie((prev) => ({ ...prev, naam: e.target.value }))}
+                  onKeyDown={async (e) => {
+                    if (e.key === 'Enter' && nieuwCategorie.naam.trim()) {
+                      await window.api.categorien.create({ naam: nieuwCategorie.naam.trim(), kleur: nieuwCategorie.kleur });
+                      setNieuwCategorie({ naam: '', kleur: '#6366f1' });
+                      await haalCategorieenOp();
+                    }
+                  }}
+                  className="flex-1"
+                />
+                <Button
+                  variant="outline"
+                  onClick={async () => {
+                    if (!nieuwCategorie.naam.trim()) return;
+                    await window.api.categorien.create({ naam: nieuwCategorie.naam.trim(), kleur: nieuwCategorie.kleur });
+                    setNieuwCategorie({ naam: '', kleur: '#6366f1' });
+                    await haalCategorieenOp();
+                  }}
+                >
+                  Toevoegen
+                </Button>
+              </div>
+            </div>
+          </div>
+          <ModalFooter className="mt-2">
+            <ModalClose asChild>
+              <Button variant="outline">Sluiten</Button>
+            </ModalClose>
           </ModalFooter>
         </ModalContent>
       </Modal>
