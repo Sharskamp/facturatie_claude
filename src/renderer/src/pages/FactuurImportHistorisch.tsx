@@ -387,13 +387,10 @@ export default function FactuurImportHistorischPage() {
 
   async function importeerPdfFacturen() {
     const teImporteren = pdfRijen.filter(r => r.scanStatus === "klaar");
-    const ongeldig = teImporteren.filter(r => !r.nummer || !r.klantId || !r.datum);
+    const klantOntbreekt = (r: CsvRij) =>
+      !r.klantId && !(r.isNieuweKlant && r.nieuweKlantAanmaken && r.klantNaam);
+    const ongeldig = teImporteren.filter(r => !r.nummer || klantOntbreekt(r) || !r.datum);
     if (ongeldig.length > 0) {
-      const nieuweKlantProblemen = ongeldig.filter(r => r.isNieuweKlant && r.nieuweKlantAanmaken && !r.klantNaam);
-      if (nieuweKlantProblemen.length > 0) {
-        setPdfFout(`${nieuweKlantProblemen.length} nieuwe klanten hebben geen naam.`);
-        return;
-      }
       setPdfFout(`${ongeldig.length} facturen zijn niet volledig (nummer, klant en datum zijn verplicht).`);
       return;
     }
