@@ -302,31 +302,35 @@ export default function FactuurDetailPage() {
                 Bewerken
               </Button>
             )}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => window.print()}
-            >
-              <Printer className="h-4 w-4" />
-              Afdrukken
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={async () => {
-                const res = await window.api.facturen.downloadPdf(id!) as { succes: boolean; fout?: string }
-                if (!res.succes && res.fout) {
-                  alert(`PDF mislukt: ${res.fout}`)
-                } else {
-                  window.api.audit.create({ factuurId: id!, actie: "PDF_GEDOWNLOAD" }).catch(() => {});
-                  window.api.audit.list(id!).then(setAuditLogs).catch(() => {});
-                  laadFactuur();
-                }
-              }}
-            >
-              <FileDown className="h-4 w-4" />
-              PDF downloaden
-            </Button>
+            {!factuur.historisch && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => window.print()}
+              >
+                <Printer className="h-4 w-4" />
+                Afdrukken
+              </Button>
+            )}
+            {!factuur.historisch && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  const res = await window.api.facturen.downloadPdf(id!) as { succes: boolean; fout?: string }
+                  if (!res.succes && res.fout) {
+                    alert(`PDF mislukt: ${res.fout}`)
+                  } else {
+                    window.api.audit.create({ factuurId: id!, actie: "PDF_GEDOWNLOAD" }).catch(() => {});
+                    window.api.audit.list(id!).then(setAuditLogs).catch(() => {});
+                    laadFactuur();
+                  }
+                }}
+              >
+                <FileDown className="h-4 w-4" />
+                PDF downloaden
+              </Button>
+            )}
             {factuur.bronBestandPad && (
               <Button
                 variant="outline"
