@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('api', {
     create: (data: unknown) => ipcRenderer.invoke('klanten:create', data),
     update: (id: string, data: unknown) => ipcRenderer.invoke('klanten:update', id, data),
     delete: (id: string) => ipcRenderer.invoke('klanten:delete', id),
+    deleteMetFacturen: (id: string) => ipcRenderer.invoke('klanten:deleteMetFacturen', id),
     archiveer: (id: string) => ipcRenderer.invoke('klanten:archiveer', id),
   },
   facturen: {

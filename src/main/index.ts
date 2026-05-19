@@ -600,6 +600,15 @@ function setupIpcHandlers() {
     return { succes: true }
   })
 
+  ipcMain.handle('klanten:deleteMetFacturen', async (_, id: string) => {
+    await prisma.$transaction([
+      prisma.factuurRegel.deleteMany({ where: { factuur: { klantId: id } } }),
+      prisma.factuur.deleteMany({ where: { klantId: id } }),
+      prisma.klant.delete({ where: { id } }),
+    ])
+    return { succes: true }
+  })
+
   ipcMain.handle('klanten:archiveer', async (_, id: string) => {
     const klant = await prisma.klant.findUnique({ where: { id } })
     if (!klant) throw new Error('Klant niet gevonden')

@@ -145,6 +145,8 @@ export default function KlantenPage() {
   const [zoekterm, setZoekterm] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [verwijderModalOpen, setVerwijderModalOpen] = useState(false);
+  const [verwijderFout, setVerwijderFout] = useState<string | null>(null);
+  const [verwijderLaden, setVerwijderLaden] = useState(false);
   const [geselecteerdeKlant, setGeselecteerdeKlant] = useState<Klant | null>(null);
   const [formulier, setFormulier] = useState<Partial<Klant>>(LEEG_FORMULIER);
   const [opslaan, setOpslaan] = useState(false);
@@ -268,14 +270,28 @@ export default function KlantenPage() {
     }
   }
 
-  async function verwijder() {
+  async function verwijder(metFacturen = false) {
     if (!geselecteerdeKlant) return;
+    setVerwijderLaden(true);
+    setVerwijderFout(null);
     try {
-      await window.api.klanten.delete(geselecteerdeKlant.id);
+      if (metFacturen) {
+        await (window.api.klanten as unknown as { deleteMetFacturen: (id: string) => Promise<void> }).deleteMetFacturen(geselecteerdeKlant.id);
+      } else {
+        await window.api.klanten.delete(geselecteerdeKlant.id);
+      }
       setVerwijderModalOpen(false);
+      setVerwijderFout(null);
       laadKlanten(zoekterm);
     } catch (e) {
-      console.error("Fout bij verwijderen:", e);
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes('Foreign key') || msg.includes('foreign key') || msg.includes('constraint') || msg.includes('factuur') || msg.includes('related')) {
+        setVerwijderFout('Deze klant heeft gekoppelde facturen. Verwijder eerst de facturen, of gebruik "Inclusief facturen verwijderen".');
+      } else {
+        setVerwijderFout(`Verwijderen mislukt: ${msg}`);
+      }
+    } finally {
+      setVerwijderLaden(false);
     }
   }
 
@@ -942,7 +958,7 @@ export default function KlantenPage() {
       </Modal>
 
       {/* Verwijder bevestiging modal */}
-      <Modal open={verwijderModalOpen} onOpenChange={setVerwijderModalOpen}>
+      <Modal open={verwijderModalOpen} onOpenChange={(open) => { setVerwijderModalOpen(open); if (!open) setVerwijderFout(null); }}>
         <ModalContent className="max-w-md">
           <ModalHeader>
             <ModalTitle>Klant verwijderen</ModalTitle>
@@ -952,14 +968,21 @@ export default function KlantenPage() {
             <span className="font-semibold">{geselecteerdeKlant?.naam}</span> wilt
             verwijderen? Dit kan niet ongedaan worden gemaakt.
           </p>
-          <ModalFooter className="mt-4 gap-2">
+          {verwijderFout && (
+            <div className="mt-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
+              {verwijderFout}
+            </div>
+          )}
+          <ModalFooter className="mt-4 gap-2 flex-wrap">
             <ModalClose asChild>
               <Button variant="outline">Annuleren</Button>
             </ModalClose>
-            <Button
-              variant="destructive"
-              onClick={verwijder}
-            >
+            {verwijderFout && (
+              <Button variant="destructive" onClick={() => verwijder(true)} loading={verwijderLaden}>
+                Inclusief facturen verwijderen
+              </Button>
+            )}
+            <Button variant="destructive" onClick={() => verwijder(false)} loading={verwijderLaden}>
               Verwijderen
             </Button>
           </ModalFooter>
