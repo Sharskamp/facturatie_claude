@@ -303,12 +303,13 @@ function detecteerBedragKolom(regels: SpatialRegel[]): { drempel: number } | nul
 export function extraheerFactuurVelden(
   woordRegels: OcrWoord[][],
   ruweTekst: string,
-  opties?: { eigenBedrijfsnaam?: string }
+  opties?: { eigenBedrijfsnaam?: string; eigenEmail?: string }
 ): Omit<OcrVelden, 'error'> {
   const spatialRegels = bouwSpatialRegels(woordRegels)
   const tekstRegels = spatialRegels.map(r => r.tekst)
   const alles = tekstRegels.join(' ')
   const eigenBedrijfsnaam = opties?.eigenBedrijfsnaam
+  const eigenEmail = opties?.eigenEmail?.toLowerCase().trim()
 
   // ── Documenttype detecteren ────────────────────────────────────────────────
   const factuurIndicatoren = /\b(?:factuur|invoice|btw-?nummer|kvk|factuurdatum|vervaldatum|debiteur|crediteur|iban)\b/i
@@ -366,8 +367,10 @@ export function extraheerFactuurVelden(
   }
 
   // ── E-mail ────────────────────────────────────────────────────────────────
-  const emailMatch = alles.match(/\b([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b/)
-  const klantEmail = emailMatch?.[1] ?? null
+  // Verzamel alle e-mailadressen, sla eigen bedrijfse-mail over
+  const alleEmails = [...alles.matchAll(/\b([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b/g)]
+    .map(m => m[1])
+  const klantEmail = alleEmails.find(e => !eigenEmail || e.toLowerCase() !== eigenEmail) ?? null
 
   // ── Klantnaam / Leverancier ──────────────────────────────────────────────
   let klantNaam: string | null = null
@@ -650,7 +653,7 @@ export function extraheerFactuurVelden(
 // ── Hoofdfunctie: scan een bestand lokaal ────────────────────────────────────
 export async function scanBestandLokaal(
   pad: string,
-  opties?: { eigenBedrijfsnaam?: string }
+  opties?: { eigenBedrijfsnaam?: string; eigenEmail?: string }
 ): Promise<OcrVelden> {
   const ext = pad.split('.').pop()?.toLowerCase() ?? ''
   const ondersteund = ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'bmp', 'tiff', 'tif']

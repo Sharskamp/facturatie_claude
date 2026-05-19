@@ -2235,10 +2235,11 @@ function setupIpcHandlers() {
     const user = await prisma.user.findFirst()
     const model = user?.aiModel ?? 'claude'
     const eigenBedrijfsnaam = user?.bedrijfsnaam ?? undefined
+    const eigenEmail = user?.email ?? undefined
 
     // Lokale OCR pad (geen API nodig)
     if (lokaal) {
-      const result = await scanBestandLokaal(bonPad, { eigenBedrijfsnaam })
+      const result = await scanBestandLokaal(bonPad, { eigenBedrijfsnaam, eigenEmail })
       if (result.error) return result
       return {
         bedrag: result.totaal ?? null,
@@ -2441,7 +2442,10 @@ Gebruik null voor velden die je niet kunt vinden. Retourneer ALLEEN JSON.`
   // ── Factuur/bon scannen zonder cloud AI (lokale OCR) ──
   ipcMain.handle('facturen:scanPdfLokaal', async (_, { pad }: { pad: string }) => {
     const user = await prisma.user.findFirst()
-    return scanBestandLokaal(pad, { eigenBedrijfsnaam: user?.bedrijfsnaam ?? undefined })
+    return scanBestandLokaal(pad, {
+      eigenBedrijfsnaam: user?.bedrijfsnaam ?? undefined,
+      eigenEmail: user?.email ?? undefined,
+    })
   })
 
   // ── Vaste Activa ──
