@@ -72,6 +72,7 @@ export default function InkomenPagina() {
   const [bankVelden, setBankVelden] = useState<string[]>([
     'datum', 'omschrijving', 'tegenrekeningNaam', 'tegenrekening', 'mutatiesoort', 'mededelingen', 'saldoNaBoeking', 'bedrag', 'bron', 'factuur'
   ]);
+  const [spaarVelden, setSpaarVelden] = useState<string[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [bewerkenId, setBewerkenId] = useState<string | null>(null);
   const [melding, setMelding] = useState<{ type: "succes" | "fout"; tekst: string } | null>(null);

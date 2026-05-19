@@ -159,6 +159,7 @@ function runMigratie(dbPath: string): void {
   kolomToevoegen('User', 'verborgenPaginas', "TEXT NOT NULL DEFAULT '[]'")
   kolomToevoegen('User', 'bankWeergaveVelden', "TEXT NOT NULL DEFAULT '[\"datum\",\"omschrijving\",\"tegenrekeningNaam\",\"tegenrekening\",\"mutatiesoort\",\"mededelingen\",\"saldoNaBoeking\",\"bedrag\",\"bron\",\"factuur\"]'")
   kolomToevoegen('User', 'korIngangsDatum', 'TEXT')
+  kolomToevoegen('User', 'spaarrekeningen', "TEXT NOT NULL DEFAULT '[]'")
 
   // Klant — nieuwe kolommen
   kolomToevoegen('Klant', 'betaalTermijn', 'INTEGER')
@@ -247,6 +248,22 @@ function runMigratie(dbPath: string): void {
   try { db.exec('CREATE INDEX IF NOT EXISTS "Document_type_referentieId_idx" ON "Document"("type", "referentieId")') } catch {}
 
   kolomToevoegen('User', 'bankAfschriftenMap', 'TEXT')
+
+  // Seed default categories if none exist
+  const catCount = (db.prepare('SELECT COUNT(*) as count FROM "Categorie"').get() as { count: number }).count;
+  if (catCount === 0) {
+    db.exec(`
+      INSERT INTO "Categorie" (id, naam, kleur, icoon) VALUES
+      (lower(hex(randomblob(16))), 'Kantoorbenodigdheden', '#6366f1', '📎'),
+      (lower(hex(randomblob(16))), 'Reiskosten', '#f59e0b', '🚗'),
+      (lower(hex(randomblob(16))), 'Software & Abonnementen', '#3b82f6', '💻'),
+      (lower(hex(randomblob(16))), 'Marketing & Reclame', '#ec4899', '📣'),
+      (lower(hex(randomblob(16))), 'Telefoon & Internet', '#10b981', '📱'),
+      (lower(hex(randomblob(16))), 'Verzekeringen', '#8b5cf6', '🛡️'),
+      (lower(hex(randomblob(16))), 'Opleidingen & Cursussen', '#f97316', '📚'),
+      (lower(hex(randomblob(16))), 'Overig', '#6b7280', '📋')
+    `);
+  }
 
   db.close()
 }
@@ -1247,6 +1264,7 @@ function setupIpcHandlers() {
         onbetaaldeFactuurMelding: true,
         verborgenPaginas: true,
         bankWeergaveVelden: true,
+        spaarrekeningen: true,
       }
     })
     return { ...user, googleGekoppeld: !!user?.googleRefreshToken, googleClientId: user?.googleClientId ?? '' }
@@ -1272,7 +1290,7 @@ function setupIpcHandlers() {
       'layoutToonBtwNummer', 'layoutToonKvkNummer', 'layoutToonIban',
       'layoutToonQrCode', 'layoutRegelSpacing',
       'layoutLetterGrootte', 'layoutLogoGrootte', 'layoutMarges', 'layoutSectieVolgorde',
-      'onbetaaldeFactuurMelding', 'verborgenPaginas', 'bankAfschriftenMap', 'bankWeergaveVelden',
+      'onbetaaldeFactuurMelding', 'verborgenPaginas', 'bankAfschriftenMap', 'bankWeergaveVelden', 'spaarrekeningen',
     ])
     const updateData: Record<string, unknown> = {}
     for (const [sleutel, waarde] of Object.entries(data)) {

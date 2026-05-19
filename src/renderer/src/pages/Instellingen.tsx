@@ -143,6 +143,7 @@ interface Instellingen {
   offerteGeldigheidDagen?: number;
   verborgenPaginas?: string;
   bankWeergaveVelden?: string;
+  spaarrekeningen?: string;
 }
 
 export default function InstellingenPagina() {
@@ -160,6 +161,7 @@ export default function InstellingenPagina() {
   const [exportJaar, setExportJaar] = useState(new Date().getFullYear());
   const [pdfArchiefLaden, setPdfArchiefLaden] = useState(false);
   const [exportMelding, setExportMelding] = useState<string | null>(null);
+  const [nieuweSpaarrekening, setNieuweSpaarrekening] = useState("");
   const isGeladen = useRef(false);
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previewContainerRef = useRef<HTMLDivElement>(null);
@@ -1845,6 +1847,27 @@ export default function InstellingenPagina() {
             ...ALLE_VELDEN.filter(v => !actieveVelden.includes(v.id)),
           ];
 
+          const spaarrekeningenLijst: string[] = (() => {
+            try { return JSON.parse(instellingen.spaarrekeningen ?? '[]') } catch { return [] }
+          })();
+
+          const voegSpaarrekeningToe = async () => {
+            const iban = nieuweSpaarrekening.trim().toUpperCase();
+            if (!iban) return;
+            const nieuw = [...spaarrekeningenLijst, iban];
+            updateVeld('spaarrekeningen', JSON.stringify(nieuw));
+            await slaOp({ spaarrekeningen: JSON.stringify(nieuw) });
+            setNieuweSpaarrekening("");
+            window.dispatchEvent(new CustomEvent('bankVeldenGewijzigd'));
+          };
+
+          const verwijderSpaarrekening = async (iban: string) => {
+            const nieuw = spaarrekeningenLijst.filter(r => r !== iban);
+            updateVeld('spaarrekeningen', JSON.stringify(nieuw));
+            await slaOp({ spaarrekeningen: JSON.stringify(nieuw) });
+            window.dispatchEvent(new CustomEvent('bankVeldenGewijzigd'));
+          };
+
           return (
             <div className="space-y-4">
               <Card>
@@ -1897,6 +1920,59 @@ export default function InstellingenPagina() {
                       </div>
                     );
                   })}
+                  <div className="pt-3">
+                    <Button
+                      loading={opslaan}
+                      onClick={async () => {
+                        await slaOp({ bankWeergaveVelden: instellingen.bankWeergaveVelden });
+                        window.dispatchEvent(new CustomEvent('bankVeldenGewijzigd'));
+                      }}
+                    >
+                      Toepassen
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Spaarrekeningen</CardTitle>
+                  <CardDescription>
+                    Voeg je eigen spaarrekening-IBANs toe. Transacties van/naar deze rekeningen worden automatisch herkend.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {spaarrekeningenLijst.length === 0 ? (
+                    <p className="text-sm text-gray-400">Geen spaarrekeningen toegevoegd.</p>
+                  ) : (
+                    <div className="space-y-1">
+                      {spaarrekeningenLijst.map((iban) => (
+                        <div key={iban} className="flex items-center justify-between py-2 px-3 rounded-lg border border-gray-200 bg-gray-50 dark:bg-gray-800 dark:border-gray-700">
+                          <span className="text-sm font-mono text-gray-700 dark:text-gray-300">{iban}</span>
+                          <button
+                            onClick={() => verwijderSpaarrekening(iban)}
+                            className="text-gray-400 hover:text-red-500 transition-colors text-lg leading-none"
+                            title="Verwijderen"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex gap-2 pt-1">
+                    <input
+                      type="text"
+                      value={nieuweSpaarrekening}
+                      onChange={(e) => setNieuweSpaarrekening(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') voegSpaarrekeningToe(); }}
+                      placeholder="NL00 BANK 0000 0000 00"
+                      className="flex-1 border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <Button onClick={voegSpaarrekeningToe} variant="outline">
+                      Toevoegen
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             </div>
