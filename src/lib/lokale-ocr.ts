@@ -327,8 +327,12 @@ export function extraheerFactuurVelden(
 
   // ── Factuurnummer ─────────────────────────────────────────────────────────
   let nummer: string | null = null
+  // Probeer eerst met dubbele punt (meest betrouwbaar — pakt nooit de kopkop "Factuur")
   const nummerMatch = alles.match(
-    /(?:factuur(?:nummer)?|invoice(?:\s*no\.?|\s*number)?|inv\.?\s*nr\.?|rekening(?:nummer)?|bon(?:nummer|\s*nr\.?)?)\s*[:#]?\s*([A-Z0-9][-A-Z0-9/_.]{2,25})/i
+    /(?:factuur(?:nummer)?|invoice(?:\s*no\.?|\s*number)?|inv\.?\s*nr\.?|rekening(?:nummer)?|bon(?:nummer|\s*nr\.?)?)\s*[:#]\s*([A-Z0-9][-A-Z0-9/_.]{2,25})/i
+  ) ?? alles.match(
+    // Zonder dubbele punt alleen als het VOLLEDIGE samengestelde woord er staat
+    /(?:factuurnummer|invoicenumber|bonnummer|rekeningnummer)\s+([A-Z0-9][-A-Z0-9/_.]{2,25})/i
   )
   if (nummerMatch) nummer = nummerMatch[1].trim()
 
@@ -411,8 +415,14 @@ export function extraheerFactuurVelden(
         const minX = Math.min(...kandidaten.map(k => k.x))
         const linksKandidaten = kandidaten.filter(k => k.x <= minX + 50)
         let naam = linksKandidaten[0]?.tekst ?? kandidaten[0].tekst
+        // Strip rechts-uitgelijnde bedrijfsinfo die op dezelfde PDF-regel staat (KvK, IBAN, BTW-nr)
+        naam = naam
+          .replace(/\s+(?:k\.?v\.?k\.?|kvk|kamer\s+van\s+koophandel)[:\s#.]*\s*[\w\d-]+.*/i, '')
+          .replace(/\s+iban[:\s]\s*[A-Z]{2}[\w\d]+.*/i, '')
+          .replace(/\s+btw[-\s:]*(?:nr\.?|nummer)?[:\s]*[A-Z]{2}[\w\d]+.*/i, '')
+          .trim()
         // "(Evy en Isa)" op de volgende regel toevoegen als het echt tussen haakjes staat
-        const idx = spatialRegels.findIndex(r => r.tekst === naam)
+        const idx = spatialRegels.findIndex(r => r.tekst === naam || r.tekst.startsWith(naam))
         if (idx >= 0 && idx + 1 < spatialRegels.length && /^\(.*\)$/.test(spatialRegels[idx + 1].tekst)) {
           naam += ` ${spatialRegels[idx + 1].tekst}`
         }
