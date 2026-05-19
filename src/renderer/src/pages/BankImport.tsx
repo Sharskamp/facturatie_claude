@@ -220,6 +220,11 @@ export default function BankImportPagina() {
             bedrag: Math.abs(t.bedrag),
             bron: "Bankimport",
             geboektAlsOmzet: false,
+            tegenrekeningNaam: (t as any).tegenrekeningNaam || undefined,
+            tegenrekening: (t as any).tegenrekening || undefined,
+            mutatiesoort: (t as any).mutatiesoort || undefined,
+            mededelingen: (t as any).mededelingen || undefined,
+            saldoNaBoeking: (t as any).saldoNaBoeking || undefined,
           });
         } else {
           await window.api.uitgaven.create({

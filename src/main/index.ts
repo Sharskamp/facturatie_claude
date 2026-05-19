@@ -157,6 +157,7 @@ function runMigratie(dbPath: string): void {
   kolomToevoegen('User', 'factuurHtmlTemplate', 'TEXT')
   kolomToevoegen('User', 'offerteGeldigheidDagen', 'INTEGER NOT NULL DEFAULT 30')
   kolomToevoegen('User', 'verborgenPaginas', "TEXT NOT NULL DEFAULT '[]'")
+  kolomToevoegen('User', 'bankWeergaveVelden', "TEXT NOT NULL DEFAULT '[\"datum\",\"omschrijving\",\"tegenrekeningNaam\",\"tegenrekening\",\"mutatiesoort\",\"mededelingen\",\"saldoNaBoeking\",\"bedrag\",\"bron\",\"factuur\"]'")
   kolomToevoegen('User', 'korIngangsDatum', 'TEXT')
 
   // Klant — nieuwe kolommen
@@ -165,6 +166,11 @@ function runMigratie(dbPath: string): void {
 
   // Inkomen — nieuwe kolommen
   kolomToevoegen('Inkomen', 'geboektAlsOmzet', 'BOOLEAN NOT NULL DEFAULT false')
+  kolomToevoegen('Inkomen', 'tegenrekeningNaam', 'TEXT')
+  kolomToevoegen('Inkomen', 'tegenrekening', 'TEXT')
+  kolomToevoegen('Inkomen', 'mutatiesoort', 'TEXT')
+  kolomToevoegen('Inkomen', 'mededelingen', 'TEXT')
+  kolomToevoegen('Inkomen', 'saldoNaBoeking', 'TEXT')
   // Bestaande handmatige inkomenregels (niet-bank, niet-historisch, niet gekoppeld aan factuur) tellen mee als omzet
   try { db.exec(`UPDATE "Inkomen" SET "geboektAlsOmzet" = true WHERE "factuurId" IS NULL AND ("bron" IS NULL OR ("bron" != 'Bankimport' AND "bron" != 'Historisch'))`) } catch {}
 
@@ -1239,6 +1245,8 @@ function setupIpcHandlers() {
         layoutToonQrCode: true, layoutRegelSpacing: true,
         layoutLetterGrootte: true, layoutLogoGrootte: true, layoutMarges: true, layoutSectieVolgorde: true,
         onbetaaldeFactuurMelding: true,
+        verborgenPaginas: true,
+        bankWeergaveVelden: true,
       }
     })
     return { ...user, googleGekoppeld: !!user?.googleRefreshToken, googleClientId: user?.googleClientId ?? '' }
@@ -1264,7 +1272,7 @@ function setupIpcHandlers() {
       'layoutToonBtwNummer', 'layoutToonKvkNummer', 'layoutToonIban',
       'layoutToonQrCode', 'layoutRegelSpacing',
       'layoutLetterGrootte', 'layoutLogoGrootte', 'layoutMarges', 'layoutSectieVolgorde',
-      'onbetaaldeFactuurMelding', 'verborgenPaginas', 'bankAfschriftenMap',
+      'onbetaaldeFactuurMelding', 'verborgenPaginas', 'bankAfschriftenMap', 'bankWeergaveVelden',
     ])
     const updateData: Record<string, unknown> = {}
     for (const [sleutel, waarde] of Object.entries(data)) {
@@ -1731,7 +1739,7 @@ function setupIpcHandlers() {
 
         // Verzamel alle <Ntry> elementen (transacties)
         const ntryEls = doc.getElementsByTagName('Ntry')
-        const transacties: Array<{ datum: string; omschrijving: string; bedrag: number; type: 'inkomen' | 'uitgave' }> = []
+        const transacties: Array<{ datum: string; omschrijving: string; bedrag: number; type: 'inkomen' | 'uitgave'; tegenrekeningNaam?: string; tegenrekening?: string; mutatiesoort?: string; mededelingen?: string; saldoNaBoeking?: string }> = []
 
         for (let i = 0; i < ntryEls.length; i++) {
           const ntry = ntryEls[i] as Element
@@ -1760,7 +1768,33 @@ function setupIpcHandlers() {
             omschrijving = tekst(ntry, 'AddtlNtryInf') || tekst(ntry, 'Nm') || 'Onbekend'
           }
 
-          transacties.push({ datum, omschrijving: omschrijving || 'Onbekend', bedrag: isDebet ? -bedrag : bedrag, type: isDebet ? 'uitgave' : 'inkomen' })
+          // Extract tegenpartij from TxDtls
+          let tegenrekeningNaam = ''
+          let tegenrekening = ''
+          let mededelingen = ''
+          for (let j = 0; j < txDtls.length; j++) {
+            const tx = txDtls[j] as Element
+            if (!tegenrekeningNaam) {
+              tegenrekeningNaam = tekst(tx, 'Nm') || ''
+            }
+            if (!tegenrekening) {
+              tegenrekening = tekst(tx, 'IBAN') || tekst(tx, 'Othr') || ''
+            }
+            if (!mededelingen) {
+              mededelingen = tekst(tx, 'Ustrd') || tekst(tx, 'Ref') || ''
+            }
+          }
+          if (!tegenrekeningNaam) tegenrekeningNaam = tekst(ntry, 'Nm') || ''
+
+          transacties.push({
+            datum,
+            omschrijving: omschrijving || 'Onbekend',
+            bedrag: isDebet ? -bedrag : bedrag,
+            type: isDebet ? 'uitgave' : 'inkomen',
+            tegenrekeningNaam,
+            tegenrekening,
+            mededelingen: mededelingen !== omschrijving ? mededelingen : '',
+          })
         }
 
         return { transacties, autoHerkend: transacties.length > 0 }
@@ -1794,7 +1828,7 @@ function setupIpcHandlers() {
     }
 
     const header = parseerveldCsv(regels[0]).map(h => h.replace(/"/g, '').trim())
-    const transacties: Array<{ datum: string; omschrijving: string; bedrag: number; type: 'inkomen' | 'uitgave' }> = []
+    const transacties: Array<{ datum: string; omschrijving: string; bedrag: number; type: 'inkomen' | 'uitgave'; tegenrekeningNaam?: string; tegenrekening?: string; mutatiesoort?: string; mededelingen?: string; saldoNaBoeking?: string }> = []
 
     for (let i = 1; i < regels.length; i++) {
       const velden = parseerveldCsv(regels[i]).map(v => v.replace(/"/g, '').trim())
@@ -1827,11 +1861,18 @@ function setupIpcHandlers() {
           const afBij = velden[afBijIdx]?.toLowerCase() ?? ''
           const isDebet = afBij === 'af' || afBij === 'debet' || afBij === 'd'
 
+          const tegenrekeningIdx = header.findIndex(h => h.toLowerCase().includes('tegenrekening'))
+          const mutatiesoortIdx = header.findIndex(h => h.toLowerCase().includes('mutatiesoort') || h.toLowerCase().includes('code'))
+          const mededelingenIdx = header.findIndex(h => h.toLowerCase().includes('mededelingen') || h.toLowerCase().includes('omschrijving') && h !== header[omschrijvingIdx])
+
           transacties.push({
             datum,
             omschrijving: omschrijving || 'Onbekend',
             bedrag: isDebet ? -bedragAbs : bedragAbs,
-            type: isDebet ? 'uitgave' : 'inkomen'
+            type: isDebet ? 'uitgave' : 'inkomen',
+            tegenrekening: tegenrekeningIdx >= 0 ? (velden[tegenrekeningIdx] ?? '') : '',
+            mutatiesoort: mutatiesoortIdx >= 0 ? (velden[mutatiesoortIdx] ?? '') : '',
+            mededelingen: mededelingenIdx >= 0 ? (velden[mededelingenIdx] ?? '') : '',
           })
         } else if (bank === 'rabobank') {
           // IBAN/BBAN,Munt,BIC,Volgnr,Datum,Rentedatum,Bedrag,Saldo na trn,...
@@ -1856,11 +1897,20 @@ function setupIpcHandlers() {
           const naam = velden[naamIdx] ?? ''
           const omschrijving = (velden[omschrijvingIdx] ?? naam) || 'Onbekend'
 
+          const tegenpartijNaamIdx = header.findIndex(h => h.toLowerCase().includes('tegenpartij naam'))
+          const tegenpartijRekeningIdx = header.findIndex(h => h.toLowerCase().includes('tegenpartij rekening') || h.toLowerCase().includes('tegenpartijrekening'))
+          const saldoIdx = header.findIndex(h => h.toLowerCase().includes('saldo'))
+          const kenmerkenIdx = header.findIndex(h => h.toLowerCase().includes('betalingskenmerk') || h.toLowerCase().includes('kenmerk'))
+
           transacties.push({
             datum,
             omschrijving: omschrijving || 'Onbekend',
             bedrag,
-            type: bedrag < 0 ? 'uitgave' : 'inkomen'
+            type: bedrag < 0 ? 'uitgave' : 'inkomen',
+            tegenrekeningNaam: tegenpartijNaamIdx >= 0 ? (velden[tegenpartijNaamIdx] ?? '') : (naam || ''),
+            tegenrekening: tegenpartijRekeningIdx >= 0 ? (velden[tegenpartijRekeningIdx] ?? '') : '',
+            saldoNaBoeking: saldoIdx >= 0 ? (velden[saldoIdx] ?? '') : '',
+            mededelingen: kenmerkenIdx >= 0 ? (velden[kenmerkenIdx] ?? '') : '',
           })
         } else if (bank === 'knab') {
           // KNAB: Datum;Naam / Omschrijving;IBAN;Type;Af/Bij;Bedrag (EUR);Balans na boeking;...
@@ -1887,11 +1937,18 @@ function setupIpcHandlers() {
           const afBij = afBijIdx >= 0 ? (velden[afBijIdx] ?? '').toLowerCase() : ''
           const isDebet = afBij === 'af' || afBij === 'debet'
 
+          const balansIdx = header.findIndex(h => h.toLowerCase().includes('balans'))
+          const tegenpartijIdx = header.findIndex(h => h.toLowerCase().includes('tegenpartij'))
+          const typeIdx = header.findIndex(h => h.toLowerCase() === 'type')
+
           transacties.push({
             datum,
             omschrijving: omschrijving || 'Onbekend',
             bedrag: isDebet ? -bedragAbs : bedragAbs,
-            type: isDebet ? 'uitgave' : 'inkomen'
+            type: isDebet ? 'uitgave' : 'inkomen',
+            tegenrekeningNaam: tegenpartijIdx >= 0 ? (velden[tegenpartijIdx] ?? '') : '',
+            saldoNaBoeking: balansIdx >= 0 ? (velden[balansIdx] ?? '') : '',
+            mutatiesoort: typeIdx >= 0 ? (velden[typeIdx] ?? '') : '',
           })
         }
       } catch {
@@ -1946,7 +2003,7 @@ function setupIpcHandlers() {
       return s
     }
 
-    const transacties: Array<{ datum: string; omschrijving: string; bedrag: number; type: 'inkomen' | 'uitgave' }> = []
+    const transacties: Array<{ datum: string; omschrijving: string; bedrag: number; type: 'inkomen' | 'uitgave'; tegenrekeningNaam?: string; tegenrekening?: string; mutatiesoort?: string; mededelingen?: string; saldoNaBoeking?: string }> = []
     for (const rij of alleRijen) {
       try {
         const datum = parseerDatum(rij[mapping.datum] ?? '')

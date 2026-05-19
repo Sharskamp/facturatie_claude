@@ -41,6 +41,11 @@ interface Inkomen {
   factuur?: { factuurNummer: string } | null;
   notities?: string | null;
   geboektAlsOmzet: boolean;
+  tegenrekeningNaam?: string | null;
+  tegenrekening?: string | null;
+  mutatiesoort?: string | null;
+  mededelingen?: string | null;
+  saldoNaBoeking?: string | null;
 }
 
 interface Factuur {
@@ -64,6 +69,9 @@ export default function InkomenPagina() {
   const [facturen, setFacturen] = useState<Factuur[]>([]);
   const [laden, setLaden] = useState(true);
   const [maandFilter, setMaandFilter] = useState(huidigeMaand());
+  const [bankVelden, setBankVelden] = useState<string[]>([
+    'datum', 'omschrijving', 'tegenrekeningNaam', 'tegenrekening', 'mutatiesoort', 'mededelingen', 'saldoNaBoeking', 'bedrag', 'bron', 'factuur'
+  ]);
   const [modalOpen, setModalOpen] = useState(false);
   const [bewerkenId, setBewerkenId] = useState<string | null>(null);
   const [melding, setMelding] = useState<{ type: "succes" | "fout"; tekst: string } | null>(null);
@@ -110,6 +118,14 @@ export default function InkomenPagina() {
   useEffect(() => {
     haalInkomensOp();
     haalFacturenOp();
+    window.api.instellingen.get().then((inst: any) => {
+      if (inst?.bankWeergaveVelden) {
+        try {
+          const velden = JSON.parse(inst.bankWeergaveVelden);
+          if (Array.isArray(velden) && velden.length > 0) setBankVelden(velden);
+        } catch {}
+      }
+    }).catch(() => {});
   }, [haalInkomensOp, haalFacturenOp]);
 
   const toonMelding = (type: "succes" | "fout", tekst: string) => {
@@ -364,109 +380,107 @@ export default function InkomenPagina() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Datum</TableHead>
-                <TableHead>Omschrijving</TableHead>
-                <TableHead>Bron</TableHead>
-                <TableHead className="text-right">Bedrag</TableHead>
-                <TableHead>Factuur</TableHead>
+                {bankVelden.includes('datum') && <TableHead>Datum</TableHead>}
+                {bankVelden.includes('omschrijving') && <TableHead>Omschrijving</TableHead>}
+                {bankVelden.includes('tegenrekeningNaam') && <TableHead>Naam tegenpartij</TableHead>}
+                {bankVelden.includes('tegenrekening') && <TableHead>Tegenrekening</TableHead>}
+                {bankVelden.includes('mutatiesoort') && <TableHead>Type</TableHead>}
+                {bankVelden.includes('mededelingen') && <TableHead>Mededelingen</TableHead>}
+                {bankVelden.includes('saldoNaBoeking') && <TableHead>Saldo</TableHead>}
+                {bankVelden.includes('bedrag') && <TableHead className="text-right">Bedrag</TableHead>}
+                {bankVelden.includes('bron') && <TableHead>Bron</TableHead>}
+                {bankVelden.includes('factuur') && <TableHead>Factuur</TableHead>}
                 <TableHead className="text-right">Acties</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {laden ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center py-8 text-gray-400">
+                  <TableCell colSpan={bankVelden.length + 1} className="text-center py-8 text-gray-400">
                     Laden...
                   </TableCell>
                 </TableRow>
               ) : inkomens.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center py-8 text-gray-400">
+                  <TableCell colSpan={bankVelden.length + 1} className="text-center py-8 text-gray-400">
                     Geen inkomens gevonden voor deze maand
                   </TableCell>
                 </TableRow>
               ) : (
                 inkomens.map((inkomen) => (
                   <TableRow key={inkomen.id}>
-                    <TableCell className="text-gray-500 whitespace-nowrap">
-                      {formatDatum(inkomen.datum)}
-                    </TableCell>
-                    <TableCell className="font-medium">{inkomen.omschrijving}</TableCell>
-                    <TableCell>
-                      {inkomen.bron === "Bankimport" && !inkomen.factuurId && !inkomen.geboektAlsOmzet ? (
-                        <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50">Wacht op koppeling</Badge>
-                      ) : inkomen.bron === "Bankimport" && inkomen.geboektAlsOmzet ? (
-                        <Badge variant="outline" className="text-green-600 border-green-300 bg-green-50">Losse omzet</Badge>
-                      ) : (
-                        <Badge variant="default">{inkomen.bron}</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right font-semibold text-green-700">
-                      {formatBedrag(inkomen.bedrag)}
-                    </TableCell>
-                    <TableCell>
-                      {inkomen.factuur ? (
-                        <span className="text-indigo-600 text-sm font-medium">
-                          {inkomen.factuur.factuurNummer}
-                        </span>
-                      ) : inkomen.geboektAlsOmzet ? (
-                        <span className="text-green-600 text-xs">Losse zakelijke omzet</span>
-                      ) : (
-                        <span className="text-gray-400 text-xs">Niet gekoppeld</span>
-                      )}
-                    </TableCell>
+                    {bankVelden.includes('datum') && (
+                      <TableCell className="text-gray-500 whitespace-nowrap">{formatDatum(inkomen.datum)}</TableCell>
+                    )}
+                    {bankVelden.includes('omschrijving') && (
+                      <TableCell className="font-medium max-w-[200px] truncate">{inkomen.omschrijving}</TableCell>
+                    )}
+                    {bankVelden.includes('tegenrekeningNaam') && (
+                      <TableCell className="text-sm text-gray-700">{inkomen.tegenrekeningNaam || <span className="text-gray-300">—</span>}</TableCell>
+                    )}
+                    {bankVelden.includes('tegenrekening') && (
+                      <TableCell className="text-xs font-mono text-gray-500">{inkomen.tegenrekening || <span className="text-gray-300">—</span>}</TableCell>
+                    )}
+                    {bankVelden.includes('mutatiesoort') && (
+                      <TableCell className="text-xs text-gray-500">{inkomen.mutatiesoort || <span className="text-gray-300">—</span>}</TableCell>
+                    )}
+                    {bankVelden.includes('mededelingen') && (
+                      <TableCell className="text-xs text-gray-600 max-w-[180px] truncate">{inkomen.mededelingen || <span className="text-gray-300">—</span>}</TableCell>
+                    )}
+                    {bankVelden.includes('saldoNaBoeking') && (
+                      <TableCell className="text-xs text-gray-500 text-right">{inkomen.saldoNaBoeking || <span className="text-gray-300">—</span>}</TableCell>
+                    )}
+                    {bankVelden.includes('bedrag') && (
+                      <TableCell className={`text-right font-semibold ${inkomen.bedrag >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                        {formatBedrag(inkomen.bedrag)}
+                      </TableCell>
+                    )}
+                    {bankVelden.includes('bron') && (
+                      <TableCell>
+                        {inkomen.bron === "Bankimport" && !inkomen.factuurId && !inkomen.geboektAlsOmzet ? (
+                          <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50">Wacht op koppeling</Badge>
+                        ) : inkomen.bron === "Bankimport" && inkomen.geboektAlsOmzet ? (
+                          <Badge variant="outline" className="text-green-600 border-green-300 bg-green-50">Losse omzet</Badge>
+                        ) : (
+                          <Badge variant="default">{inkomen.bron}</Badge>
+                        )}
+                      </TableCell>
+                    )}
+                    {bankVelden.includes('factuur') && (
+                      <TableCell>
+                        {inkomen.factuur ? (
+                          <span className="text-indigo-600 text-sm font-medium">{inkomen.factuur.factuurNummer}</span>
+                        ) : inkomen.geboektAlsOmzet ? (
+                          <span className="text-green-600 text-xs">Losse zakelijke omzet</span>
+                        ) : (
+                          <span className="text-gray-400 text-xs">Niet gekoppeld</span>
+                        )}
+                      </TableCell>
+                    )}
                     <TableCell>
                       <div className="flex items-center justify-end gap-1">
                         {inkomen.factuurId ? (
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            title="Ontkoppelen"
-                            onClick={() => ontkoppel(inkomen.id)}
-                          >
+                          <Button variant="ghost" size="icon-sm" title="Ontkoppelen" onClick={() => ontkoppel(inkomen.id)}>
                             <Unlink className="h-4 w-4 text-gray-400" />
                           </Button>
                         ) : inkomen.bron === "Bankimport" && !inkomen.geboektAlsOmzet ? (
                           <>
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              title="Koppel aan factuur"
-                              onClick={() => openSmartKoppel(inkomen)}
-                            >
+                            <Button variant="ghost" size="icon-sm" title="Koppel aan factuur" onClick={() => openSmartKoppel(inkomen)}>
                               <Link className="h-4 w-4 text-indigo-500" />
                             </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              title="Boek als losse zakelijke omzet"
-                              onClick={() => boekAlsOmzet(inkomen.id)}
-                            >
+                            <Button variant="ghost" size="icon-sm" title="Boek als losse zakelijke omzet" onClick={() => boekAlsOmzet(inkomen.id)}>
                               <BookOpen className="h-4 w-4 text-green-600" />
                             </Button>
                           </>
                         ) : (
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            title="Koppel aan factuur"
-                            onClick={() => openSmartKoppel(inkomen)}
-                          >
+                          <Button variant="ghost" size="icon-sm" title="Koppel aan factuur" onClick={() => openSmartKoppel(inkomen)}>
                             <Link className="h-4 w-4 text-indigo-500" />
                           </Button>
                         )}
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => openBewerken(inkomen)}
-                        >
+                        <Button variant="ghost" size="icon-sm" onClick={() => openBewerken(inkomen)}>
                           <Pencil className="h-4 w-4" />
                         </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => verwijder(inkomen.id)}
-                        >
+                        <Button variant="ghost" size="icon-sm" onClick={() => verwijder(inkomen.id)}>
                           <Trash2 className="h-4 w-4 text-red-500" />
                         </Button>
                       </div>

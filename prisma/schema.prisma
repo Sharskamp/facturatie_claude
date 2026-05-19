@@ -257,6 +257,11 @@ model Inkomen {
   bron         String?
   notities     String?
   geboektAlsOmzet Boolean @default(false)
+  tegenrekeningNaam String?
+  tegenrekening     String?
+  mutatiesoort      String?
+  mededelingen      String?
+  saldoNaBoeking    String?
   aangemaakt   DateTime @default(now())
   bijgewerkt   DateTime @updatedAt
 

@@ -23,6 +23,7 @@ import {
   Eye,
   EyeOff,
   Menu,
+  CreditCard,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -37,7 +38,7 @@ import {
 } from "@/components/ui/select";
 import { useTheme } from "@/context/theme";
 
-type Tab = "bedrijf" | "facturen" | "layout" | "email" | "google" | "kor" | "ai" | "overig" | "geavanceerd" | "navigatie";
+type Tab = "bedrijf" | "facturen" | "layout" | "email" | "google" | "kor" | "ai" | "overig" | "geavanceerd" | "navigatie" | "bank";
 
 const TAB_CONFIG: Array<{ id: Tab; label: string; icon: React.ElementType }> = [
   { id: "bedrijf", label: "Bedrijfsgegevens", icon: Building2 },
@@ -49,6 +50,7 @@ const TAB_CONFIG: Array<{ id: Tab; label: string; icon: React.ElementType }> = [
   { id: "ai", label: "AI / OCR", icon: Bot },
   { id: "overig", label: "Overig", icon: MoreHorizontal },
   { id: "navigatie", label: "Navigatie", icon: Menu },
+  { id: "bank", label: "Bankimport", icon: CreditCard },
   { id: "geavanceerd", label: "Geavanceerd", icon: Settings },
 ];
 
@@ -140,6 +142,7 @@ interface Instellingen {
   factuurHtmlTemplate?: string;
   offerteGeldigheidDagen?: number;
   verborgenPaginas?: string;
+  bankWeergaveVelden?: string;
 }
 
 export default function InstellingenPagina() {
@@ -1791,6 +1794,106 @@ export default function InstellingenPagina() {
                             : <><Eye className="h-3.5 w-3.5" /> Zichtbaar</>
                           }
                         </button>
+                      </div>
+                    );
+                  })}
+                </CardContent>
+              </Card>
+            </div>
+          );
+        })()}
+
+        {actieveTab === "bank" && (() => {
+          const ALLE_VELDEN = [
+            { id: 'datum', label: 'Datum', verplicht: true },
+            { id: 'omschrijving', label: 'Omschrijving', verplicht: true },
+            { id: 'bedrag', label: 'Bedrag', verplicht: true },
+            { id: 'tegenrekeningNaam', label: 'Naam tegenpartij' },
+            { id: 'tegenrekening', label: 'Tegenrekening (IBAN)' },
+            { id: 'mutatiesoort', label: 'Transactietype' },
+            { id: 'mededelingen', label: 'Mededelingen / Kenmerk' },
+            { id: 'saldoNaBoeking', label: 'Saldo na boeking' },
+            { id: 'bron', label: 'Bron' },
+            { id: 'factuur', label: 'Gekoppelde factuur' },
+          ];
+
+          const huidig: string[] = (() => {
+            try { return JSON.parse(instellingen.bankWeergaveVelden ?? '[]') } catch { return [] }
+          })();
+          const actieveVelden = huidig.length > 0 ? huidig : ALLE_VELDEN.map(v => v.id);
+
+          const toggleVeld = (id: string) => {
+            const nieuw = actieveVelden.includes(id)
+              ? actieveVelden.filter(v => v !== id)
+              : [...actieveVelden, id];
+            updateVeld('bankWeergaveVelden', JSON.stringify(nieuw));
+          };
+
+          const verplaats = (id: string, richting: -1 | 1) => {
+            const idx = actieveVelden.indexOf(id);
+            if (idx < 0) return;
+            const nieuw = [...actieveVelden];
+            const swap = idx + richting;
+            if (swap < 0 || swap >= nieuw.length) return;
+            [nieuw[idx], nieuw[swap]] = [nieuw[swap], nieuw[idx]];
+            updateVeld('bankWeergaveVelden', JSON.stringify(nieuw));
+          };
+
+          // Render velden in huidige volgorde, dan niet-actieve onderaan
+          const gesorteerd = [
+            ...actieveVelden.map(id => ALLE_VELDEN.find(v => v.id === id)!).filter(Boolean),
+            ...ALLE_VELDEN.filter(v => !actieveVelden.includes(v.id)),
+          ];
+
+          return (
+            <div className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Bankimport kolomweergave</CardTitle>
+                  <CardDescription>
+                    Kies welke velden zichtbaar zijn in het inkomstenoverzicht na een bankimport, en bepaal de volgorde.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-1">
+                  {gesorteerd.map((veld, idx) => {
+                    const actief = actieveVelden.includes(veld.id);
+                    const positie = actieveVelden.indexOf(veld.id);
+                    return (
+                      <div
+                        key={veld.id}
+                        className={`flex items-center justify-between py-2.5 px-3 rounded-lg border ${actief ? 'border-indigo-200 bg-indigo-50 dark:bg-indigo-900/20 dark:border-indigo-700' : 'border-gray-200 bg-gray-50 dark:bg-gray-800 dark:border-gray-700 opacity-50'}`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="checkbox"
+                            checked={actief}
+                            disabled={veld.verplicht}
+                            onChange={() => toggleVeld(veld.id)}
+                            className="h-4 w-4 text-indigo-600 rounded disabled:opacity-40"
+                          />
+                          <span className="text-sm font-medium text-gray-800 dark:text-gray-200">{veld.label}</span>
+                          {veld.verplicht && <span className="text-xs text-gray-400">(verplicht)</span>}
+                        </div>
+                        {actief && (
+                          <div className="flex items-center gap-1">
+                            <button
+                              disabled={positie === 0}
+                              onClick={() => verplaats(veld.id, -1)}
+                              className="p-1 rounded hover:bg-indigo-100 dark:hover:bg-indigo-800 disabled:opacity-30"
+                              title="Omhoog"
+                            >
+                              <ChevronUp className="h-4 w-4 text-gray-600 dark:text-gray-300" />
+                            </button>
+                            <button
+                              disabled={positie === actieveVelden.length - 1}
+                              onClick={() => verplaats(veld.id, 1)}
+                              className="p-1 rounded hover:bg-indigo-100 dark:hover:bg-indigo-800 disabled:opacity-30"
+                              title="Omlaag"
+                            >
+                              <ChevronDown className="h-4 w-4 text-gray-600 dark:text-gray-300" />
+                            </button>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
