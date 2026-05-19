@@ -1111,11 +1111,21 @@ function setupIpcHandlers() {
   })
 
   // Inkomen
-  ipcMain.handle('inkomen:list', async (_, params?: { van?: string; tot?: string }) => {
+  ipcMain.handle('inkomen:list', async (_, params?: { van?: string; tot?: string; maand?: string }) => {
+    let vanDatum: Date | undefined
+    let totDatum: Date | undefined
+    if (params?.maand) {
+      const [jaar, mnd] = params.maand.split('-').map(Number)
+      vanDatum = new Date(jaar, mnd - 1, 1)
+      totDatum = new Date(jaar, mnd, 0, 23, 59, 59)
+    } else {
+      if (params?.van) vanDatum = new Date(params.van)
+      if (params?.tot) totDatum = new Date(params.tot)
+    }
     return prisma.inkomen.findMany({
       where: {
-        ...(params?.van ? { datum: { gte: new Date(params.van) } } : {}),
-        ...(params?.tot ? { datum: { lte: new Date(params.tot) } } : {}),
+        ...(vanDatum ? { datum: { gte: vanDatum } } : {}),
+        ...(totDatum ? { datum: { lte: totDatum } } : {}),
       },
       include: { factuur: { include: { klant: true } } },
       orderBy: { datum: 'desc' }

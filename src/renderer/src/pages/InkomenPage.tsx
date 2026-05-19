@@ -38,7 +38,7 @@ interface Inkomen {
   bron: string;
   bedrag: number;
   factuurId?: string | null;
-  factuur?: { factuurNummer: string } | null;
+  factuur?: { nummer: string } | null;
   notities?: string | null;
   geboektAlsOmzet: boolean;
   tegenrekeningNaam?: string | null;
@@ -51,7 +51,7 @@ interface Inkomen {
 
 interface Factuur {
   id: string;
-  factuurNummer: string;
+  nummer: string;
   klant?: { naam: string } | null;
   totaal: number;
   status: string;
@@ -274,7 +274,7 @@ export default function InkomenPagina() {
     try {
       const resultaat = await window.api.bank.koppelAanFactuur({ inkomstenId: matchInkomen.id, factuurId: matchGeselecteerdId });
       const gevondenFactuur = matchResultaten.find((f) => f.id === matchGeselecteerdId);
-      const nummer = resultaat.factuurNummer || gevondenFactuur?.factuurNummer || matchGeselecteerdId;
+      const nummer = resultaat.factuurNummer || gevondenFactuur?.nummer || matchGeselecteerdId;
       toonMelding("succes", `Factuur ${nummer} gemarkeerd als betaald`);
       setMatchModalOpen(false);
       haalInkomensOp();
@@ -474,7 +474,7 @@ export default function InkomenPagina() {
                     {bankVelden.includes('factuur') && (
                       <TableCell>
                         {inkomen.factuur ? (
-                          <span className="text-indigo-600 text-sm font-medium">{inkomen.factuur.factuurNummer}</span>
+                          <span className="text-indigo-600 text-sm font-medium">{inkomen.factuur.nummer}</span>
                         ) : inkomen.geboektAlsOmzet ? (
                           <span className="text-green-600 text-xs">Losse zakelijke omzet</span>
                         ) : (
@@ -577,7 +577,7 @@ export default function InkomenPagina() {
                   <SelectItem value="geen">Geen factuur</SelectItem>
                   {facturen.map((f) => (
                     <SelectItem key={f.id} value={f.id}>
-                      {f.factuurNummer} — {formatBedrag(f.totaal)}
+                      {f.nummer} — {formatBedrag(f.totaal)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -615,7 +615,7 @@ export default function InkomenPagina() {
             <SelectContent>
               {facturen.map((f) => (
                 <SelectItem key={f.id} value={f.id}>
-                  {f.factuurNummer}
+                  {f.nummer}
                   {f.klant ? ` — ${f.klant.naam}` : ""} ({formatBedrag(f.totaal)})
                 </SelectItem>
               ))}
@@ -682,7 +682,7 @@ export default function InkomenPagina() {
                       />
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-gray-900">
-                          {f.factuurNummer}
+                          {f.nummer}
                           {f.klant ? ` — ${f.klant.naam}` : ""}
                         </p>
                         <p className="text-sm text-gray-500">
