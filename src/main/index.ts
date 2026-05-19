@@ -172,6 +172,7 @@ function runMigratie(dbPath: string): void {
   kolomToevoegen('Factuur', 'molliePaymentLinkId', 'TEXT')
   kolomToevoegen('Factuur', 'historisch', 'BOOLEAN NOT NULL DEFAULT false')
   kolomToevoegen('Factuur', 'handmatigBedrag', 'BOOLEAN NOT NULL DEFAULT false')
+  kolomToevoegen('Factuur', 'bronBestandPad', 'TEXT')
 
   // Offerte — nieuwe kolommen
   kolomToevoegen('Offerte', 'totaalKorting', 'REAL NOT NULL DEFAULT 0')
