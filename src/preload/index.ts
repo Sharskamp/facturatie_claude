@@ -108,6 +108,7 @@ contextBridge.exposeInMainWorld('api', {
     controleerDuplicaten: () => ipcRenderer.invoke('bank:controleerDuplicaten'),
     zoekFactuurMatch: (params: unknown) => ipcRenderer.invoke('bank:zoekFactuurMatch', params),
     koppelAanFactuur: (params: unknown) => ipcRenderer.invoke('bank:koppelAanFactuur', params),
+    koppelAanMeerdereFacturen: (params: unknown) => ipcRenderer.invoke('bank:koppelAanMeerdereFacturen', params),
   },
   offertes_extra: {
     checkVerlopen: () => ipcRenderer.invoke('offertes:checkVerlopen'),

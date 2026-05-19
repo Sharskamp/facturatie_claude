@@ -3041,28 +3041,110 @@ Gebruik null voor velden die je niet kunt vinden. Retourneer ALLEEN JSON.`
 
   // ── Bank: koppel transactie aan factuur ──
   ipcMain.handle('bank:zoekFactuurMatch', async (_, params: { bedrag: number; datum: string }) => {
-    const datum = new Date(params.datum)
-    const beginZoek = new Date(datum)
-    beginZoek.setDate(beginZoek.getDate() - 60)
-
-    return prisma.factuur.findMany({
-      where: {
-        status: { in: ['VERZONDEN', 'VERLOPEN'] },
-        totaal: { gte: params.bedrag * 0.99, lte: params.bedrag * 1.01 },
-        datum: { gte: beginZoek }
+    const alleOpen = await prisma.factuur.findMany({
+      where: { status: { in: ['VERZONDEN', 'VERLOPEN'] } },
+      include: {
+        klant: { select: { naam: true, bedrijf: true } },
+        inkomsten: { select: { bedrag: true } },
       },
-      include: { klant: { select: { naam: true, bedrijf: true } } },
       orderBy: { vervaldatum: 'asc' },
-      take: 5
     })
+    const metBetaald = alleOpen.map(f => {
+      const reedsBetaald = f.inkomsten.reduce((s: number, i: { bedrag: number }) => s + i.bedrag, 0)
+      const openstaand = Math.max(0, f.totaal - reedsBetaald)
+      return { ...f, reedsBetaald, openstaand }
+    })
+    const exacteMatches = metBetaald.filter(f =>
+      Math.abs(f.openstaand - params.bedrag) <= Math.max(f.openstaand * 0.02, 0.02)
+    )
+    const overigeOpen = metBetaald.filter(f =>
+      !exacteMatches.find(e => e.id === f.id)
+    )
+    return { exacteMatches, overigeOpen }
   })
 
   ipcMain.handle('bank:koppelAanFactuur', async (_, params: { inkomstenId: string; factuurId: string }) => {
-    const [factuur] = await Promise.all([
-      prisma.factuur.update({ where: { id: params.factuurId }, data: { status: 'BETAALD' } }),
-      prisma.inkomen.update({ where: { id: params.inkomstenId }, data: { factuurId: params.factuurId } })
+    const [factuur, inkomen] = await Promise.all([
+      prisma.factuur.findUnique({ where: { id: params.factuurId }, include: { inkomsten: { select: { bedrag: true } } } }),
+      prisma.inkomen.findUnique({ where: { id: params.inkomstenId }, select: { bedrag: true } }),
     ])
-    return { succes: true, factuurNummer: factuur.nummer }
+    if (!factuur || !inkomen) throw new Error('Niet gevonden')
+    const reedsBetaald = factuur.inkomsten.reduce((s: number, i: { bedrag: number }) => s + i.bedrag, 0)
+    const totaalNaBetaling = reedsBetaald + inkomen.bedrag
+    const volledigBetaald = totaalNaBetaling >= factuur.totaal * 0.99
+    const [updatedFactuur] = await Promise.all([
+      prisma.factuur.update({
+        where: { id: params.factuurId },
+        data: { status: volledigBetaald ? 'BETAALD' : factuur.status },
+      }),
+      prisma.inkomen.update({ where: { id: params.inkomstenId }, data: { factuurId: params.factuurId } }),
+    ])
+    return {
+      succes: true,
+      factuurNummer: updatedFactuur.nummer,
+      volledigBetaald,
+      openstaand: Math.max(0, factuur.totaal - totaalNaBetaling),
+    }
+  })
+
+  ipcMain.handle('bank:koppelAanMeerdereFacturen', async (_, params: {
+    inkomstenId: string;
+    koppelingen: { factuurId: string; bedrag: number }[];
+  }) => {
+    const origineel = await prisma.inkomen.findUnique({ where: { id: params.inkomstenId } })
+    if (!origineel) throw new Error('Inkomen niet gevonden')
+
+    const resultaten: { factuurNummer: string; volledigBetaald: boolean; openstaand: number }[] = []
+
+    for (let idx = 0; idx < params.koppelingen.length; idx++) {
+      const { factuurId, bedrag } = params.koppelingen[idx]
+      const factuur = await prisma.factuur.findUnique({
+        where: { id: factuurId },
+        include: { inkomsten: { select: { bedrag: true } } },
+      })
+      if (!factuur) continue
+
+      const reedsBetaald = factuur.inkomsten.reduce((s: number, i: { bedrag: number }) => s + i.bedrag, 0)
+      const totaalNaBetaling = reedsBetaald + bedrag
+      const volledigBetaald = totaalNaBetaling >= factuur.totaal * 0.99
+
+      if (idx === 0) {
+        await prisma.inkomen.update({
+          where: { id: params.inkomstenId },
+          data: { factuurId, bedrag },
+        })
+      } else {
+        await prisma.inkomen.create({
+          data: {
+            datum: origineel.datum,
+            omschrijving: origineel.omschrijving,
+            bedrag,
+            bron: origineel.bron,
+            factuurId,
+            tegenrekeningNaam: origineel.tegenrekeningNaam,
+            tegenrekening: origineel.tegenrekening,
+            mutatiesoort: origineel.mutatiesoort,
+            mededelingen: origineel.mededelingen,
+            betalingskenmerk: origineel.betalingskenmerk,
+            saldoNaBoeking: origineel.saldoNaBoeking,
+            geboektAlsOmzet: false,
+          },
+        })
+      }
+
+      await prisma.factuur.update({
+        where: { id: factuurId },
+        data: { status: volledigBetaald ? 'BETAALD' : factuur.status },
+      })
+
+      resultaten.push({
+        factuurNummer: factuur.nummer,
+        volledigBetaald,
+        openstaand: Math.max(0, factuur.totaal - totaalNaBetaling),
+      })
+    }
+
+    return { succes: true, resultaten }
   })
 
   // ── Excel export per jaar ──

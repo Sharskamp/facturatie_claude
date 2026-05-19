@@ -58,7 +58,82 @@ interface Factuur {
   vervaldatum?: string | null;
 }
 
+interface FactuurMetBetaling extends Factuur {
+  reedsBetaald: number;
+  openstaand: number;
+}
+
+interface MatchData {
+  exacteMatches: FactuurMetBetaling[];
+  overigeOpen: FactuurMetBetaling[];
+}
+
 const BRON_OPTIES = ["Bank", "Contant", "PayPal", "iDEAL", "Overig"];
+
+function FactuurMatchRij({
+  factuur,
+  betaling,
+  geselecteerd,
+  onToggle,
+}: {
+  factuur: FactuurMetBetaling;
+  betaling: number;
+  geselecteerd: boolean;
+  onToggle: () => void;
+}) {
+  const verschil = betaling - factuur.openstaand;
+  const isExact = Math.abs(verschil) <= Math.max(factuur.openstaand * 0.02, 0.02);
+  const teLaag = verschil < -0.02;
+  const teHoog = verschil > 0.02 && !isExact;
+
+  return (
+    <label
+      className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors ${
+        geselecteerd
+          ? "border-indigo-400 bg-indigo-50"
+          : "border-gray-200 hover:border-indigo-300 hover:bg-gray-50"
+      }`}
+    >
+      <input
+        type="checkbox"
+        checked={geselecteerd}
+        onChange={onToggle}
+        className="mt-0.5 h-4 w-4 text-indigo-600 border-gray-300 rounded"
+      />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <p className="text-sm font-semibold text-gray-900">
+            {factuur.nummer}
+            {factuur.klant ? ` — ${factuur.klant.naam}` : ""}
+          </p>
+          <div className="flex items-center gap-2 text-xs">
+            {isExact ? (
+              <span className="text-green-700 font-medium bg-green-100 px-2 py-0.5 rounded-full">Exact</span>
+            ) : teLaag ? (
+              <span className="text-red-700 font-medium bg-red-100 px-2 py-0.5 rounded-full">
+                Te weinig ({formatBedrag(Math.abs(verschil))})
+              </span>
+            ) : teHoog ? (
+              <span className="text-amber-700 font-medium bg-amber-100 px-2 py-0.5 rounded-full">
+                Te veel ({formatBedrag(Math.abs(verschil))})
+              </span>
+            ) : null}
+          </div>
+        </div>
+        <div className="mt-1 flex items-center gap-3 text-xs text-gray-500 flex-wrap">
+          <span>Totaal: {formatBedrag(factuur.totaal)}</span>
+          {factuur.reedsBetaald > 0 && (
+            <span className="text-amber-600">Al betaald: {formatBedrag(factuur.reedsBetaald)}</span>
+          )}
+          <span className="font-medium text-gray-700">Openstaand: {formatBedrag(factuur.openstaand)}</span>
+          {factuur.vervaldatum && (
+            <span>Vervalt {formatDatum(factuur.vervaldatum)}</span>
+          )}
+        </div>
+      </div>
+    </label>
+  );
+}
 
 const huidigeMaand = () => {
   const nu = new Date();
@@ -85,9 +160,9 @@ export default function InkomenPagina() {
   // Smart-match koppeling state
   const [matchModalOpen, setMatchModalOpen] = useState(false);
   const [matchInkomen, setMatchInkomen] = useState<Inkomen | null>(null);
-  const [matchResultaten, setMatchResultaten] = useState<Factuur[]>([]);
+  const [matchData, setMatchData] = useState<MatchData | null>(null);
   const [matchLaden, setMatchLaden] = useState(false);
-  const [matchGeselecteerdId, setMatchGeselecteerdId] = useState<string>("");
+  const [matchGeselecteerdeIds, setMatchGeselecteerdeIds] = useState<string[]>([]);
 
   const [formulier, setFormulier] = useState({
     datum: new Date().toISOString().split("T")[0],
@@ -256,27 +331,63 @@ export default function InkomenPagina() {
 
   const openSmartKoppel = async (inkomen: Inkomen) => {
     setMatchInkomen(inkomen);
-    setMatchGeselecteerdId("");
-    setMatchResultaten([]);
+    setMatchGeselecteerdeIds([]);
+    setMatchData(null);
     setMatchModalOpen(true);
     setMatchLaden(true);
     try {
-      const resultaten = await window.api.bank.zoekFactuurMatch({ bedrag: inkomen.bedrag, datum: inkomen.datum });
-      setMatchResultaten(Array.isArray(resultaten) ? (resultaten as Factuur[]) : []);
+      const resultaat = await window.api.bank.zoekFactuurMatch({ bedrag: inkomen.bedrag, datum: inkomen.datum });
+      const data = resultaat as MatchData;
+      setMatchData({ exacteMatches: data.exacteMatches ?? [], overigeOpen: data.overigeOpen ?? [] });
     } catch {
-      setMatchResultaten([]);
+      setMatchData({ exacteMatches: [], overigeOpen: [] });
     } finally {
       setMatchLaden(false);
     }
   };
 
+  const toggleMatchSelectie = (id: string) => {
+    setMatchGeselecteerdeIds(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    );
+  };
+
+  const alleMatchFacturen = matchData
+    ? [...(matchData.exacteMatches ?? []), ...(matchData.overigeOpen ?? [])]
+    : [];
+
+  const geselecteerdeFacturen = alleMatchFacturen.filter(f =>
+    matchGeselecteerdeIds.includes(f.id)
+  );
+
+  const totaalGeselecteerdOpenstaand = geselecteerdeFacturen.reduce(
+    (s, f) => s + f.openstaand, 0
+  );
+
   const koppelViaMatch = async () => {
-    if (!matchInkomen || !matchGeselecteerdId) return;
+    if (!matchInkomen || matchGeselecteerdeIds.length === 0) return;
     try {
-      const resultaat = await window.api.bank.koppelAanFactuur({ inkomstenId: matchInkomen.id, factuurId: matchGeselecteerdId });
-      const gevondenFactuur = matchResultaten.find((f) => f.id === matchGeselecteerdId);
-      const nummer = resultaat.factuurNummer || gevondenFactuur?.nummer || matchGeselecteerdId;
-      toonMelding("succes", `Factuur ${nummer} gemarkeerd als betaald`);
+      if (matchGeselecteerdeIds.length === 1) {
+        const factuurId = matchGeselecteerdeIds[0];
+        const resultaat = await window.api.bank.koppelAanFactuur({ inkomstenId: matchInkomen.id, factuurId });
+        const nummer = (resultaat as any).factuurNummer || factuurId;
+        const volledigBetaald = (resultaat as any).volledigBetaald;
+        toonMelding("succes", volledigBetaald
+          ? `Factuur ${nummer} volledig betaald`
+          : `Betaling gedeeltelijk geboekt op factuur ${nummer}`
+        );
+      } else {
+        const koppelingen = geselecteerdeFacturen.map(f => ({
+          factuurId: f.id,
+          bedrag: f.openstaand,
+        }));
+        const resultaat = await window.api.bank.koppelAanMeerdereFacturen({
+          inkomstenId: matchInkomen.id,
+          koppelingen,
+        });
+        const nummers = ((resultaat as any).resultaten ?? []).map((r: any) => r.factuurNummer).join(", ");
+        toonMelding("succes", `Betaling gesplitst over facturen: ${nummers}`);
+      }
       setMatchModalOpen(false);
       haalInkomensOp();
       haalFacturenOp();
@@ -655,7 +766,7 @@ export default function InkomenPagina() {
 
       {/* Smart Match Modal */}
       <Modal open={matchModalOpen} onOpenChange={setMatchModalOpen}>
-        <ModalContent className="max-w-lg">
+        <ModalContent className="max-w-2xl">
           <ModalHeader>
             <ModalTitle className="flex items-center gap-2">
               <Search className="h-5 w-5 text-indigo-500" />
@@ -664,55 +775,90 @@ export default function InkomenPagina() {
           </ModalHeader>
           {matchInkomen && (
             <div className="space-y-4">
+              {/* Payment info */}
               <div className="rounded-lg bg-gray-50 border border-gray-200 px-4 py-3 text-sm">
-                <p className="text-gray-500 mb-1">Inkomen</p>
+                <p className="text-gray-500 mb-1">Ontvangen betaling</p>
                 <p className="font-medium text-gray-900">{matchInkomen.omschrijving}</p>
                 <p className="text-gray-500 mt-0.5">
-                  {formatBedrag(matchInkomen.bedrag)} &middot; {formatDatum(matchInkomen.datum)}
+                  <span className="font-semibold text-gray-800">{formatBedrag(matchInkomen.bedrag)}</span>
+                  {" "}·{" "}{formatDatum(matchInkomen.datum)}
+                  {matchInkomen.tegenrekeningNaam ? ` · ${matchInkomen.tegenrekeningNaam}` : ""}
                 </p>
               </div>
 
               {matchLaden ? (
-                <div className="flex items-center justify-center py-6 gap-2 text-gray-500">
+                <div className="flex items-center justify-center py-8 gap-2 text-gray-500">
                   <Loader2 className="h-5 w-5 animate-spin" />
-                  <span className="text-sm">Zoeken naar overeenkomende facturen...</span>
+                  <span className="text-sm">Zoeken naar open facturen...</span>
                 </div>
-              ) : matchResultaten.length === 0 ? (
-                <p className="text-sm text-gray-400 text-center py-4">
-                  Geen open facturen gevonden die overeenkomen met dit bedrag.
+              ) : !matchData || (matchData.exacteMatches.length === 0 && matchData.overigeOpen.length === 0) ? (
+                <p className="text-sm text-gray-400 text-center py-6">
+                  Geen open facturen gevonden.
                 </p>
               ) : (
-                <div className="space-y-2">
-                  <p className="text-sm font-medium text-gray-700">Gevonden facturen:</p>
-                  {matchResultaten.map((f) => (
-                    <label
-                      key={f.id}
-                      className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors ${
-                        matchGeselecteerdId === f.id
-                          ? "border-indigo-400 bg-indigo-50"
-                          : "border-gray-200 hover:border-indigo-300 hover:bg-gray-50"
-                      }`}
-                    >
-                      <input
-                        type="radio"
-                        name="matchFactuur"
-                        value={f.id}
-                        checked={matchGeselecteerdId === f.id}
-                        onChange={() => setMatchGeselecteerdId(f.id)}
-                        className="mt-0.5 h-4 w-4 text-indigo-600 border-gray-300"
-                      />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-gray-900">
-                          {f.nummer}
-                          {f.klant ? ` — ${f.klant.naam}` : ""}
-                        </p>
-                        <p className="text-sm text-gray-500">
-                          {formatBedrag(f.totaal)}
-                          {f.vervaldatum ? ` · Vervalt ${formatDatum(f.vervaldatum)}` : ""}
-                        </p>
+                <div className="space-y-4 max-h-[50vh] overflow-y-auto pr-1">
+                  {/* Exact matches */}
+                  {matchData.exacteMatches.length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-green-700 mb-2">
+                        Exacte overeenkomst
+                      </p>
+                      <div className="space-y-2">
+                        {matchData.exacteMatches.map((f) => (
+                          <FactuurMatchRij
+                            key={f.id}
+                            factuur={f}
+                            betaling={matchInkomen.bedrag}
+                            geselecteerd={matchGeselecteerdeIds.includes(f.id)}
+                            onToggle={() => toggleMatchSelectie(f.id)}
+                          />
+                        ))}
                       </div>
-                    </label>
-                  ))}
+                    </div>
+                  )}
+
+                  {/* Overige open */}
+                  {matchData.overigeOpen.length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
+                        Overige open facturen
+                      </p>
+                      <div className="space-y-2">
+                        {matchData.overigeOpen.map((f) => (
+                          <FactuurMatchRij
+                            key={f.id}
+                            factuur={f}
+                            betaling={matchInkomen.bedrag}
+                            geselecteerd={matchGeselecteerdeIds.includes(f.id)}
+                            onToggle={() => toggleMatchSelectie(f.id)}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Multi-select summary */}
+              {matchGeselecteerdeIds.length > 1 && (
+                <div className={`rounded-lg border px-4 py-3 text-sm ${
+                  Math.abs(totaalGeselecteerdOpenstaand - matchInkomen.bedrag) <= 0.05
+                    ? "bg-green-50 border-green-200 text-green-800"
+                    : totaalGeselecteerdOpenstaand > matchInkomen.bedrag
+                    ? "bg-red-50 border-red-200 text-red-800"
+                    : "bg-amber-50 border-amber-200 text-amber-800"
+                }`}>
+                  <p className="font-medium">
+                    {matchGeselecteerdeIds.length} facturen geselecteerd &middot; Totaal openstaand: {formatBedrag(totaalGeselecteerdOpenstaand)}
+                  </p>
+                  {Math.abs(totaalGeselecteerdOpenstaand - matchInkomen.bedrag) > 0.05 && (
+                    <p className="mt-0.5">
+                      {totaalGeselecteerdOpenstaand > matchInkomen.bedrag
+                        ? `Betaling dekt niet het volledige bedrag (tekort: ${formatBedrag(totaalGeselecteerdOpenstaand - matchInkomen.bedrag)})`
+                        : `Betaling is meer dan openstaand (overschot: ${formatBedrag(matchInkomen.bedrag - totaalGeselecteerdOpenstaand)})`
+                      }
+                    </p>
+                  )}
                 </div>
               )}
             </div>
@@ -721,8 +867,14 @@ export default function InkomenPagina() {
             <ModalClose asChild>
               <Button variant="outline">Annuleren</Button>
             </ModalClose>
-            <Button onClick={koppelViaMatch} disabled={!matchGeselecteerdId || matchLaden}>
-              Koppelen &amp; markeer als betaald
+            <Button
+              onClick={koppelViaMatch}
+              disabled={matchGeselecteerdeIds.length === 0 || matchLaden}
+            >
+              {matchGeselecteerdeIds.length > 1
+                ? `Koppel aan ${matchGeselecteerdeIds.length} facturen`
+                : "Koppelen & markeer als betaald"
+              }
             </Button>
           </ModalFooter>
         </ModalContent>
