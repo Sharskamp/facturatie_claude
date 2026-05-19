@@ -75,6 +75,7 @@ interface Factuur {
   verzondDatum?: string;
   datum?: string;
   aangemaakt?: string;
+  creditNotaVoorId?: string | null;
   klant?: { naam: string; bedrijf?: string | null } | null;
   regels?: FactuurRegel[];
 }
@@ -85,6 +86,7 @@ interface InkomenRecord {
   bedrag: number;
   omschrijving: string;
   factuurId?: string | null;
+  geboektAlsOmzet?: boolean;
 }
 
 interface UitgaveRecord {
@@ -328,7 +330,7 @@ export default function RapportenPagina() {
   const btwMaanden = kwartaalMaanden[btwKwartaal] ?? [];
   const jaar = parseInt(btwJaar);
 
-  const inkomensInKwartaal = gededupliceerdeInkomens.filter((i) => {
+  const inkomensInKwartaal = inkomens.filter((i) => {
     const d = new Date(i.datum);
     return d.getFullYear() === jaar && btwMaanden.includes(d.getMonth());
   });
@@ -354,23 +356,39 @@ export default function RapportenPagina() {
     { tarief: "0%", omzet: 0, inkoop: 0, saldo: 0 },
   ];
 
-  // Deduplicate inkomen: als meerdere records aan dezelfde factuur gekoppeld zijn
-  // (bijv. bankimport + handmatige boeking), tel de factuur maar één keer mee.
-  const gededupliceerdeInkomens = inkomens.filter((inkomen, index, arr) => {
-    if (!inkomen.factuurId) return true;
-    return arr.findIndex(i => i.factuurId === inkomen.factuurId) === index;
-  });
-
   // ─── Winst & Verlies berekeningen ──────────────────────────────────────────
+  // Omzet = factuurbasis (excl. BTW) + losse zakelijke inkomsten
+  // Bankimports tellen NIET mee als omzet, alleen ter bevestiging van betaling.
   const wvJaarNum = parseInt(wvJaar);
 
-  const wvData = MAANDEN.map((naam, idx) => {
-    const omzet = gededupliceerdeInkomens
+  function berekenOmzetVoorMaand(jaar: number, maand: number): number {
+    // 1. Facturen excl. BTW (niet-concept, niet-geannuleerd) op factuurdatum
+    const factuurOmzet = facturen
+      .filter((f) => {
+        const d = new Date(f.datum ?? f.aangemaakt ?? '');
+        return d.getFullYear() === jaar && d.getMonth() === maand
+          && f.status !== 'CONCEPT' && f.status !== 'GEANNULEERD';
+      })
+      .reduce((s, f) => {
+        // Creditnota's tellen negatief
+        const bedrag = f.creditNotaVoorId ? -f.subtotaal : f.subtotaal;
+        return s + bedrag;
+      }, 0);
+
+    // 2. Losse zakelijke inkomsten (expliciet geboekt, niet gekoppeld aan factuur)
+    const losseOmzet = inkomens
       .filter((i) => {
         const d = new Date(i.datum);
-        return d.getFullYear() === wvJaarNum && d.getMonth() === idx;
+        return d.getFullYear() === jaar && d.getMonth() === maand
+          && i.geboektAlsOmzet === true && !i.factuurId;
       })
       .reduce((s, i) => s + i.bedrag, 0);
+
+    return factuurOmzet + losseOmzet;
+  }
+
+  const wvData = MAANDEN.map((naam, idx) => {
+    const omzet = berekenOmzetVoorMaand(wvJaarNum, idx);
     const kosten = uitgaven
       .filter((u) => {
         const d = new Date(u.datum);
@@ -522,7 +540,7 @@ export default function RapportenPagina() {
   const openFacturen = facturen.filter((f) => f.status === "VERZONDEN" || f.status === "VERLOPEN");
   const debiteuren = openFacturen.reduce((s, f) => s + f.totaal, 0);
 
-  const totaalBetaaldInkomen = gededupliceerdeInkomens.reduce((s, i) => s + i.bedrag, 0);
+  const totaalBetaaldInkomen = inkomens.reduce((s, i) => s + i.bedrag, 0);
   const totaalUitgavenBedrag = uitgaven.reduce((s, u) => s + u.bedrag, 0);
   const liquideMiddelen = Math.max(0, totaalBetaaldInkomen - totaalUitgavenBedrag);
 
@@ -856,6 +874,9 @@ export default function RapportenPagina() {
             {/* ── Winst & Verlies ── */}
             {actieveTab === "winstverlies" && (
               <div className="space-y-6">
+                <div className="rounded-lg bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-800">
+                  <span className="font-semibold">Omzet op factuurbasis</span> — omzet telt mee op het moment dat de factuur wordt verzonden (excl. BTW). Bankimports tellen <em>niet</em> automatisch als omzet; alleen facturen en expliciet geboekte losse inkomsten worden meegenomen.
+                </div>
                 {/* Selectors */}
                 <div className="flex flex-wrap gap-3 items-center justify-between">
                   <div className="flex flex-wrap gap-3 items-center">

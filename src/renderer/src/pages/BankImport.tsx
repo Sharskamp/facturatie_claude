@@ -219,6 +219,7 @@ export default function BankImportPagina() {
             omschrijving: t.omschrijving,
             bedrag: Math.abs(t.bedrag),
             bron: "Bankimport",
+            geboektAlsOmzet: false,
           });
         } else {
           await window.api.uitgaven.create({

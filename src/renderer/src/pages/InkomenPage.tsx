@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Pencil, Trash2, Link, TrendingUp, Unlink, Search, Loader2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Link, TrendingUp, Unlink, Search, Loader2, BookOpen } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -40,6 +40,7 @@ interface Inkomen {
   factuurId?: string | null;
   factuur?: { factuurNummer: string } | null;
   notities?: string | null;
+  geboektAlsOmzet: boolean;
 }
 
 interface Factuur {
@@ -150,6 +151,8 @@ export default function InkomenPagina() {
       ...formulier,
       bedrag: parseFloat(formulier.bedrag),
       factuurId: formulier.factuurId || null,
+      // Handmatig toegevoegde inkomsten tellen altijd mee als omzet
+      ...(bewerkenId ? {} : { geboektAlsOmzet: true }),
     };
     try {
       if (bewerkenId) {
@@ -205,6 +208,16 @@ export default function InkomenPagina() {
     }
   };
 
+  const boekAlsOmzet = async (id: string) => {
+    try {
+      await window.api.inkomen.update(id, { geboektAlsOmzet: true });
+      toonMelding("succes", "Geboekt als losse omzet");
+      haalInkomensOp();
+    } catch {
+      toonMelding("fout", "Bijwerken mislukt");
+    }
+  };
+
   const openSmartKoppel = async (inkomen: Inkomen) => {
     setMatchInkomen(inkomen);
     setMatchGeselecteerdId("");
@@ -240,6 +253,8 @@ export default function InkomenPagina() {
   const gekoppeld = inkomens.filter((i) => i.factuurId);
   const totaalGekoppeld = gekoppeld.reduce((s, i) => s + i.bedrag, 0);
   const totaalNietGekoppeld = totaalInkomen - totaalGekoppeld;
+  const wachtOpKoppeling = inkomens.filter((i) => !i.factuurId && !i.geboektAlsOmzet && i.bron === "Bankimport");
+  const totaalWachtOpKoppeling = wachtOpKoppeling.reduce((s, i) => s + i.bedrag, 0);
 
   const maandOpties = Array.from({ length: 12 }, (_, i) => {
     const d = new Date();
@@ -278,15 +293,21 @@ export default function InkomenPagina() {
           </div>
         )}
 
+        {/* Uitleg */}
+        <div className="rounded-lg bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-800">
+          <p className="font-semibold mb-0.5">Betalingsontvangsten — niet automatisch omzet</p>
+          <p className="text-blue-700">Bankimports worden <strong>alleen</strong> gebruikt om facturen als betaald te markeren. Omzet wordt berekend op basis van uitgestuurde facturen. Koppel elke bankbetaling aan een factuur, of boek hem als losse zakelijke omzet.</p>
+        </div>
+
         {/* Samenvatting kaarten */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-gray-500">Totaal inkomen</CardTitle>
+              <CardTitle className="text-sm font-medium text-gray-500">Totaal ontvangen</CardTitle>
             </CardHeader>
             <CardContent>
               <p className="text-2xl font-bold text-gray-900">{formatBedrag(totaalInkomen)}</p>
-              <p className="text-xs text-gray-400 mt-1">{inkomens.length} registraties deze maand</p>
+              <p className="text-xs text-gray-400 mt-1">{inkomens.length} registraties</p>
             </CardContent>
           </Card>
           <Card>
@@ -300,13 +321,20 @@ export default function InkomenPagina() {
           </Card>
           <Card>
             <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-gray-500">Wacht op koppeling</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-2xl font-bold text-amber-600">{formatBedrag(totaalWachtOpKoppeling)}</p>
+              <p className="text-xs text-gray-400 mt-1">{wachtOpKoppeling.length} bankbetalingen</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-gray-500">Niet gekoppeld</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-2xl font-bold text-amber-600">{formatBedrag(totaalNietGekoppeld)}</p>
-              <p className="text-xs text-gray-400 mt-1">
-                {inkomens.length - gekoppeld.length} registraties
-              </p>
+              <p className="text-2xl font-bold text-gray-600">{formatBedrag(totaalNietGekoppeld)}</p>
+              <p className="text-xs text-gray-400 mt-1">{inkomens.length - gekoppeld.length} registraties</p>
             </CardContent>
           </Card>
         </div>
@@ -365,7 +393,13 @@ export default function InkomenPagina() {
                     </TableCell>
                     <TableCell className="font-medium">{inkomen.omschrijving}</TableCell>
                     <TableCell>
-                      <Badge variant="default">{inkomen.bron}</Badge>
+                      {inkomen.bron === "Bankimport" && !inkomen.factuurId && !inkomen.geboektAlsOmzet ? (
+                        <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50">Wacht op koppeling</Badge>
+                      ) : inkomen.bron === "Bankimport" && inkomen.geboektAlsOmzet ? (
+                        <Badge variant="outline" className="text-green-600 border-green-300 bg-green-50">Losse omzet</Badge>
+                      ) : (
+                        <Badge variant="default">{inkomen.bron}</Badge>
+                      )}
                     </TableCell>
                     <TableCell className="text-right font-semibold text-green-700">
                       {formatBedrag(inkomen.bedrag)}
@@ -375,6 +409,8 @@ export default function InkomenPagina() {
                         <span className="text-indigo-600 text-sm font-medium">
                           {inkomen.factuur.factuurNummer}
                         </span>
+                      ) : inkomen.geboektAlsOmzet ? (
+                        <span className="text-green-600 text-xs">Losse zakelijke omzet</span>
                       ) : (
                         <span className="text-gray-400 text-xs">Niet gekoppeld</span>
                       )}
@@ -390,6 +426,25 @@ export default function InkomenPagina() {
                           >
                             <Unlink className="h-4 w-4 text-gray-400" />
                           </Button>
+                        ) : inkomen.bron === "Bankimport" && !inkomen.geboektAlsOmzet ? (
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              title="Koppel aan factuur"
+                              onClick={() => openSmartKoppel(inkomen)}
+                            >
+                              <Link className="h-4 w-4 text-indigo-500" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              title="Boek als losse zakelijke omzet"
+                              onClick={() => boekAlsOmzet(inkomen.id)}
+                            >
+                              <BookOpen className="h-4 w-4 text-green-600" />
+                            </Button>
+                          </>
                         ) : (
                           <Button
                             variant="ghost"

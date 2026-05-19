@@ -256,6 +256,7 @@ model Inkomen {
   factuur      Factuur? @relation(fields: [factuurId], references: [id])
   bron         String?
   notities     String?
+  geboektAlsOmzet Boolean @default(false)
   aangemaakt   DateTime @default(now())
   bijgewerkt   DateTime @updatedAt
 

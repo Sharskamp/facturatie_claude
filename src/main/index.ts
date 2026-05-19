@@ -163,6 +163,11 @@ function runMigratie(dbPath: string): void {
   kolomToevoegen('Klant', 'betaalTermijn', 'INTEGER')
   kolomToevoegen('Klant', 'taal', "TEXT NOT NULL DEFAULT 'nl'")
 
+  // Inkomen — nieuwe kolommen
+  kolomToevoegen('Inkomen', 'geboektAlsOmzet', 'BOOLEAN NOT NULL DEFAULT false')
+  // Bestaande handmatige inkomenregels (niet-bank, niet-historisch, niet gekoppeld aan factuur) tellen mee als omzet
+  try { db.exec(`UPDATE "Inkomen" SET "geboektAlsOmzet" = true WHERE "factuurId" IS NULL AND ("bron" IS NULL OR ("bron" != 'Bankimport' AND "bron" != 'Historisch'))`) } catch {}
+
   // Factuur — nieuwe kolommen
   kolomToevoegen('Factuur', 'creditNotaVoorId', 'TEXT')
   kolomToevoegen('Factuur', 'totaalKorting', 'REAL NOT NULL DEFAULT 0')
