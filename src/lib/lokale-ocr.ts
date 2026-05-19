@@ -1,10 +1,10 @@
 /**
  * Lokale OCR voor bonnen en facturen — cross-platform (Windows + Mac + Linux).
  *
- * Pipeline:
- *   1. PDF → PNG via Electron offscreen BrowserWindow (Chromium PDF renderer)
- *   2. OCR via PaddleOCR (ONNX Runtime, geen cloud) — levert tekst + bounding boxes
- *   3. Veld-extractie op basis van regel-inhoud én spatial layout (kolommen, tabellen)
+ * Pipeline (primair → fallback):
+ *   1a. PDF met tekstlaag → pdfjs-dist (exact, positie-bewust, geen OCR nodig)
+ *   1b. Afbeelding of gescande PDF → PaddleOCR via ONNX Runtime
+ *   2.  Veld-extractie op basis van regel-inhoud én spatial layout (kolommen, tabellen)
  */
 
 import * as fs from 'fs'
@@ -37,6 +37,99 @@ export interface OcrVelden {
   /** Type document: "factuur" of "bon" (kassabon) */
   documentType?: 'factuur' | 'bon'
   error?: string
+}
+
+// ── PDF tekstextractie via pdfjs-dist (CJS legacy build) ─────────────────────
+
+/** Extraheer tekst met posities uit een PDF via PDF.js — werkt voor gedrukte/programmatische PDFs */
+async function extraheerPdfAlsRegels(pad: string): Promise<OcrWoord[][] | null> {
+  try {
+    // Lazy load om startup-tijd te beperken; legacy/build/pdf.js is CJS
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js') as {
+      getDocument: (src: {
+        data: Uint8Array
+        useSystemFonts?: boolean
+        disableFontFace?: boolean
+      }) => { promise: Promise<PdfDoc> }
+      GlobalWorkerOptions: { workerSrc: unknown }
+    }
+    // Geen worker nodig voor tekst-extractie — fake-worker mode (main thread)
+    pdfjsLib.GlobalWorkerOptions.workerSrc = ''
+
+    const buffer = fs.readFileSync(pad)
+    const doc = await pdfjsLib.getDocument({
+      data: new Uint8Array(buffer),
+      useSystemFonts: true,
+      disableFontFace: true,
+    }).promise
+
+    const page = await doc.getPage(1)
+    const viewport = page.getViewport({ scale: 1.0 })
+    const pdfH = viewport.height
+
+    const content = await page.getTextContent({ normalizeWhitespace: false })
+    await doc.destroy()
+
+    if (content.items.length < 5) return null
+
+    // Converteer PDF-items naar OcrWoord
+    // PDF-coördinaten: origin linksonder, Y omhoog → omdraaien naar scherm-Y
+    const woorden: OcrWoord[] = []
+    for (const raw of content.items) {
+      const item = raw as {
+        str: string
+        transform: number[]  // [a, b, c, d, x, y]
+        width: number
+        height: number
+      }
+      if (!item.str?.trim()) continue
+      // transform[3] = y-schaal (fonthoogte in PDF-punten)
+      const itemH = Math.max(4, Math.round(Math.abs(item.transform[3]) || Math.abs(item.height) || 10))
+      woorden.push({
+        tekst: item.str.trim(),
+        box: {
+          x: Math.round(item.transform[4]),
+          y: Math.round(pdfH - item.transform[5] - itemH),
+          width: Math.max(4, Math.round(Math.abs(item.width) || item.str.length * 5)),
+          height: itemH,
+        },
+        confidence: 1.0,
+      })
+    }
+
+    if (woorden.length < 5) return null
+
+    // Sorteer op y (boven → onder), dan x (links → rechts)
+    woorden.sort((a, b) => a.box.y !== b.box.y ? a.box.y - b.box.y : a.box.x - b.box.x)
+
+    // Groepeer op regel (30% y-overlap is genoeg voor PDF-tekstitems)
+    const regels: OcrWoord[][] = []
+    for (const w of woorden) {
+      const lijn = regels.find(r => {
+        const last = r[r.length - 1]
+        const topO = Math.max(w.box.y, last.box.y)
+        const botO = Math.min(w.box.y + w.box.height, last.box.y + last.box.height)
+        return botO - topO > 0.3 * Math.min(w.box.height, last.box.height)
+      })
+      if (lijn) lijn.push(w)
+      else regels.push([w])
+    }
+
+    return regels
+  } catch {
+    return null
+  }
+}
+
+// Minimal types voor pdfjs-dist page/doc objecten
+interface PdfDoc {
+  getPage(n: number): Promise<PdfPage>
+  destroy(): Promise<void>
+}
+interface PdfPage {
+  getViewport(opts: { scale: number }): { width: number; height: number }
+  getTextContent(opts?: { normalizeWhitespace: boolean }): Promise<{ items: unknown[] }>
 }
 
 // ── PDF → PNG via Electron offscreen BrowserWindow ───────────────────────────
@@ -122,6 +215,9 @@ function laatsteBedragIn(r: string): number | null {
   return laatste
 }
 
+// Suppress unused warning
+void eersteBedragIn
+
 const MAANDEN: Record<string, string> = {
   jan: '01', feb: '02', mrt: '03', maa: '03', apr: '04', mei: '05',
   jun: '06', jul: '07', aug: '08', sep: '09', okt: '10', nov: '11', dec: '12',
@@ -166,22 +262,12 @@ function vindDatumInRegel(r: string): string | null {
 
 // ── Spatial helpers: gebruik bounding-box geometrie ──────────────────────────
 
-/**
- * Een "logische regel" zoals PaddleOCR die levert: meerdere woord-segmenten
- * die op ongeveer dezelfde y-positie staan. We voegen ze samen tot één string
- * en bewaren de geometrie voor latere analyse.
- */
 interface SpatialRegel {
   tekst: string
-  /** Linker-grens van de meest-linkse box */
   x: number
-  /** Rechter-grens van de meest-rechtse box */
   xEinde: number
-  /** Top-y */
   y: number
-  /** Bottom-y */
   yEinde: number
-  /** Originele woord-segmenten in deze regel, gesorteerd op x */
   segmenten: OcrWoord[]
 }
 
@@ -200,9 +286,7 @@ function bouwSpatialRegels(woordRegels: OcrWoord[][]): SpatialRegel[] {
     .sort((a, b) => a.y - b.y)
 }
 
-/** Detecteer kolommen op basis van x-coördinaten van bedragen. */
 function detecteerBedragKolom(regels: SpatialRegel[]): { drempel: number } | null {
-  // Verzamel x-posities van losse "€ 12,50"-segmenten
   const bedragX: number[] = []
   for (const r of regels) {
     for (const seg of r.segmenten) {
@@ -211,7 +295,6 @@ function detecteerBedragKolom(regels: SpatialRegel[]): { drempel: number } | nul
   }
   if (bedragX.length < 2) return null
   const sorted = [...bedragX].sort((a, b) => a - b)
-  // Mediaan als drempel — alles rechts hiervan zijn waarschijnlijk bedragen
   const mediaan = sorted[Math.floor(sorted.length / 2)]
   return { drempel: mediaan - 20 }
 }
@@ -228,8 +311,6 @@ export function extraheerFactuurVelden(
   const eigenBedrijfsnaam = opties?.eigenBedrijfsnaam
 
   // ── Documenttype detecteren ────────────────────────────────────────────────
-  // Bon: smal document, weinig regels, vaak "TOTAAL"/"KASSABON" prominent
-  // Factuur: bevat "Factuur", "Vervaldatum", "BTW-nr", structured tabel
   const factuurIndicatoren = /\b(?:factuur|invoice|btw-?nummer|kvk|factuurdatum|vervaldatum|debiteur|crediteur|iban)\b/i
   const bonIndicatoren = /\b(?:kassabon|btw\s*hoog|btw\s*laag|tot(?:aal|al)\s*eur|bon\s*nr|bonnummer|aantal\s*x|pinpas|contactloos|maestro|cash|wisselgeld)\b/i
   const lijktFactuur = factuurIndicatoren.test(alles)
@@ -240,7 +321,9 @@ export function extraheerFactuurVelden(
     : 'factuur'
 
   // ── KOR / BTW-vrijstelling ────────────────────────────────────────────────
-  const korActief = /\b(?:kor|kleineondernemersregeling|vrijgesteld\s+van\s+btw|niet\s+btw.?plichtig|btw\s+niet\s+van\s+toepassing|art\.?\s*25|reverse\s+charge|btw\s+verlegd)\b/i.test(alles)
+  // Ruime match: ook als "kleineondernemersregeling" wordt opgesplitst door OCR
+  const korActief = /\b(?:kor|kleineondernemer|vrijgesteld\s+van\s+btw|niet\s+btw.?plichtig|btw\s+niet\s+van\s+toepassing|art\.?\s*25|reverse\s+charge|btw\s+verlegd)\b/i.test(alles)
+    || /vrijgesteld.*btw|btw.*vrijgesteld/i.test(alles)
 
   // ── Factuurnummer ─────────────────────────────────────────────────────────
   let nummer: string | null = null
@@ -250,24 +333,30 @@ export function extraheerFactuurVelden(
   if (nummerMatch) nummer = nummerMatch[1].trim()
 
   // ── Datums ────────────────────────────────────────────────────────────────
+  // Strategie: zoek label + datum op dezelfde regel; als datum ontbreekt, kijk ook op de volgende regel.
   let datum: string | null = null
   let vervaldatum: string | null = null
 
-  for (const r of tekstRegels) {
+  for (let i = 0; i < tekstRegels.length; i++) {
+    const r = tekstRegels[i]
     if (/verval|due\s*date|betaal.*voor|uiterlijk|payment\s*due/i.test(r)) {
-      const d = vindDatumInRegel(r)
-      if (d) vervaldatum = d
+      let d = vindDatumInRegel(r)
+      // label zonder datum op dezelfde regel → kijk volgende regel
+      if (!d && i + 1 < tekstRegels.length) d = vindDatumInRegel(tekstRegels[i + 1])
+      if (d && !vervaldatum) vervaldatum = d
     }
   }
-  for (const r of tekstRegels) {
+  for (let i = 0; i < tekstRegels.length; i++) {
+    const r = tekstRegels[i]
     if (/factuur(?:datum)?|invoice\s*date|bill\s*date|^datum\b|\bdatum:/i.test(r)) {
-      const d = vindDatumInRegel(r)
+      let d = vindDatumInRegel(r)
+      if (!d && i + 1 < tekstRegels.length) d = vindDatumInRegel(tekstRegels[i + 1])
       if (d && d !== vervaldatum) { datum = d; break }
     }
   }
   if (!datum) {
-    for (const r of tekstRegels) {
-      const d = vindDatumInRegel(r)
+    for (let i = 0; i < tekstRegels.length; i++) {
+      const d = vindDatumInRegel(tekstRegels[i])
       if (d && d !== vervaldatum) { datum = d; break }
     }
   }
@@ -280,7 +369,6 @@ export function extraheerFactuurVelden(
   let klantNaam: string | null = null
 
   if (documentType === 'bon') {
-    // Voor bonnen: leverancier = eerste niet-lege regel die geen straat/postcode/telnr is
     const GEEN_NAAM_BON = /^\d{4}\s?[A-Z]{2}\b|^[+]?[(]?\d{2,}|^(www\.|http|kvk|iban|tel|fax|btw|filiaal|datum|bon\s)/i
     for (const r of spatialRegels.slice(0, 5)) {
       if (r.tekst.length >= 2 && r.tekst.length <= 50 &&
@@ -291,7 +379,7 @@ export function extraheerFactuurVelden(
       }
     }
   } else {
-    // Voor facturen: gelabelde klant → header-blok vóór "Factuur" → rechtsvorm
+    // Gelabelde klant: "Klant:", "Aan:", etc.
     const gelabeldIdx = spatialRegels.findIndex(r =>
       /^(?:klant|aan|t\.?\s*a\.?\s*v\.?|bill\s+to|invoice\s+to|geleverd\s+aan|sold\s+to|ontvanger|recipient)[:\s]/i.test(r.tekst)
     )
@@ -299,18 +387,17 @@ export function extraheerFactuurVelden(
       const huidig = spatialRegels[gelabeldIdx].tekst.replace(/^[^:]+:\s*/i, '').trim()
       if (huidig) klantNaam = huidig
       else {
-        // Naam staat op de volgende regel
         const volgende = spatialRegels[gelabeldIdx + 1]
         if (volgende) klantNaam = volgende.tekst.trim()
       }
     }
 
     if (!klantNaam) {
-      // Header-blok vóór de "Factuur" kop. Onderscheid links- en rechtsblok via x-positie.
+      // Header-blok vóór de "Factuur" kop — meest-linkse kandidaat is de klant
       const factuurKopIdx = spatialRegels.findIndex(r => /^factuur\b/i.test(r.tekst))
-      const headerRegels = factuurKopIdx > 0 ? spatialRegels.slice(0, factuurKopIdx) : spatialRegels.slice(0, 10)
+      const headerRegels = factuurKopIdx > 0 ? spatialRegels.slice(0, factuurKopIdx) : spatialRegels.slice(0, 12)
 
-      const GEEN_NAAM = /^\d{4}\s?[A-Z]{2}\b|^[+]?[(]?\d{2,}|^(www\.|http|kvk|iban|tel|fax|rekeningnr|btw-nr|btw nr)/i
+      const GEEN_NAAM = /^\d{4}\s?[A-Z]{2}\b|^[+]?[(]?\d{2,}|^(www\.|http|kvk|iban|tel|fax|rekeningnr|btw-nr|btw nr|e-?mail)/i
       const kandidaten = headerRegels.filter(r =>
         r.tekst.length >= 2 && r.tekst.length <= 60 &&
         !GEEN_NAAM.test(r.tekst) &&
@@ -319,13 +406,12 @@ export function extraheerFactuurVelden(
         !(eigenBedrijfsnaam && r.tekst.toLowerCase().includes(eigenBedrijfsnaam.toLowerCase()))
       )
 
-      // De klant staat meestal links (eigen bedrijf rechts). Zoek de meest-linkse kandidaat.
       if (kandidaten.length > 0) {
-        const xPosities = kandidaten.map(k => k.x)
-        const minX = Math.min(...xPosities)
-        const linksKandidaten = kandidaten.filter(k => k.x < minX + 50)
+        // Klant staat links; eigen bedrijf staat rechts. Pak de meest-linkse kandidaat.
+        const minX = Math.min(...kandidaten.map(k => k.x))
+        const linksKandidaten = kandidaten.filter(k => k.x <= minX + 50)
         let naam = linksKandidaten[0]?.tekst ?? kandidaten[0].tekst
-        // Bijvoeging tussen haakjes op volgende regel ("Naam" gevolgd door "(Dyon)")
+        // "(Evy en Isa)" op de volgende regel toevoegen als het echt tussen haakjes staat
         const idx = spatialRegels.findIndex(r => r.tekst === naam)
         if (idx >= 0 && idx + 1 < spatialRegels.length && /^\(.*\)$/.test(spatialRegels[idx + 1].tekst)) {
           naam += ` ${spatialRegels[idx + 1].tekst}`
@@ -345,13 +431,12 @@ export function extraheerFactuurVelden(
     }
   }
 
-  // ── Klantadres (alleen voor facturen) ─────────────────────────────────────
+  // ── Klantadres ────────────────────────────────────────────────────────────
   let klantAdres: string | null = null
   if (klantNaam && documentType === 'factuur') {
     const klantIdx = spatialRegels.findIndex(r => r.tekst.includes(klantNaam!))
     if (klantIdx >= 0) {
       const adresRegels: string[] = []
-      // Verzamel de volgende ~3 regels die er als adres uitzien (postcode, straat, plaats)
       for (let i = klantIdx + 1; i < Math.min(klantIdx + 5, spatialRegels.length); i++) {
         const t = spatialRegels[i].tekst
         if (/^\d{4}\s?[A-Z]{2}\b|^[A-Za-zà-ü\s]+\d+|^[A-Za-zà-ü\s]+$/.test(t) &&
@@ -367,7 +452,6 @@ export function extraheerFactuurVelden(
   const geextraheerdRegels: OcrRegel[] = []
   const bedragKolom = detecteerBedragKolom(spatialRegels)
 
-  // Zoek tabel-headers in een factuur
   const tabelHeaderIdx = spatialRegels.findIndex(r =>
     /omschrijving|description|product|artikel/i.test(r.tekst) &&
     /bedrag|prijs|price|totaal|amount/i.test(r.tekst)
@@ -376,7 +460,6 @@ export function extraheerFactuurVelden(
     /\btotaal\s+te\s+voldoen\b|\bgrand\s+total\b|\bte\s+betalen\b|\btotal\s+amount\b/i.test(r.tekst)
   )
 
-  // Pad 1: gestructureerde factuur-tabel
   if (tabelHeaderIdx >= 0 && documentType === 'factuur') {
     const start = tabelHeaderIdx + 1
     const einde = tabelFooterIdx > tabelHeaderIdx ? tabelFooterIdx : spatialRegels.length
@@ -386,7 +469,7 @@ export function extraheerFactuurVelden(
       if (!r.tekst || /^[€\s\-]+$/.test(r.tekst)) continue
       if (/^(?:btw|vat|subtotaal|korting|discount|verzend|shipping|tussentotaal|exclusief|inclusief)/i.test(r.tekst)) continue
 
-      // Probeer "<omschr> <bedrag> <aantal> <totaal>"
+      // Formaat: "<omschr> <bedrag> <aantal> <totaal>"
       const driePoorts = r.tekst.match(
         /^(.+?)\s+[€$]?\s*(-?\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|-?\d+[.,]\d{2})\s+(\d+(?:[.,]\d+)?)\s+[€$]?\s*(-?\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|-?\d+[.,]\d{2})\s*$/
       )
@@ -395,13 +478,13 @@ export function extraheerFactuurVelden(
         const bedrag = parseerBedrag(driePoorts[2])
         const aantal = parseFloat(driePoorts[3].replace(',', '.')) || 1
         const regelTotaal = parseerBedrag(driePoorts[4])
-        if (omschr.length >= 2 && bedrag !== null && regelTotaal !== null) {
+        if (omschr.length >= 2 && bedrag !== null && regelTotaal !== null && regelTotaal !== 0) {
           geextraheerdRegels.push({ omschrijving: omschr, bedrag, aantal, totaal: regelTotaal })
           continue
         }
       }
 
-      // Fallback: omschrijving + één bedrag aan rechterkant
+      // Fallback: omschrijving + één bedrag rechts
       const enkel = r.tekst.match(/^(.+?)\s+[€$]?\s*(-?\d{1,3}(?:[.,]\d{3})*[.,]\d{2}|-?\d+[.,]\d{2})\s*$/)
       if (enkel) {
         const omschr = enkel[1].trim()
@@ -412,13 +495,9 @@ export function extraheerFactuurVelden(
         }
       }
     }
-  }
-  // Pad 2: kassabon — elke regel met tekst+bedrag is een artikel
-  else if (documentType === 'bon' && bedragKolom) {
+  } else if (documentType === 'bon' && bedragKolom) {
     for (const r of spatialRegels) {
-      // Stop bij totaal/BTW/subtotaal
       if (/\b(?:totaal|subtotaal|btw|te\s*betalen|pin|cash|wissel|kassabon|datum|bon)/i.test(r.tekst)) {
-        // Maar alleen als het al daadwerkelijk de afsluiting is (na minstens 1 artikel)
         if (geextraheerdRegels.length > 0) break
         continue
       }
@@ -428,7 +507,6 @@ export function extraheerFactuurVelden(
         const bedrag = parseerBedrag(m[2])
         if (omschr.length >= 2 && bedrag !== null && bedrag > 0 &&
             !/^(aantal|omschrijving|bedrag|totaal|btw|subtotaal|datum|filiaal)/i.test(omschr)) {
-          // Detecteer aantal in omschrijving: "2 x Brood" of "Brood 2x"
           let aantal = 1
           let omschrSchoon = omschr
           const aantalMatch = omschr.match(/^(\d+)\s*[xX]\s+(.+)$/) || omschr.match(/^(.+?)\s+(\d+)\s*[xX]$/)
@@ -449,19 +527,37 @@ export function extraheerFactuurVelden(
 
   // ── Totaalbedrag ──────────────────────────────────────────────────────────
   let totaal: number | null = null
-  // Voorkeur: regels met expliciet "totaal te voldoen" / "te betalen"
-  const totaalRegel = tekstRegels.find(r =>
-    /\b(?:totaal\s+te\s+voldoen|grand\s+total|te\s+betalen|amount\s+due|total\s+amount)\b/i.test(r)
-  ) ?? tekstRegels.find(r =>
-    /\btotaal\b/i.test(r) && !/subtotaal|excl|btw\s*hoog|btw\s*laag/i.test(r) && /\d/.test(r)
-  )
-  if (totaalRegel) totaal = laatsteBedragIn(totaalRegel)
 
+  // Stap 1: zoek "Totaal te voldoen" label — bedrag kan op dezelfde of volgende regel staan
+  const totaalRegelIdx = spatialRegels.findIndex(r =>
+    /\b(?:totaal\s+te\s+voldoen|grand\s+total|te\s+betalen|amount\s+due|total\s+amount)\b/i.test(r.tekst)
+  )
+  if (totaalRegelIdx >= 0) {
+    totaal = laatsteBedragIn(spatialRegels[totaalRegelIdx].tekst)
+    // Bedrag staat soms op een aparte regel direct na het label
+    if (totaal === null || totaal === 0) {
+      for (let j = totaalRegelIdx + 1; j <= Math.min(totaalRegelIdx + 3, spatialRegels.length - 1); j++) {
+        const b = laatsteBedragIn(spatialRegels[j].tekst)
+        if (b !== null && b > 0) { totaal = b; break }
+      }
+    }
+  }
+
+  // Stap 2: generieke "totaal"-regel
+  if (totaal === null) {
+    const totaalRegel = tekstRegels.find(r =>
+      /\btotaal\b/i.test(r) && !/subtotaal|excl|btw\s*hoog|btw\s*laag/i.test(r) && /\d/.test(r)
+    )
+    if (totaalRegel) totaal = laatsteBedragIn(totaalRegel)
+  }
+
+  // Stap 3: som van geëxtraheerde regels
   if (totaal === null && geextraheerdRegels.length > 0) {
     totaal = Math.round(geextraheerdRegels.reduce((s, r) => s + r.totaal, 0) * 100) / 100
   }
+
+  // Stap 4: hoogste bedrag in document
   if (totaal === null) {
-    // Laatste redmiddel: hoogste bedrag in het document
     const bedragen: number[] = []
     BEDRAG_RGX_GLOBAL.lastIndex = 0
     let m: RegExpExecArray | null
@@ -480,7 +576,6 @@ export function extraheerFactuurVelden(
     btwBedrag = 0
     subtotaal = totaal
   } else {
-    // Verzamel alle BTW-regels (kunnen meerdere tarieven zijn op een bon: 9% en 21%)
     let totaleBtw = 0
     let btwGevonden = false
     for (const r of tekstRegels) {
@@ -558,7 +653,16 @@ export async function scanBestandLokaal(
   let tmpPng: string | null = null
 
   try {
-    // PDF → PNG via Electron Chromium PDF renderer
+    // ── Primair pad: PDF-tekstlaag via pdfjs-dist ──────────────────────────
+    if (ext === 'pdf') {
+      const pdfRegels = await extraheerPdfAlsRegels(pad)
+      if (pdfRegels && pdfRegels.length >= 5) {
+        const ruweTekst = pdfRegels.map(r => r.map(w => w.tekst).join(' ')).join('\n')
+        return extraheerFactuurVelden(pdfRegels, ruweTekst, opties)
+      }
+    }
+
+    // ── Fallback: PaddleOCR via ONNX Runtime (voor gescande PDFs / afbeeldingen) ──
     if (ext === 'pdf') {
       const pngBuffer = await pdfPaginaNaarPng(pad)
       tmpPng = path.join(os.tmpdir(), `sf_ocr_${Date.now()}.png`)
@@ -567,7 +671,6 @@ export async function scanBestandLokaal(
     }
 
     const resultaat = await ocrAfbeelding(beeldPad)
-
     if (!resultaat.tekst || resultaat.tekst.trim().length < 5) {
       return { error: 'OCR heeft geen bruikbare tekst gevonden. Probeer een hogere resolutie of betere belichting.' }
     }

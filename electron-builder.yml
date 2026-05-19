@@ -10,20 +10,17 @@ files:
   - out/**/*
   - prisma/migrations/**/*
   - "!node_modules/**/*"
-  # OCR-runtime en image-processing: nodig in productie (worden via require() geladen)
-  - "node_modules/ppu-paddle-ocr/**/*"
-  - "node_modules/ppu-ocv/**/*"
+  # OCR-runtime en ONNX: nodig in productie (worden via require() geladen)
   - "node_modules/onnxruntime-node/**/*"
   - "node_modules/onnxruntime-common/**/*"
-  - "node_modules/@napi-rs/canvas/**/*"
-  - "node_modules/@napi-rs/canvas-*/**/*"
-  - "node_modules/@techstark/opencv-js/**/*"
+  # PDF-tekst extractie via pdfjs-dist (alleen legacy CJS build nodig)
+  - "node_modules/pdfjs-dist/legacy/build/pdf.js"
+  - "node_modules/pdfjs-dist/legacy/build/pdf.worker.js"
+  - "node_modules/pdfjs-dist/package.json"
 
 asarUnpack:
   # Native .node binaries en grote ONNX runtime libs moeten buiten asar staan
   - "node_modules/onnxruntime-node/**/*"
-  - "node_modules/@napi-rs/canvas/**/*"
-  - "node_modules/@napi-rs/canvas-*/**/*"
 
 extraResources:
   - from: prisma/migrations
