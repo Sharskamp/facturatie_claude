@@ -1055,6 +1055,41 @@ export default function FactuurImportHistorischPage() {
                             </div>
                           </div>
 
+                          {/* Productregels */}
+                          {rij.geextraheerdRegels && rij.geextraheerdRegels.length > 0 ? (
+                            <div>
+                              <label className="block text-xs text-gray-500 mb-1.5">
+                                Productregels ({rij.geextraheerdRegels.length})
+                              </label>
+                              <div className="rounded-lg border border-gray-200 overflow-hidden">
+                                <table className="w-full text-xs">
+                                  <thead className="bg-gray-50 border-b border-gray-200">
+                                    <tr>
+                                      <th className="text-left px-3 py-1.5 text-gray-500 font-medium">Omschrijving</th>
+                                      <th className="text-right px-3 py-1.5 text-gray-500 font-medium w-14">Aantal</th>
+                                      <th className="text-right px-3 py-1.5 text-gray-500 font-medium w-22">Stukprijs</th>
+                                      <th className="text-right px-3 py-1.5 text-gray-500 font-medium w-22">Totaal</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-gray-100">
+                                    {rij.geextraheerdRegels.map((regel, i) => (
+                                      <tr key={i} className="bg-white">
+                                        <td className="px-3 py-1.5 text-gray-700">{regel.omschrijving}</td>
+                                        <td className="px-3 py-1.5 text-right text-gray-600">{regel.aantal}</td>
+                                        <td className="px-3 py-1.5 text-right text-gray-600">€ {regel.bedrag.toFixed(2)}</td>
+                                        <td className="px-3 py-1.5 text-right font-medium text-gray-800">€ {regel.totaal.toFixed(2)}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="text-xs text-gray-400 italic">
+                              Geen productregels herkend — wordt als samenvatting geïmporteerd.
+                            </p>
+                          )}
+
                           {/* Klant sectie */}
                           {rij.isNieuweKlant ? (
                             <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 space-y-3">
