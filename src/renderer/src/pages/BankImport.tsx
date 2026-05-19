@@ -224,6 +224,7 @@ export default function BankImportPagina() {
             tegenrekening: (t as any).tegenrekening || undefined,
             mutatiesoort: (t as any).mutatiesoort || undefined,
             mededelingen: (t as any).mededelingen || undefined,
+            betalingskenmerk: (t as any).betalingskenmerk || undefined,
             saldoNaBoeking: (t as any).saldoNaBoeking || undefined,
           });
         } else {

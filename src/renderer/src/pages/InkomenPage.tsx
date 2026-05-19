@@ -45,6 +45,7 @@ interface Inkomen {
   tegenrekening?: string | null;
   mutatiesoort?: string | null;
   mededelingen?: string | null;
+  betalingskenmerk?: string | null;
   saldoNaBoeking?: string | null;
 }
 
@@ -70,7 +71,7 @@ export default function InkomenPagina() {
   const [laden, setLaden] = useState(true);
   const [maandFilter, setMaandFilter] = useState(huidigeMaand());
   const [bankVelden, setBankVelden] = useState<string[]>([
-    'datum', 'omschrijving', 'tegenrekeningNaam', 'tegenrekening', 'mutatiesoort', 'mededelingen', 'saldoNaBoeking', 'bedrag', 'bron', 'factuur'
+    'datum', 'omschrijving', 'tegenrekeningNaam', 'tegenrekening', 'mutatiesoort', 'mededelingen', 'betalingskenmerk', 'saldoNaBoeking', 'bedrag', 'bron', 'factuur'
   ]);
   const [spaarVelden, setSpaarVelden] = useState<string[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
@@ -402,8 +403,9 @@ export default function InkomenPagina() {
                 {bankVelden.includes('omschrijving') && <TableHead>Omschrijving</TableHead>}
                 {bankVelden.includes('tegenrekeningNaam') && <TableHead>Naam tegenpartij</TableHead>}
                 {bankVelden.includes('tegenrekening') && <TableHead>Tegenrekening</TableHead>}
-                {bankVelden.includes('mutatiesoort') && <TableHead>Type</TableHead>}
+                {bankVelden.includes('mutatiesoort') && <TableHead>Mutatiesoort</TableHead>}
                 {bankVelden.includes('mededelingen') && <TableHead>Mededelingen</TableHead>}
+                {bankVelden.includes('betalingskenmerk') && <TableHead>Kenmerk</TableHead>}
                 {bankVelden.includes('saldoNaBoeking') && <TableHead>Saldo</TableHead>}
                 {bankVelden.includes('bedrag') && <TableHead className="text-right">Bedrag</TableHead>}
                 {bankVelden.includes('bron') && <TableHead>Bron</TableHead>}
@@ -444,6 +446,9 @@ export default function InkomenPagina() {
                     )}
                     {bankVelden.includes('mededelingen') && (
                       <TableCell className="text-xs text-gray-600 max-w-[180px] truncate">{inkomen.mededelingen || <span className="text-gray-300">—</span>}</TableCell>
+                    )}
+                    {bankVelden.includes('betalingskenmerk') && (
+                      <TableCell className="text-xs font-mono text-gray-500 max-w-[140px] truncate">{inkomen.betalingskenmerk || <span className="text-gray-300">—</span>}</TableCell>
                     )}
                     {bankVelden.includes('saldoNaBoeking') && (
                       <TableCell className="text-xs text-gray-500 text-right">{inkomen.saldoNaBoeking || <span className="text-gray-300">—</span>}</TableCell>

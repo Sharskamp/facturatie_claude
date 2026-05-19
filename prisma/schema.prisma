@@ -264,6 +264,7 @@ model Inkomen {
   tegenrekening     String?
   mutatiesoort      String?
   mededelingen      String?
+  betalingskenmerk  String?
   saldoNaBoeking    String?
   aangemaakt   DateTime @default(now())
   bijgewerkt   DateTime @updatedAt

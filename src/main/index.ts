@@ -168,6 +168,9 @@ function runMigratie(dbPath: string): void {
 
   // Inkomen — nieuwe kolommen
   kolomToevoegen('Inkomen', 'geboektAlsOmzet', 'BOOLEAN NOT NULL DEFAULT false')
+  kolomToevoegen('Inkomen', 'betalingskenmerk', 'TEXT')
+  // Verwijder automatisch aangemaakte inkomen-regels voor historische facturen — deze horen niet in bankimport-overzicht
+  try { db.exec(`DELETE FROM "Inkomen" WHERE "bron" = 'Historisch' AND "factuurId" IS NOT NULL`) } catch {}
   kolomToevoegen('Inkomen', 'tegenrekeningNaam', 'TEXT')
   kolomToevoegen('Inkomen', 'tegenrekening', 'TEXT')
   kolomToevoegen('Inkomen', 'mutatiesoort', 'TEXT')
@@ -1751,69 +1754,101 @@ function setupIpcHandlers() {
       try {
         const doc = new DOMParser().parseFromString(inhoud, 'text/xml')
 
-        function tekst(node: Element | null, tag: string): string {
-          if (!node) return ''
+        // Zoek directe child-element op tagnaam
+        function kind(parent: Element | null, tag: string): Element | null {
+          if (!parent) return null
+          for (let i = 0; i < parent.children.length; i++) {
+            const c = parent.children[i] as Element
+            if (c.localName === tag || c.tagName === tag || c.tagName.split(':').pop() === tag) return c
+          }
+          return null
+        }
+        // Diepste descendant op tagnaam
+        function zoek(node: Element | null, tag: string): Element | null {
+          if (!node) return null
           const els = node.getElementsByTagName(tag)
-          return els.length > 0 ? (els[0].textContent ?? '').trim() : ''
+          if (els.length > 0) return els[0] as Element
+          // ook proberen met namespace-prefix
+          const all = node.getElementsByTagName('*')
+          for (let i = 0; i < all.length; i++) {
+            const el = all[i] as Element
+            if (el.localName === tag) return el
+          }
+          return null
+        }
+        function txt(node: Element | null): string {
+          return node?.textContent?.trim() ?? ''
         }
 
-        // Verzamel alle <Ntry> elementen (transacties)
         const ntryEls = doc.getElementsByTagName('Ntry')
-        const transacties: Array<{ datum: string; omschrijving: string; bedrag: number; type: 'inkomen' | 'uitgave'; tegenrekeningNaam?: string; tegenrekening?: string; mutatiesoort?: string; mededelingen?: string; saldoNaBoeking?: string }> = []
+        const transacties: Array<{
+          datum: string; omschrijving: string; bedrag: number; type: 'inkomen' | 'uitgave';
+          tegenrekeningNaam?: string; tegenrekening?: string; mutatiesoort?: string;
+          mededelingen?: string; betalingskenmerk?: string; saldoNaBoeking?: string
+        }> = []
 
         for (let i = 0; i < ntryEls.length; i++) {
           const ntry = ntryEls[i] as Element
-          const amtRaw = tekst(ntry, 'Amt').replace(',', '.')
-          const bedrag = Math.abs(parseFloat(amtRaw) || 0)
+          const amtEl = zoek(ntry, 'Amt')
+          const bedrag = Math.abs(parseFloat(txt(amtEl).replace(',', '.')) || 0)
           if (bedrag === 0) continue
 
-          const cdtDbt = tekst(ntry, 'CdtDbtInd').toUpperCase()
+          const cdtDbt = txt(zoek(ntry, 'CdtDbtInd')).toUpperCase()
           const isDebet = cdtDbt === 'DBIT'
 
-          // Datum: BookgDt > Dt, of ValDt > Dt
-          const bookDt = (ntry.getElementsByTagName('BookgDt')[0] as Element | undefined)
-          const valDt = (ntry.getElementsByTagName('ValDt')[0] as Element | undefined)
-          const datumRaw = tekst(bookDt ?? null, 'Dt') || tekst(valDt ?? null, 'Dt') || tekst(ntry, 'Dt')
-          const datum = datumRaw.slice(0, 10) // ISO YYYY-MM-DD
+          // Datum: BookgDt/Dt eerst, daarna ValDt/Dt
+          const bookDt = zoek(ntry, 'BookgDt')
+          const valDt = zoek(ntry, 'ValDt')
+          const datumRaw = txt(zoek(bookDt, 'Dt')) || txt(zoek(valDt, 'Dt')) || txt(zoek(ntry, 'Dt'))
+          const datum = datumRaw.slice(0, 10)
 
-          // Omschrijving: Ustrd (ongestructureerd), anders tegenpartij naam
-          const txDtls = ntry.getElementsByTagName('TxDtls')
-          let omschrijving = ''
-          for (let j = 0; j < txDtls.length; j++) {
-            const tx = txDtls[j] as Element
-            const ustrd = tekst(tx, 'Ustrd')
-            if (ustrd) { omschrijving = ustrd; break }
-          }
-          if (!omschrijving) {
-            omschrijving = tekst(ntry, 'AddtlNtryInf') || tekst(ntry, 'Nm') || 'Onbekend'
-          }
+          // Mutatiesoort: BkTxCd proprietary code of domein/familie
+          const bkTxCd = zoek(ntry, 'BkTxCd')
+          const prtry = zoek(bkTxCd, 'Prtry')
+          const domn = zoek(bkTxCd, 'Domn')
+          const fmly = zoek(domn, 'Fmly')
+          const mutatiesoort = txt(zoek(prtry, 'Cd')) ||
+            [txt(zoek(domn, 'Cd')), txt(zoek(fmly, 'Cd')), txt(zoek(fmly, 'SubFmlyCd'))].filter(Boolean).join('/') ||
+            ''
 
-          // Extract tegenpartij from TxDtls
+          // TxDtls: eerste transactiedetail
+          const txDtlsEls = ntry.getElementsByTagName('TxDtls')
+          const txDtls = txDtlsEls.length > 0 ? txDtlsEls[0] as Element : null
+
+          // Tegenpartij: Cdtr bij DBIT, Dbtr bij CRDT
+          const rltdPties = zoek(txDtls, 'RltdPties')
           let tegenrekeningNaam = ''
           let tegenrekening = ''
-          let mededelingen = ''
-          for (let j = 0; j < txDtls.length; j++) {
-            const tx = txDtls[j] as Element
-            if (!tegenrekeningNaam) {
-              tegenrekeningNaam = tekst(tx, 'Nm') || ''
-            }
-            if (!tegenrekening) {
-              tegenrekening = tekst(tx, 'IBAN') || tekst(tx, 'Othr') || ''
-            }
-            if (!mededelingen) {
-              mededelingen = tekst(tx, 'Ustrd') || tekst(tx, 'Ref') || ''
-            }
+          if (isDebet) {
+            tegenrekeningNaam = txt(zoek(zoek(rltdPties, 'Cdtr'), 'Nm'))
+            tegenrekening = txt(zoek(zoek(zoek(rltdPties, 'CdtrAcct'), 'Id'), 'IBAN'))
+          } else {
+            tegenrekeningNaam = txt(zoek(zoek(rltdPties, 'Dbtr'), 'Nm'))
+            tegenrekening = txt(zoek(zoek(zoek(rltdPties, 'DbtrAcct'), 'Id'), 'IBAN'))
           }
-          if (!tegenrekeningNaam) tegenrekeningNaam = tekst(ntry, 'Nm') || ''
+
+          // Betalingskenmerk: EndToEndId (NOTPROVIDED = leeg laten)
+          const refs = zoek(txDtls, 'Refs')
+          const e2eId = txt(zoek(refs, 'EndToEndId'))
+          const betalingskenmerk = (e2eId && e2eId !== 'NOTPROVIDED') ? e2eId : ''
+
+          // Mededelingen: RmtInf/Ustrd
+          const rmtInf = zoek(txDtls, 'RmtInf')
+          const mededelingen = txt(zoek(rmtInf, 'Ustrd')) || txt(zoek(rmtInf, 'Strd'))
+
+          // Omschrijving: AddtlNtryInf > mededelingen > tegenpartijnaam
+          const omschrijving = txt(zoek(ntry, 'AddtlNtryInf')) || mededelingen || tegenrekeningNaam || 'Onbekend'
 
           transacties.push({
             datum,
-            omschrijving: omschrijving || 'Onbekend',
+            omschrijving,
             bedrag: isDebet ? -bedrag : bedrag,
             type: isDebet ? 'uitgave' : 'inkomen',
-            tegenrekeningNaam,
-            tegenrekening,
-            mededelingen: mededelingen !== omschrijving ? mededelingen : '',
+            tegenrekeningNaam: tegenrekeningNaam || undefined,
+            tegenrekening: tegenrekening || undefined,
+            mutatiesoort: mutatiesoort || undefined,
+            mededelingen: (mededelingen && mededelingen !== omschrijving) ? mededelingen : undefined,
+            betalingskenmerk: betalingskenmerk || undefined,
           })
         }
 
@@ -2134,18 +2169,6 @@ function setupIpcHandlers() {
       },
       include: { klant: true, regels: true }
     })
-
-    if (payload.status === 'BETAALD' && payload.betaaldOp) {
-      await prisma.inkomen.create({
-        data: {
-          datum: new Date(payload.betaaldOp),
-          omschrijving: `Betaling factuur ${payload.nummer}`,
-          bedrag: payload.totaal,
-          factuurId: factuur.id,
-          bron: 'Historisch',
-        }
-      })
-    }
 
     return factuur
   })
