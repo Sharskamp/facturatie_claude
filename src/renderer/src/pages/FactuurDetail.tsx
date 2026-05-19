@@ -15,6 +15,7 @@ import {
   FileMinus,
   Bell,
   FolderOpen,
+  Archive,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -61,6 +62,7 @@ interface Factuur {
   totaalKortingBedrag?: number;
   mollieBetaalLink?: string | null;
   bronBestandPad?: string | null;
+  historisch?: boolean;
   regels: FactuurRegel[];
   klant: {
     id: string;
@@ -470,6 +472,31 @@ export default function FactuurDetailPage() {
           </div>
         )}
 
+        {/* Historisch import banner */}
+        {factuur.historisch && (
+          <div className="max-w-4xl mx-auto mb-4 rounded-lg px-4 py-3 flex items-center justify-between gap-4 bg-amber-50 border border-amber-200 text-amber-800 text-sm">
+            <div className="flex items-center gap-2">
+              <Archive className="h-4 w-4 shrink-0" />
+              <span>
+                <span className="font-semibold">Historisch geïmporteerde factuur</span> — deze factuur is ingeladen vanuit een eerder opgemaakt document en is niet via de app aangemaakt.
+                {factuur.bronBestandPad && " Het originele bestand is bewaard en kan hieronder worden geopend."}
+              </span>
+            </div>
+            {factuur.bronBestandPad && (
+              <button
+                className="shrink-0 inline-flex items-center gap-1.5 font-medium underline underline-offset-2 hover:text-amber-900"
+                onClick={async () => {
+                  const res = await window.api.facturen.openBronBestand(id!)
+                  if (!res.succes) toonMelding("fout", res.fout ?? "Bestand kon niet worden geopend")
+                }}
+              >
+                <FolderOpen className="h-4 w-4" />
+                Origineel openen
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Factuur preview */}
         <Card className="max-w-4xl mx-auto print:shadow-none print:border-0">
           <CardContent className="p-8 sm:p-12">
@@ -498,12 +525,18 @@ export default function FactuurDetailPage() {
 
               {/* Factuurinfo rechts */}
               <div className="sm:text-right">
-                <div className="flex sm:justify-end mb-3">
+                <div className="flex sm:justify-end items-center gap-2 mb-3">
                   <span
                     className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-semibold ${statusKleur(effectiefStatus)}`}
                   >
                     {statusLabel(effectiefStatus)}
                   </span>
+                  {factuur.historisch && (
+                    <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium bg-amber-100 text-amber-700 border border-amber-200">
+                      <Archive className="h-3 w-3" />
+                      Historisch
+                    </span>
+                  )}
                 </div>
                 <h1 className="text-3xl font-bold text-gray-900 mb-3">
                   FACTUUR

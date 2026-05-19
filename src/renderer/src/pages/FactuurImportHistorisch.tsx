@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft, Plus, Trash2, CheckCircle, AlertCircle, Loader2,
-  Upload, FileText, Download, Info, ScanLine, UserPlus, X, RefreshCw, Cpu, Cloud,
+  Upload, FileText, Download, Info, ScanLine, UserPlus, X, RefreshCw, Cpu, Cloud, FolderOpen,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -133,6 +133,7 @@ export default function FactuurImportHistorischPage() {
   const [handSubtotaal, setHandSubtotaal] = useState("");
   const [handBtwBedrag, setHandBtwBedrag] = useState("");
   const [handTotaal, setHandTotaal] = useState("");
+  const [bronBestandPadHandmatig, setBronBestandPadHandmatig] = useState<string | null>(null);
 
   const updateRegel = (id: string, veld: keyof Regel, waarde: string | number) => {
     setRegels(prev => prev.map(r => {
@@ -170,6 +171,7 @@ export default function FactuurImportHistorischPage() {
         btwVerlegd, verzondenOp: verzondenOp || undefined,
         betaaldOp: status === "BETAALD" ? (betaaldOp || datum) : undefined,
         handmatigBedrag,
+        bronBestandPad: bronBestandPadHandmatig || undefined,
         regels: regels.map(r => ({
           omschrijving: r.omschrijving || "(geen omschrijving)", aantal: r.aantal,
           prijs: r.prijs, btwPercentage: r.btwPercentage, kortingPercentage: r.kortingPercentage, totaal: r.totaal,
@@ -548,6 +550,29 @@ export default function FactuurImportHistorischPage() {
                   <input type="checkbox" checked={btwVerlegd} onChange={e => setBtwVerlegd(e.target.checked)} className="h-4 w-4 text-indigo-600 rounded" />
                   <span className="text-sm text-gray-700">BTW verlegd</span>
                 </label>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Origineel factuurbestand (optioneel)</label>
+                  {bronBestandPadHandmatig ? (
+                    <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm">
+                      <FolderOpen className="h-4 w-4 text-gray-400 shrink-0" />
+                      <span className="truncate text-gray-700 flex-1">{bronBestandPadHandmatig.split(/[\\/]/).pop()}</span>
+                      <button onClick={() => setBronBestandPadHandmatig(null)} className="text-gray-400 hover:text-red-500 text-xs shrink-0">Verwijderen</button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const paden = await window.api.facturen.kiesBestanden();
+                        if (paden?.length) setBronBestandPadHandmatig(paden[0]);
+                      }}
+                      className="flex items-center gap-2 rounded-lg border border-dashed border-gray-300 px-3 py-2 text-sm text-gray-500 hover:border-indigo-400 hover:text-indigo-600 transition-colors"
+                    >
+                      <FolderOpen className="h-4 w-4" />
+                      PDF of bestand koppelen
+                    </button>
+                  )}
+                  <p className="text-xs text-gray-400 mt-1">Het bestand wordt bewaard en is later terug te vinden via de factuurdetailpagina.</p>
+                </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Notities</label>
                   <textarea rows={2} value={notities} onChange={e => setNotities(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
