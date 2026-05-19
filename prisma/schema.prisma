@@ -78,6 +78,7 @@ model User {
   factuurHtmlTemplate   String?
   offerteGeldigheidDagen Int    @default(30)
   verborgenPaginas      String    @default("[]")
+  bankWeergaveVelden    String    @default("[\"datum\",\"omschrijving\",\"tegenrekeningNaam\",\"tegenrekening\",\"mutatiesoort\",\"mededelingen\",\"saldoNaBoeking\",\"bedrag\",\"bron\",\"factuur\"]")
   aangemaakt            DateTime  @default(now())
   bijgewerkt            DateTime  @updatedAt
 }
