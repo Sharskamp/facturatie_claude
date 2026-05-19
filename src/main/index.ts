@@ -3040,7 +3040,13 @@ Gebruik null voor velden die je niet kunt vinden. Retourneer ALLEEN JSON.`
   })
 
   // ── Bank: koppel transactie aan factuur ──
-  ipcMain.handle('bank:zoekFactuurMatch', async (_, params: { bedrag: number; datum: string }) => {
+  ipcMain.handle('bank:zoekFactuurMatch', async (_, params: {
+    bedrag: number;
+    datum: string;
+    omschrijving?: string;
+    mededelingen?: string;
+    betalingskenmerk?: string;
+  }) => {
     const alleOpen = await prisma.factuur.findMany({
       where: { status: { in: ['VERZONDEN', 'VERLOPEN'] } },
       include: {
@@ -3054,13 +3060,42 @@ Gebruik null voor velden die je niet kunt vinden. Retourneer ALLEEN JSON.`
       const openstaand = Math.max(0, f.totaal - reedsBetaald)
       return { ...f, reedsBetaald, openstaand }
     })
-    const exacteMatches = metBetaald.filter(f =>
-      Math.abs(f.openstaand - params.bedrag) <= Math.max(f.openstaand * 0.02, 0.02)
-    )
-    const overigeOpen = metBetaald.filter(f =>
-      !exacteMatches.find(e => e.id === f.id)
-    )
-    return { exacteMatches, overigeOpen }
+
+    const zoekTekst = [params.omschrijving, params.mededelingen, params.betalingskenmerk]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+
+    const tol = (bedrag: number) => Math.max(bedrag * 0.02, 0.02)
+    const bedragKlopt = (f: (typeof metBetaald)[0]) =>
+      Math.abs(f.openstaand - params.bedrag) <= tol(f.openstaand)
+
+    // Facturen waarvan het nummer voorkomt in de betaaltekst
+    const nummerMatches = zoekTekst
+      ? metBetaald.filter(f => zoekTekst.includes(f.nummer.toLowerCase()))
+      : []
+
+    if (nummerMatches.length > 0) {
+      const volledigeMatches = nummerMatches.filter(bedragKlopt)
+      const alleenNummerMatches = nummerMatches.filter(f => !volledigeMatches.find(v => v.id === f.id))
+      return {
+        matchType: volledigeMatches.length > 0 ? 'volledig' : 'alleenNummer',
+        volledigeMatches,
+        alleenNummerMatches,
+        bedragMatches: [],
+        alleOpen: metBetaald,
+      }
+    }
+
+    // Geen nummermatch — kijk naar bedrag
+    const bedragMatches = metBetaald.filter(bedragKlopt)
+    return {
+      matchType: bedragMatches.length > 0 ? 'bedrag' : 'geen',
+      volledigeMatches: [],
+      alleenNummerMatches: [],
+      bedragMatches,
+      alleOpen: metBetaald,
+    }
   })
 
   ipcMain.handle('bank:koppelAanFactuur', async (_, params: { inkomstenId: string; factuurId: string }) => {
