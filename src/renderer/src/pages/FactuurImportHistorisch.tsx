@@ -441,6 +441,7 @@ export default function FactuurImportHistorischPage() {
           subtotaal: sub, btwBedrag: btw, totaal, handmatigBedrag: true,
           notities: rij.notities || undefined,
           betaaldOp: rij.status === "BETAALD" ? rij.datum : undefined,
+          bronBestandPad: rij.bronBestand || undefined,
           regels: importRegels,
         });
         succesCount++;

@@ -14,6 +14,7 @@ import {
   FileDown,
   FileMinus,
   Bell,
+  FolderOpen,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -59,6 +60,7 @@ interface Factuur {
   totaalKorting?: number;
   totaalKortingBedrag?: number;
   mollieBetaalLink?: string | null;
+  bronBestandPad?: string | null;
   regels: FactuurRegel[];
   klant: {
     id: string;
@@ -316,12 +318,26 @@ export default function FactuurDetailPage() {
                 } else {
                   window.api.audit.create({ factuurId: id!, actie: "PDF_GEDOWNLOAD" }).catch(() => {});
                   window.api.audit.list(id!).then(setAuditLogs).catch(() => {});
+                  laadFactuur();
                 }
               }}
             >
               <FileDown className="h-4 w-4" />
               PDF downloaden
             </Button>
+            {factuur.bronBestandPad && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  const res = await window.api.facturen.openBronBestand(id!)
+                  if (!res.succes) toonMelding("fout", res.fout ?? "Bestand kon niet worden geopend")
+                }}
+              >
+                <FolderOpen className="h-4 w-4" />
+                Bekijk bestand
+              </Button>
+            )}
             {factuur.mollieBetaalLink ? (
               <Button
                 variant="outline"

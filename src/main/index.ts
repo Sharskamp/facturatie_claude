@@ -1676,10 +1676,19 @@ function setupIpcHandlers() {
       pdfWindow.destroy()
 
       fs.writeFileSync(result.filePath, pdfBuffer)
+      await prisma.factuur.update({ where: { id: factuurId }, data: { bronBestandPad: result.filePath } })
       return { succes: true, pad: result.filePath }
     } catch (e: unknown) {
       return { succes: false, fout: e instanceof Error ? e.message : 'Onbekende fout' }
     }
+  })
+
+  ipcMain.handle('facturen:openBronBestand', async (_, factuurId: string) => {
+    const factuur = await prisma.factuur.findUnique({ where: { id: factuurId }, select: { bronBestandPad: true } })
+    if (!factuur?.bronBestandPad) return { succes: false, fout: 'Geen bestand gekoppeld' }
+    if (!fs.existsSync(factuur.bronBestandPad)) return { succes: false, fout: 'Bestand niet gevonden op schijf' }
+    await shell.openPath(factuur.bronBestandPad)
+    return { succes: true }
   })
 
   // ── Bank CSV import ──
@@ -1983,6 +1992,7 @@ function setupIpcHandlers() {
     verzondenOp?: string
     betaaldOp?: string
     handmatigBedrag: boolean
+    bronBestandPad?: string
     regels: Array<{
       omschrijving: string
       aantal: number
@@ -1994,6 +2004,16 @@ function setupIpcHandlers() {
   }) => {
     const bestaand = await prisma.factuur.findUnique({ where: { nummer: payload.nummer } })
     if (bestaand) throw new Error(`Factuurnummer ${payload.nummer} bestaat al in het systeem.`)
+
+    let opgeslagenBronPad: string | undefined
+    if (payload.bronBestandPad && fs.existsSync(payload.bronBestandPad)) {
+      const bijlagenMap = join(app.getPath('userData'), 'bijlagen')
+      if (!fs.existsSync(bijlagenMap)) fs.mkdirSync(bijlagenMap, { recursive: true })
+      const ext = extname(payload.bronBestandPad)
+      const doelBestand = join(bijlagenMap, `${payload.nummer.replace(/[^a-zA-Z0-9-_]/g, '_')}${ext}`)
+      fs.copyFileSync(payload.bronBestandPad, doelBestand)
+      opgeslagenBronPad = doelBestand
+    }
 
     const factuur = await prisma.factuur.create({
       data: {
@@ -2012,6 +2032,7 @@ function setupIpcHandlers() {
         btwVerlegd: payload.btwVerlegd ?? false,
         historisch: true,
         handmatigBedrag: payload.handmatigBedrag,
+        bronBestandPad: opgeslagenBronPad,
         verzondenOp: payload.verzondenOp ? new Date(payload.verzondenOp) : undefined,
         regels: {
           create: payload.regels.map((r, i) => ({
