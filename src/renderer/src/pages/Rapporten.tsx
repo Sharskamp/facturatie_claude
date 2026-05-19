@@ -84,6 +84,7 @@ interface InkomenRecord {
   datum: string;
   bedrag: number;
   omschrijving: string;
+  factuurId?: string | null;
 }
 
 interface UitgaveRecord {
@@ -327,7 +328,7 @@ export default function RapportenPagina() {
   const btwMaanden = kwartaalMaanden[btwKwartaal] ?? [];
   const jaar = parseInt(btwJaar);
 
-  const inkomensInKwartaal = inkomens.filter((i) => {
+  const inkomensInKwartaal = gededupliceerdeInkomens.filter((i) => {
     const d = new Date(i.datum);
     return d.getFullYear() === jaar && btwMaanden.includes(d.getMonth());
   });
@@ -353,11 +354,18 @@ export default function RapportenPagina() {
     { tarief: "0%", omzet: 0, inkoop: 0, saldo: 0 },
   ];
 
+  // Deduplicate inkomen: als meerdere records aan dezelfde factuur gekoppeld zijn
+  // (bijv. bankimport + handmatige boeking), tel de factuur maar één keer mee.
+  const gededupliceerdeInkomens = inkomens.filter((inkomen, index, arr) => {
+    if (!inkomen.factuurId) return true;
+    return arr.findIndex(i => i.factuurId === inkomen.factuurId) === index;
+  });
+
   // ─── Winst & Verlies berekeningen ──────────────────────────────────────────
   const wvJaarNum = parseInt(wvJaar);
 
   const wvData = MAANDEN.map((naam, idx) => {
-    const omzet = inkomens
+    const omzet = gededupliceerdeInkomens
       .filter((i) => {
         const d = new Date(i.datum);
         return d.getFullYear() === wvJaarNum && d.getMonth() === idx;
@@ -514,7 +522,7 @@ export default function RapportenPagina() {
   const openFacturen = facturen.filter((f) => f.status === "VERZONDEN" || f.status === "VERLOPEN");
   const debiteuren = openFacturen.reduce((s, f) => s + f.totaal, 0);
 
-  const totaalBetaaldInkomen = inkomens.reduce((s, i) => s + i.bedrag, 0);
+  const totaalBetaaldInkomen = gededupliceerdeInkomens.reduce((s, i) => s + i.bedrag, 0);
   const totaalUitgavenBedrag = uitgaven.reduce((s, u) => s + u.bedrag, 0);
   const liquideMiddelen = Math.max(0, totaalBetaaldInkomen - totaalUitgavenBedrag);
 
