@@ -147,6 +147,8 @@ export default function KlantenPage() {
   const [verwijderModalOpen, setVerwijderModalOpen] = useState(false);
   const [verwijderFout, setVerwijderFout] = useState<string | null>(null);
   const [verwijderLaden, setVerwijderLaden] = useState(false);
+  const [verwijderAantalFacturen, setVerwijderAantalFacturen] = useState(0);
+  const [overdragenNaarKlantId, setOverdragenNaarKlantId] = useState("");
   const [geselecteerdeKlant, setGeselecteerdeKlant] = useState<Klant | null>(null);
   const [formulier, setFormulier] = useState<Partial<Klant>>(LEEG_FORMULIER);
   const [opslaan, setOpslaan] = useState(false);
@@ -234,8 +236,7 @@ export default function KlantenPage() {
 
   function openVerwijder(klant: Klant, e: React.MouseEvent) {
     e.stopPropagation();
-    setGeselecteerdeKlant(klant);
-    setVerwijderModalOpen(true);
+    openVerwijderModal(klant);
   }
 
   async function slaOp() {
@@ -270,26 +271,37 @@ export default function KlantenPage() {
     }
   }
 
-  async function verwijder(metFacturen = false) {
+  async function openVerwijderModal(klant: Klant) {
+    setGeselecteerdeKlant(klant);
+    setVerwijderFout(null);
+    setOverdragenNaarKlantId("");
+    const api = window.api.klanten as unknown as { aantalFacturen: (id: string) => Promise<{ aantal: number }> };
+    const { aantal } = await api.aantalFacturen(klant.id);
+    setVerwijderAantalFacturen(aantal);
+    setVerwijderModalOpen(true);
+  }
+
+  async function verwijderBevestig(actie: "verwijder" | "metFacturen" | "overdragen") {
     if (!geselecteerdeKlant) return;
     setVerwijderLaden(true);
     setVerwijderFout(null);
     try {
-      if (metFacturen) {
-        await (window.api.klanten as unknown as { deleteMetFacturen: (id: string) => Promise<void> }).deleteMetFacturen(geselecteerdeKlant.id);
+      const api = window.api.klanten as unknown as {
+        deleteMetFacturen: (id: string) => Promise<void>;
+        overdragenEnVerwijderen: (id: string, naarId: string) => Promise<void>;
+      };
+      if (actie === "overdragen") {
+        if (!overdragenNaarKlantId) { setVerwijderFout("Kies een klant om de facturen naar over te dragen."); return; }
+        await api.overdragenEnVerwijderen(geselecteerdeKlant.id, overdragenNaarKlantId);
+      } else if (actie === "metFacturen") {
+        await api.deleteMetFacturen(geselecteerdeKlant.id);
       } else {
         await window.api.klanten.delete(geselecteerdeKlant.id);
       }
       setVerwijderModalOpen(false);
-      setVerwijderFout(null);
       laadKlanten(zoekterm);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes('Foreign key') || msg.includes('foreign key') || msg.includes('constraint') || msg.includes('factuur') || msg.includes('related')) {
-        setVerwijderFout('Deze klant heeft gekoppelde facturen. Verwijder eerst de facturen, of gebruik "Inclusief facturen verwijderen".');
-      } else {
-        setVerwijderFout(`Verwijderen mislukt: ${msg}`);
-      }
+      setVerwijderFout(e instanceof Error ? e.message : "Verwijderen mislukt");
     } finally {
       setVerwijderLaden(false);
     }
@@ -958,33 +970,78 @@ export default function KlantenPage() {
       </Modal>
 
       {/* Verwijder bevestiging modal */}
-      <Modal open={verwijderModalOpen} onOpenChange={(open) => { setVerwijderModalOpen(open); if (!open) setVerwijderFout(null); }}>
+      <Modal open={verwijderModalOpen} onOpenChange={(open) => { setVerwijderModalOpen(open); if (!open) { setVerwijderFout(null); setOverdragenNaarKlantId(""); } }}>
         <ModalContent className="max-w-md">
           <ModalHeader>
             <ModalTitle>Klant verwijderen</ModalTitle>
           </ModalHeader>
-          <p className="text-sm text-gray-600">
-            Weet u zeker dat u{" "}
-            <span className="font-semibold">{geselecteerdeKlant?.naam}</span> wilt
-            verwijderen? Dit kan niet ongedaan worden gemaakt.
-          </p>
+
+          {verwijderAantalFacturen === 0 ? (
+            /* Geen facturen — gewone bevestiging */
+            <p className="text-sm text-gray-600">
+              Weet u zeker dat u <span className="font-semibold">{geselecteerdeKlant?.naam}</span> wilt verwijderen? Dit kan niet ongedaan worden gemaakt.
+            </p>
+          ) : (
+            /* Klant heeft facturen — keuze tonen */
+            <div className="space-y-4">
+              <p className="text-sm text-gray-600">
+                <span className="font-semibold">{geselecteerdeKlant?.naam}</span> heeft{" "}
+                <span className="font-semibold">{verwijderAantalFacturen} factuur{verwijderAantalFacturen !== 1 ? "en" : ""}</span> gekoppeld.
+                Wat wilt u doen met deze facturen?
+              </p>
+
+              {/* Optie A: overdragen */}
+              <div className="rounded-lg border border-gray-200 p-3 space-y-2">
+                <p className="text-sm font-medium text-gray-700">Facturen overdragen aan andere klant</p>
+                <select
+                  value={overdragenNaarKlantId}
+                  onChange={e => setOverdragenNaarKlantId(e.target.value)}
+                  className="w-full h-9 rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="">— kies klant —</option>
+                  {klanten.filter(k => k.id !== geselecteerdeKlant?.id).map(k => (
+                    <option key={k.id} value={k.id}>{k.bedrijf ?? k.naam}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
+
           {verwijderFout && (
             <div className="mt-3 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
               {verwijderFout}
             </div>
           )}
+
           <ModalFooter className="mt-4 gap-2 flex-wrap">
             <ModalClose asChild>
               <Button variant="outline">Annuleren</Button>
             </ModalClose>
-            {verwijderFout && (
-              <Button variant="destructive" onClick={() => verwijder(true)} loading={verwijderLaden}>
-                Inclusief facturen verwijderen
+            {verwijderAantalFacturen > 0 && (
+              <>
+                <Button
+                  variant="outline"
+                  className="border-red-300 text-red-600 hover:bg-red-50"
+                  onClick={() => verwijderBevestig("metFacturen")}
+                  loading={verwijderLaden}
+                >
+                  Inclusief facturen verwijderen
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={() => verwijderBevestig("overdragen")}
+                  loading={verwijderLaden}
+                  disabled={!overdragenNaarKlantId}
+                >
+                  Overdragen en verwijderen
+                </Button>
+              </>
+            )}
+            {verwijderAantalFacturen === 0 && (
+              <Button variant="destructive" onClick={() => verwijderBevestig("verwijder")} loading={verwijderLaden}>
+                Verwijderen
               </Button>
             )}
-            <Button variant="destructive" onClick={() => verwijder(false)} loading={verwijderLaden}>
-              Verwijderen
-            </Button>
           </ModalFooter>
         </ModalContent>
       </Modal>

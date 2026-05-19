@@ -609,6 +609,19 @@ function setupIpcHandlers() {
     return { succes: true }
   })
 
+  ipcMain.handle('klanten:aantalFacturen', async (_, id: string) => {
+    const aantal = await prisma.factuur.count({ where: { klantId: id } })
+    return { aantal }
+  })
+
+  ipcMain.handle('klanten:overdragenEnVerwijderen', async (_, id: string, naarKlantId: string) => {
+    await prisma.$transaction([
+      prisma.factuur.updateMany({ where: { klantId: id }, data: { klantId: naarKlantId } }),
+      prisma.klant.delete({ where: { id } }),
+    ])
+    return { succes: true }
+  })
+
   ipcMain.handle('klanten:archiveer', async (_, id: string) => {
     const klant = await prisma.klant.findUnique({ where: { id } })
     if (!klant) throw new Error('Klant niet gevonden')
