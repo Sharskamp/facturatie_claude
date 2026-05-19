@@ -74,6 +74,7 @@ export default function InkomenPagina() {
     'datum', 'omschrijving', 'tegenrekeningNaam', 'tegenrekening', 'mutatiesoort', 'mededelingen', 'betalingskenmerk', 'saldoNaBoeking', 'bedrag', 'bron', 'factuur'
   ]);
   const [spaarVelden, setSpaarVelden] = useState<string[]>([]);
+  const [verbergSpaarrekeningen, setVerbergSpaarrekeningen] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [bewerkenId, setBewerkenId] = useState<string | null>(null);
   const [melding, setMelding] = useState<{ type: "succes" | "fout"; tekst: string } | null>(null);
@@ -284,11 +285,13 @@ export default function InkomenPagina() {
     }
   };
 
-  const totaalInkomen = inkomens.reduce((s, i) => s + i.bedrag, 0);
-  const gekoppeld = inkomens.filter((i) => i.factuurId);
+  const isSpaar = (i: Inkomen) => !!(i.tegenrekening && spaarVelden.includes(i.tegenrekening));
+  const zichtbareInkomens = verbergSpaarrekeningen ? inkomens.filter(i => !isSpaar(i)) : inkomens;
+  const totaalInkomen = zichtbareInkomens.reduce((s, i) => s + i.bedrag, 0);
+  const gekoppeld = zichtbareInkomens.filter((i) => i.factuurId);
   const totaalGekoppeld = gekoppeld.reduce((s, i) => s + i.bedrag, 0);
   const totaalNietGekoppeld = totaalInkomen - totaalGekoppeld;
-  const wachtOpKoppeling = inkomens.filter((i) => !i.factuurId && !i.geboektAlsOmzet && i.bron === "Bankimport");
+  const wachtOpKoppeling = zichtbareInkomens.filter((i) => !i.factuurId && !i.geboektAlsOmzet && i.bron === "Bankimport");
   const totaalWachtOpKoppeling = wachtOpKoppeling.reduce((s, i) => s + i.bedrag, 0);
 
   const maandOpties = Array.from({ length: 12 }, (_, i) => {
@@ -375,9 +378,10 @@ export default function InkomenPagina() {
         </div>
 
         {/* Filter */}
-        <div className="flex items-center gap-3">
-          <TrendingUp className="h-4 w-4 text-gray-400" />
-          <Select value={maandFilter} onValueChange={setMaandFilter}>
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-3">
+            <TrendingUp className="h-4 w-4 text-gray-400" />
+            <Select value={maandFilter} onValueChange={setMaandFilter}>
             <SelectTrigger className="w-48">
               <SelectValue />
             </SelectTrigger>
@@ -392,6 +396,23 @@ export default function InkomenPagina() {
               ))}
             </SelectContent>
           </Select>
+          </div>
+          {spaarVelden.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setVerbergSpaarrekeningen(v => !v)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors ${
+                verbergSpaarrekeningen
+                  ? 'bg-purple-600 border-purple-600 text-white'
+                  : 'bg-white border-gray-300 text-gray-600 hover:border-purple-400 hover:text-purple-600 dark:bg-gray-800 dark:border-gray-600'
+              }`}
+            >
+              <span className={`inline-block w-8 h-4 rounded-full relative transition-colors ${verbergSpaarrekeningen ? 'bg-white/30' : 'bg-gray-200'}`}>
+                <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform ${verbergSpaarrekeningen ? 'translate-x-4' : 'translate-x-0.5'}`} />
+              </span>
+              Spaarrekeningen verbergen
+            </button>
+          )}
         </div>
 
         {/* Tabel */}
@@ -420,14 +441,14 @@ export default function InkomenPagina() {
                     Laden...
                   </TableCell>
                 </TableRow>
-              ) : inkomens.length === 0 ? (
+              ) : zichtbareInkomens.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={bankVelden.length + 1} className="text-center py-8 text-gray-400">
                     Geen inkomens gevonden voor deze maand
                   </TableCell>
                 </TableRow>
               ) : (
-                inkomens.map((inkomen) => (
+                zichtbareInkomens.map((inkomen) => (
                   <TableRow key={inkomen.id}>
                     {bankVelden.includes('datum') && (
                       <TableCell className="text-gray-500 whitespace-nowrap">{formatDatum(inkomen.datum)}</TableCell>

@@ -169,6 +169,7 @@ function runMigratie(dbPath: string): void {
   // Inkomen — nieuwe kolommen
   kolomToevoegen('Inkomen', 'geboektAlsOmzet', 'BOOLEAN NOT NULL DEFAULT false')
   kolomToevoegen('Inkomen', 'betalingskenmerk', 'TEXT')
+  kolomToevoegen('Uitgave', 'tegenrekening', 'TEXT')
   // Verwijder automatisch aangemaakte inkomen-regels voor historische facturen — deze horen niet in bankimport-overzicht
   try { db.exec(`DELETE FROM "Inkomen" WHERE "bron" = 'Historisch' AND "factuurId" IS NOT NULL`) } catch {}
   kolomToevoegen('Inkomen', 'tegenrekeningNaam', 'TEXT')

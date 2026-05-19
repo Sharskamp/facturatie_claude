@@ -284,6 +284,7 @@ model Uitgave {
   categorie       Categorie? @relation(fields: [categorieId], references: [id])
   leverancier     String?
   bonBestand      String?
+  tegenrekening   String?
   notities        String?
   zakelijk        Boolean    @default(true)
   zakelijkPercent Float      @default(100)

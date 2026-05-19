@@ -65,6 +65,7 @@ interface Uitgave {
   zakelijkPercent: number;
   notities?: string | null;
   bonBestand?: string | null;
+  tegenrekening?: string | null;
 }
 
 const BTW_OPTIES = [
@@ -127,6 +128,8 @@ export default function UitgavenPagina() {
   const [melding, setMelding] = useState<{ type: "succes" | "fout"; tekst: string } | null>(null);
   const [opslaan, setOpslaan] = useState(false);
   const [uitgavenVelden, setUitgavenVelden] = useState<string[]>(ALLE_UITGAVEN_VELDEN.map(v => v.id));
+  const [spaarIbans, setSpaarIbans] = useState<string[]>([]);
+  const [verbergSpaarrekeningen, setVerbergSpaarrekeningen] = useState(false);
 
   const [categorieModalOpen, setCategorieModalOpen] = useState(false);
   const [nieuwCategorie, setNieuwCategorie] = useState({ naam: '', kleur: '#6366f1' });
@@ -177,6 +180,12 @@ export default function UitgavenPagina() {
           try {
             const velden = JSON.parse(inst.uitgavenWeergaveVelden);
             if (Array.isArray(velden) && velden.length > 0) setUitgavenVelden(velden);
+          } catch {}
+        }
+        if (inst?.spaarrekeningen) {
+          try {
+            const ibans = JSON.parse(inst.spaarrekeningen);
+            if (Array.isArray(ibans)) setSpaarIbans(ibans);
           } catch {}
         }
       }).catch(() => {});
@@ -308,11 +317,13 @@ export default function UitgavenPagina() {
     }
   };
 
-  const totaalUitgaven = uitgaven.reduce((s, u) => s + u.bedrag, 0);
-  const totaalBtw = uitgaven.reduce((s, u) => s + u.btw, 0);
+  const isSpaarUitgave = (u: Uitgave) => !!(u.tegenrekening && spaarIbans.includes(u.tegenrekening));
+  const zichtbareUitgaven = verbergSpaarrekeningen ? uitgaven.filter(u => !isSpaarUitgave(u)) : uitgaven;
+  const totaalUitgaven = zichtbareUitgaven.reduce((s, u) => s + u.bedrag, 0);
+  const totaalBtw = zichtbareUitgaven.reduce((s, u) => s + u.btw, 0);
 
   // Top 3 categorieën
-  const perCategorie = uitgaven.reduce<Record<string, { naam: string; totaal: number; kleur?: string | null }>>((acc, u) => {
+  const perCategorie = zichtbareUitgaven.reduce<Record<string, { naam: string; totaal: number; kleur?: string | null }>>((acc, u) => {
     const key = u.categorieId ?? "overig";
     const naam = u.categorie?.naam ?? "Overig";
     if (!acc[key]) acc[key] = { naam, totaal: 0, kleur: u.categorie?.kleur };
@@ -522,6 +533,22 @@ export default function UitgavenPagina() {
             <Settings2 className="h-4 w-4 mr-1" />
             Categorieën beheren
           </Button>
+          {spaarIbans.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setVerbergSpaarrekeningen(v => !v)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors ${
+                verbergSpaarrekeningen
+                  ? 'bg-purple-600 border-purple-600 text-white'
+                  : 'bg-white border-gray-300 text-gray-600 hover:border-purple-400 hover:text-purple-600 dark:bg-gray-800 dark:border-gray-600'
+              }`}
+            >
+              <span className={`inline-block w-8 h-4 rounded-full relative transition-colors ${verbergSpaarrekeningen ? 'bg-white/30' : 'bg-gray-200'}`}>
+                <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform ${verbergSpaarrekeningen ? 'translate-x-4' : 'translate-x-0.5'}`} />
+              </span>
+              Spaarrekeningen verbergen
+            </button>
+          )}
         </div>
 
         {/* Tabel */}
@@ -546,14 +573,14 @@ export default function UitgavenPagina() {
                     <Loader2 className="h-6 w-6 animate-spin text-indigo-400 mx-auto" />
                   </TableCell>
                 </TableRow>
-              ) : uitgaven.length === 0 ? (
+              ) : zichtbareUitgaven.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={uitgavenVelden.length + 1} className="text-center py-8 text-gray-400">
                     Geen uitgaven gevonden voor deze periode
                   </TableCell>
                 </TableRow>
               ) : (
-                uitgaven.map((uitgave) => (
+                zichtbareUitgaven.map((uitgave) => (
                   <TableRow key={uitgave.id}>
                     {uitgavenVelden.includes('datum') && (
                       <TableCell className="text-gray-500 whitespace-nowrap">

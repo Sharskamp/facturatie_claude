@@ -236,6 +236,7 @@ export default function BankImportPagina() {
             btwBedrag: 0,
             zakelijk: true,
             zakelijkPercent: 100,
+            tegenrekening: (t as any).tegenrekening || undefined,
           });
         }
         aangemaakt++;
