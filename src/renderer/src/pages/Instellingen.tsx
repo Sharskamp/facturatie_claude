@@ -143,7 +143,127 @@ interface Instellingen {
   offerteGeldigheidDagen?: number;
   verborgenPaginas?: string;
   bankWeergaveVelden?: string;
+  uitgavenWeergaveVelden?: string;
   spaarrekeningen?: string;
+}
+
+const ALLE_BANK_VELDEN = [
+  { id: 'datum', label: 'Datum', verplicht: true },
+  { id: 'omschrijving', label: 'Omschrijving', verplicht: true },
+  { id: 'bedrag', label: 'Bedrag', verplicht: true },
+  { id: 'tegenrekeningNaam', label: 'Naam tegenpartij' },
+  { id: 'tegenrekening', label: 'Tegenrekening (IBAN)' },
+  { id: 'mutatiesoort', label: 'Transactietype' },
+  { id: 'mededelingen', label: 'Mededelingen / Kenmerk' },
+  { id: 'saldoNaBoeking', label: 'Saldo na boeking' },
+  { id: 'bron', label: 'Bron' },
+  { id: 'factuur', label: 'Gekoppelde factuur' },
+];
+
+const ALLE_UITGAVEN_VELDEN = [
+  { id: 'datum', label: 'Datum', verplicht: true },
+  { id: 'omschrijving', label: 'Omschrijving', verplicht: true },
+  { id: 'bedrag', label: 'Excl. BTW', verplicht: true },
+  { id: 'totaal', label: 'Totaal', verplicht: true },
+  { id: 'leverancier', label: 'Leverancier' },
+  { id: 'categorie', label: 'Categorie' },
+  { id: 'btw', label: 'BTW' },
+];
+
+function parseVelden(json: string | undefined, alle: { id: string }[]): string[] {
+  try {
+    const parsed = JSON.parse(json ?? '[]');
+    if (Array.isArray(parsed) && parsed.length > 0) return parsed as string[];
+  } catch {}
+  return alle.map(v => v.id);
+}
+
+function KolomConfigurator({
+  titel,
+  omschrijving,
+  allVelden,
+  velden,
+  setVelden,
+}: {
+  titel: string;
+  omschrijving: string;
+  allVelden: { id: string; label: string; verplicht?: boolean }[];
+  velden: string[];
+  setVelden: (v: string[]) => void;
+}) {
+  const gesorteerd = [
+    ...velden.map(id => allVelden.find(v => v.id === id)!).filter(Boolean),
+    ...allVelden.filter(v => !velden.includes(v.id)),
+  ];
+
+  const toggle = (id: string) => {
+    setVelden(velden.includes(id) ? velden.filter(v => v !== id) : [...velden, id]);
+  };
+
+  const verplaats = (id: string, richting: -1 | 1) => {
+    const idx = velden.indexOf(id);
+    if (idx < 0) return;
+    const swap = idx + richting;
+    if (swap < 0 || swap >= velden.length) return;
+    const nieuw = [...velden];
+    [nieuw[idx], nieuw[swap]] = [nieuw[swap], nieuw[idx]];
+    setVelden(nieuw);
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{titel}</CardTitle>
+        <CardDescription>{omschrijving}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-1">
+        {gesorteerd.map((veld) => {
+          const actief = velden.includes(veld.id);
+          const positie = velden.indexOf(veld.id);
+          return (
+            <div
+              key={veld.id}
+              className={`flex items-center justify-between py-2.5 px-3 rounded-lg border ${actief ? 'border-indigo-200 bg-indigo-50 dark:bg-indigo-900/20 dark:border-indigo-700' : 'border-gray-200 bg-gray-50 dark:bg-gray-800 dark:border-gray-700 opacity-50'}`}
+            >
+              <div className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  checked={actief}
+                  disabled={veld.verplicht}
+                  onChange={() => toggle(veld.id)}
+                  className="h-4 w-4 text-indigo-600 rounded disabled:opacity-40"
+                />
+                <span className="text-sm font-medium text-gray-800 dark:text-gray-200">{veld.label}</span>
+                {veld.verplicht && <span className="text-xs text-gray-400">(verplicht)</span>}
+              </div>
+              {actief && (
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    disabled={positie === 0}
+                    onClick={() => verplaats(veld.id, -1)}
+                    className="p-1 rounded hover:bg-indigo-100 dark:hover:bg-indigo-800 disabled:opacity-30"
+                    title="Omhoog"
+                  >
+                    <ChevronUp className="h-4 w-4 text-gray-600 dark:text-gray-300" />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={positie === velden.length - 1}
+                    onClick={() => verplaats(veld.id, 1)}
+                    className="p-1 rounded hover:bg-indigo-100 dark:hover:bg-indigo-800 disabled:opacity-30"
+                    title="Omlaag"
+                  >
+                    <ChevronDown className="h-4 w-4 text-gray-600 dark:text-gray-300" />
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </CardContent>
+    </Card>
+  );
 }
 
 export default function InstellingenPagina() {
@@ -162,6 +282,8 @@ export default function InstellingenPagina() {
   const [pdfArchiefLaden, setPdfArchiefLaden] = useState(false);
   const [exportMelding, setExportMelding] = useState<string | null>(null);
   const [nieuweSpaarrekening, setNieuweSpaarrekening] = useState("");
+  const [bankVeldenLijst, setBankVeldenLijst] = useState<string[]>(() => ALLE_BANK_VELDEN.map(v => v.id));
+  const [uitgavenVeldenLijst, setUitgavenVeldenLijst] = useState<string[]>(() => ALLE_UITGAVEN_VELDEN.map(v => v.id));
   const isGeladen = useRef(false);
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previewContainerRef = useRef<HTMLDivElement>(null);
@@ -171,6 +293,8 @@ export default function InstellingenPagina() {
     try {
       const data = await window.api.instellingen.get();
       setInstellingen(data ?? {});
+      setBankVeldenLijst(parseVelden((data as any)?.bankWeergaveVelden, ALLE_BANK_VELDEN));
+      setUitgavenVeldenLijst(parseVelden((data as any)?.uitgavenWeergaveVelden, ALLE_UITGAVEN_VELDEN));
     } catch {
       toonMelding("fout", "Kon instellingen niet laden");
     } finally {
@@ -1805,179 +1929,113 @@ export default function InstellingenPagina() {
           );
         })()}
 
-        {actieveTab === "bank" && (() => {
-          const ALLE_VELDEN = [
-            { id: 'datum', label: 'Datum', verplicht: true },
-            { id: 'omschrijving', label: 'Omschrijving', verplicht: true },
-            { id: 'bedrag', label: 'Bedrag', verplicht: true },
-            { id: 'tegenrekeningNaam', label: 'Naam tegenpartij' },
-            { id: 'tegenrekening', label: 'Tegenrekening (IBAN)' },
-            { id: 'mutatiesoort', label: 'Transactietype' },
-            { id: 'mededelingen', label: 'Mededelingen / Kenmerk' },
-            { id: 'saldoNaBoeking', label: 'Saldo na boeking' },
-            { id: 'bron', label: 'Bron' },
-            { id: 'factuur', label: 'Gekoppelde factuur' },
-          ];
-
-          const huidig: string[] = (() => {
-            try { return JSON.parse(instellingen.bankWeergaveVelden ?? '[]') } catch { return [] }
-          })();
-          const actieveVelden = huidig.length > 0 ? huidig : ALLE_VELDEN.map(v => v.id);
-
-          const toggleVeld = (id: string) => {
-            const nieuw = actieveVelden.includes(id)
-              ? actieveVelden.filter(v => v !== id)
-              : [...actieveVelden, id];
-            updateVeld('bankWeergaveVelden', JSON.stringify(nieuw));
-          };
-
-          const verplaats = (id: string, richting: -1 | 1) => {
-            const idx = actieveVelden.indexOf(id);
-            if (idx < 0) return;
-            const nieuw = [...actieveVelden];
-            const swap = idx + richting;
-            if (swap < 0 || swap >= nieuw.length) return;
-            [nieuw[idx], nieuw[swap]] = [nieuw[swap], nieuw[idx]];
-            updateVeld('bankWeergaveVelden', JSON.stringify(nieuw));
-          };
-
-          // Render velden in huidige volgorde, dan niet-actieve onderaan
-          const gesorteerd = [
-            ...actieveVelden.map(id => ALLE_VELDEN.find(v => v.id === id)!).filter(Boolean),
-            ...ALLE_VELDEN.filter(v => !actieveVelden.includes(v.id)),
-          ];
-
-          const spaarrekeningenLijst: string[] = (() => {
-            try { return JSON.parse(instellingen.spaarrekeningen ?? '[]') } catch { return [] }
-          })();
-
-          const voegSpaarrekeningToe = async () => {
-            const iban = nieuweSpaarrekening.trim().toUpperCase();
-            if (!iban) return;
-            const nieuw = [...spaarrekeningenLijst, iban];
-            updateVeld('spaarrekeningen', JSON.stringify(nieuw));
-            await slaOp({ spaarrekeningen: JSON.stringify(nieuw) });
-            setNieuweSpaarrekening("");
-            window.dispatchEvent(new CustomEvent('bankVeldenGewijzigd'));
-          };
-
-          const verwijderSpaarrekening = async (iban: string) => {
-            const nieuw = spaarrekeningenLijst.filter(r => r !== iban);
-            updateVeld('spaarrekeningen', JSON.stringify(nieuw));
-            await slaOp({ spaarrekeningen: JSON.stringify(nieuw) });
-            window.dispatchEvent(new CustomEvent('bankVeldenGewijzigd'));
-          };
-
-          return (
-            <div className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Bankimport kolomweergave</CardTitle>
-                  <CardDescription>
-                    Kies welke velden zichtbaar zijn in het inkomstenoverzicht na een bankimport, en bepaal de volgorde.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-1">
-                  {gesorteerd.map((veld, idx) => {
-                    const actief = actieveVelden.includes(veld.id);
-                    const positie = actieveVelden.indexOf(veld.id);
-                    return (
-                      <div
-                        key={veld.id}
-                        className={`flex items-center justify-between py-2.5 px-3 rounded-lg border ${actief ? 'border-indigo-200 bg-indigo-50 dark:bg-indigo-900/20 dark:border-indigo-700' : 'border-gray-200 bg-gray-50 dark:bg-gray-800 dark:border-gray-700 opacity-50'}`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <input
-                            type="checkbox"
-                            checked={actief}
-                            disabled={veld.verplicht}
-                            onChange={() => toggleVeld(veld.id)}
-                            className="h-4 w-4 text-indigo-600 rounded disabled:opacity-40"
-                          />
-                          <span className="text-sm font-medium text-gray-800 dark:text-gray-200">{veld.label}</span>
-                          {veld.verplicht && <span className="text-xs text-gray-400">(verplicht)</span>}
-                        </div>
-                        {actief && (
-                          <div className="flex items-center gap-1">
-                            <button
-                              disabled={positie === 0}
-                              onClick={() => verplaats(veld.id, -1)}
-                              className="p-1 rounded hover:bg-indigo-100 dark:hover:bg-indigo-800 disabled:opacity-30"
-                              title="Omhoog"
-                            >
-                              <ChevronUp className="h-4 w-4 text-gray-600 dark:text-gray-300" />
-                            </button>
-                            <button
-                              disabled={positie === actieveVelden.length - 1}
-                              onClick={() => verplaats(veld.id, 1)}
-                              className="p-1 rounded hover:bg-indigo-100 dark:hover:bg-indigo-800 disabled:opacity-30"
-                              title="Omlaag"
-                            >
-                              <ChevronDown className="h-4 w-4 text-gray-600 dark:text-gray-300" />
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                  <div className="pt-3">
-                    <Button
-                      loading={opslaan}
-                      onClick={async () => {
-                        await slaOp({ bankWeergaveVelden: instellingen.bankWeergaveVelden });
-                        window.dispatchEvent(new CustomEvent('bankVeldenGewijzigd'));
-                      }}
-                    >
-                      Toepassen
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Spaarrekeningen</CardTitle>
-                  <CardDescription>
-                    Voeg je eigen spaarrekening-IBANs toe. Transacties van/naar deze rekeningen worden automatisch herkend.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {spaarrekeningenLijst.length === 0 ? (
-                    <p className="text-sm text-gray-400">Geen spaarrekeningen toegevoegd.</p>
-                  ) : (
-                    <div className="space-y-1">
-                      {spaarrekeningenLijst.map((iban) => (
-                        <div key={iban} className="flex items-center justify-between py-2 px-3 rounded-lg border border-gray-200 bg-gray-50 dark:bg-gray-800 dark:border-gray-700">
-                          <span className="text-sm font-mono text-gray-700 dark:text-gray-300">{iban}</span>
-                          <button
-                            onClick={() => verwijderSpaarrekening(iban)}
-                            className="text-gray-400 hover:text-red-500 transition-colors text-lg leading-none"
-                            title="Verwijderen"
-                          >
-                            ×
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <div className="flex gap-2 pt-1">
-                    <input
-                      type="text"
-                      value={nieuweSpaarrekening}
-                      onChange={(e) => setNieuweSpaarrekening(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') voegSpaarrekeningToe(); }}
-                      placeholder="NL00 BANK 0000 0000 00"
-                      className="flex-1 border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    />
-                    <Button onClick={voegSpaarrekeningToe} variant="outline">
-                      Toevoegen
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
+        {actieveTab === "bank" && (
+          <div className="space-y-4">
+            <KolomConfigurator
+              titel="Inkomsten kolomweergave"
+              omschrijving="Kies welke velden zichtbaar zijn in het inkomstenoverzicht na een bankimport, en bepaal de volgorde."
+              allVelden={ALLE_BANK_VELDEN}
+              velden={bankVeldenLijst}
+              setVelden={setBankVeldenLijst}
+            />
+            <KolomConfigurator
+              titel="Uitgaven kolomweergave"
+              omschrijving="Kies welke velden zichtbaar zijn in het uitgavenoverzicht, en bepaal de volgorde."
+              allVelden={ALLE_UITGAVEN_VELDEN}
+              velden={uitgavenVeldenLijst}
+              setVelden={setUitgavenVeldenLijst}
+            />
+            <div>
+              <Button
+                loading={opslaan}
+                onClick={async () => {
+                  await slaOp({
+                    bankWeergaveVelden: JSON.stringify(bankVeldenLijst),
+                    uitgavenWeergaveVelden: JSON.stringify(uitgavenVeldenLijst),
+                  });
+                  window.dispatchEvent(new CustomEvent('bankVeldenGewijzigd'));
+                }}
+              >
+                Toepassen
+              </Button>
             </div>
-          );
-        })()}
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Spaarrekeningen</CardTitle>
+                <CardDescription>
+                  Voeg je eigen spaarrekening-IBANs toe. Transacties van/naar deze rekeningen worden automatisch herkend.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {(() => {
+                  const lijst: string[] = (() => { try { return JSON.parse(instellingen.spaarrekeningen ?? '[]') } catch { return [] } })();
+                  return (
+                    <>
+                      {lijst.length === 0 ? (
+                        <p className="text-sm text-gray-400">Geen spaarrekeningen toegevoegd.</p>
+                      ) : (
+                        <div className="space-y-1">
+                          {lijst.map((iban) => (
+                            <div key={iban} className="flex items-center justify-between py-2 px-3 rounded-lg border border-gray-200 bg-gray-50 dark:bg-gray-800 dark:border-gray-700">
+                              <span className="text-sm font-mono text-gray-700 dark:text-gray-300">{iban}</span>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  const nieuw = lijst.filter(r => r !== iban);
+                                  updateVeld('spaarrekeningen', JSON.stringify(nieuw));
+                                  await slaOp({ spaarrekeningen: JSON.stringify(nieuw) });
+                                  window.dispatchEvent(new CustomEvent('bankVeldenGewijzigd'));
+                                }}
+                                className="text-gray-400 hover:text-red-500 transition-colors text-lg leading-none"
+                                title="Verwijderen"
+                              >×</button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="flex gap-2 pt-1">
+                        <input
+                          type="text"
+                          value={nieuweSpaarrekening}
+                          onChange={(e) => setNieuweSpaarrekening(e.target.value)}
+                          onKeyDown={async (e) => {
+                            if (e.key === 'Enter') {
+                              const iban = nieuweSpaarrekening.trim().toUpperCase();
+                              if (!iban) return;
+                              const nieuw = [...lijst, iban];
+                              updateVeld('spaarrekeningen', JSON.stringify(nieuw));
+                              await slaOp({ spaarrekeningen: JSON.stringify(nieuw) });
+                              setNieuweSpaarrekening("");
+                              window.dispatchEvent(new CustomEvent('bankVeldenGewijzigd'));
+                            }
+                          }}
+                          placeholder="NL00 BANK 0000 0000 00"
+                          className="flex-1 border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={async () => {
+                            const iban = nieuweSpaarrekening.trim().toUpperCase();
+                            if (!iban) return;
+                            const nieuw = [...lijst, iban];
+                            updateVeld('spaarrekeningen', JSON.stringify(nieuw));
+                            await slaOp({ spaarrekeningen: JSON.stringify(nieuw) });
+                            setNieuweSpaarrekening("");
+                            window.dispatchEvent(new CustomEvent('bankVeldenGewijzigd'));
+                          }}
+                        >
+                          Toevoegen
+                        </Button>
+                      </div>
+                    </>
+                  );
+                })()}
+              </CardContent>
+            </Card>
+          </div>
+        )}
       </div>
     </div>
   );

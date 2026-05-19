@@ -159,6 +159,7 @@ function runMigratie(dbPath: string): void {
   kolomToevoegen('User', 'verborgenPaginas', "TEXT NOT NULL DEFAULT '[]'")
   kolomToevoegen('User', 'bankWeergaveVelden', "TEXT NOT NULL DEFAULT '[\"datum\",\"omschrijving\",\"tegenrekeningNaam\",\"tegenrekening\",\"mutatiesoort\",\"mededelingen\",\"saldoNaBoeking\",\"bedrag\",\"bron\",\"factuur\"]'")
   kolomToevoegen('User', 'korIngangsDatum', 'TEXT')
+  kolomToevoegen('User', 'uitgavenWeergaveVelden', "TEXT NOT NULL DEFAULT '[\"datum\",\"omschrijving\",\"leverancier\",\"categorie\",\"bedrag\",\"btw\",\"totaal\"]'")
   kolomToevoegen('User', 'spaarrekeningen', "TEXT NOT NULL DEFAULT '[]'")
 
   // Klant — nieuwe kolommen
@@ -1264,6 +1265,7 @@ function setupIpcHandlers() {
         onbetaaldeFactuurMelding: true,
         verborgenPaginas: true,
         bankWeergaveVelden: true,
+        uitgavenWeergaveVelden: true,
         spaarrekeningen: true,
       }
     })
@@ -1290,7 +1292,7 @@ function setupIpcHandlers() {
       'layoutToonBtwNummer', 'layoutToonKvkNummer', 'layoutToonIban',
       'layoutToonQrCode', 'layoutRegelSpacing',
       'layoutLetterGrootte', 'layoutLogoGrootte', 'layoutMarges', 'layoutSectieVolgorde',
-      'onbetaaldeFactuurMelding', 'verborgenPaginas', 'bankAfschriftenMap', 'bankWeergaveVelden', 'spaarrekeningen',
+      'onbetaaldeFactuurMelding', 'verborgenPaginas', 'bankAfschriftenMap', 'bankWeergaveVelden', 'uitgavenWeergaveVelden', 'spaarrekeningen',
     ])
     const updateData: Record<string, unknown> = {}
     for (const [sleutel, waarde] of Object.entries(data)) {

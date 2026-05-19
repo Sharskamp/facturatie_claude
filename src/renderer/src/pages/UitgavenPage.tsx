@@ -106,6 +106,16 @@ const LEEG_FORMULIER = {
   notities: "",
 };
 
+const ALLE_UITGAVEN_VELDEN = [
+  { id: 'datum', label: 'Datum', verplicht: true },
+  { id: 'omschrijving', label: 'Omschrijving', verplicht: true },
+  { id: 'bedrag', label: 'Excl. BTW', verplicht: true },
+  { id: 'totaal', label: 'Totaal', verplicht: true },
+  { id: 'leverancier', label: 'Leverancier' },
+  { id: 'categorie', label: 'Categorie' },
+  { id: 'btw', label: 'BTW' },
+];
+
 export default function UitgavenPagina() {
   const [uitgaven, setUitgaven] = useState<Uitgave[]>([]);
   const [categorieen, setCategorieen] = useState<Categorie[]>([]);
@@ -116,6 +126,7 @@ export default function UitgavenPagina() {
   const [bewerkenId, setBewerkenId] = useState<string | null>(null);
   const [melding, setMelding] = useState<{ type: "succes" | "fout"; tekst: string } | null>(null);
   const [opslaan, setOpslaan] = useState(false);
+  const [uitgavenVelden, setUitgavenVelden] = useState<string[]>(ALLE_UITGAVEN_VELDEN.map(v => v.id));
 
   const [categorieModalOpen, setCategorieModalOpen] = useState(false);
   const [nieuwCategorie, setNieuwCategorie] = useState({ naam: '', kleur: '#6366f1' });
@@ -158,6 +169,22 @@ export default function UitgavenPagina() {
   useEffect(() => {
     haalCategorieenOp();
   }, [haalCategorieenOp]);
+
+  useEffect(() => {
+    const laadVelden = () => {
+      window.api.instellingen.get().then((inst: any) => {
+        if (inst?.uitgavenWeergaveVelden) {
+          try {
+            const velden = JSON.parse(inst.uitgavenWeergaveVelden);
+            if (Array.isArray(velden) && velden.length > 0) setUitgavenVelden(velden);
+          } catch {}
+        }
+      }).catch(() => {});
+    };
+    laadVelden();
+    window.addEventListener('bankVeldenGewijzigd', laadVelden);
+    return () => window.removeEventListener('bankVeldenGewijzigd', laadVelden);
+  }, []);
 
   const toonMelding = (type: "succes" | "fout", tekst: string) => {
     setMelding({ type, tekst });
@@ -502,60 +529,74 @@ export default function UitgavenPagina() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Datum</TableHead>
-                <TableHead>Omschrijving</TableHead>
-                <TableHead>Leverancier</TableHead>
-                <TableHead>Categorie</TableHead>
-                <TableHead className="text-right">Excl. BTW</TableHead>
-                <TableHead className="text-right">BTW</TableHead>
-                <TableHead className="text-right">Totaal</TableHead>
+                {uitgavenVelden.includes('datum') && <TableHead>Datum</TableHead>}
+                {uitgavenVelden.includes('omschrijving') && <TableHead>Omschrijving</TableHead>}
+                {uitgavenVelden.includes('leverancier') && <TableHead>Leverancier</TableHead>}
+                {uitgavenVelden.includes('categorie') && <TableHead>Categorie</TableHead>}
+                {uitgavenVelden.includes('bedrag') && <TableHead className="text-right">Excl. BTW</TableHead>}
+                {uitgavenVelden.includes('btw') && <TableHead className="text-right">BTW</TableHead>}
+                {uitgavenVelden.includes('totaal') && <TableHead className="text-right">Totaal</TableHead>}
                 <TableHead className="text-right">Acties</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {laden ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center py-8">
+                  <TableCell colSpan={uitgavenVelden.length + 1} className="text-center py-8">
                     <Loader2 className="h-6 w-6 animate-spin text-indigo-400 mx-auto" />
                   </TableCell>
                 </TableRow>
               ) : uitgaven.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center py-8 text-gray-400">
+                  <TableCell colSpan={uitgavenVelden.length + 1} className="text-center py-8 text-gray-400">
                     Geen uitgaven gevonden voor deze periode
                   </TableCell>
                 </TableRow>
               ) : (
                 uitgaven.map((uitgave) => (
                   <TableRow key={uitgave.id}>
-                    <TableCell className="text-gray-500 whitespace-nowrap">
-                      {formatDatum(uitgave.datum)}
-                    </TableCell>
-                    <TableCell className="font-medium max-w-[180px] truncate">
-                      {uitgave.omschrijving}
-                    </TableCell>
-                    <TableCell className="text-gray-500">
-                      {uitgave.leverancier ?? <span className="text-gray-300">—</span>}
-                    </TableCell>
-                    <TableCell>
-                      {uitgave.categorie ? (
-                        <Badge variant={categorieBadgeVariant(uitgave.categorie.kleur)}>
-                          {uitgave.categorie.naam}
-                        </Badge>
-                      ) : (
-                        <span className="text-gray-300 text-xs">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right font-medium">
-                      {formatBedrag(uitgave.bedrag)}
-                    </TableCell>
-                    <TableCell className="text-right text-blue-600">
-                      {formatBedrag(uitgave.btw)}
-                      <span className="text-xs text-gray-400 ml-1">({uitgave.btwPercentage}%)</span>
-                    </TableCell>
-                    <TableCell className="text-right font-semibold text-red-700">
-                      {formatBedrag(uitgave.totaal)}
-                    </TableCell>
+                    {uitgavenVelden.includes('datum') && (
+                      <TableCell className="text-gray-500 whitespace-nowrap">
+                        {formatDatum(uitgave.datum)}
+                      </TableCell>
+                    )}
+                    {uitgavenVelden.includes('omschrijving') && (
+                      <TableCell className="font-medium max-w-[180px] truncate">
+                        {uitgave.omschrijving}
+                      </TableCell>
+                    )}
+                    {uitgavenVelden.includes('leverancier') && (
+                      <TableCell className="text-gray-500">
+                        {uitgave.leverancier ?? <span className="text-gray-300">—</span>}
+                      </TableCell>
+                    )}
+                    {uitgavenVelden.includes('categorie') && (
+                      <TableCell>
+                        {uitgave.categorie ? (
+                          <Badge variant={categorieBadgeVariant(uitgave.categorie.kleur)}>
+                            {uitgave.categorie.naam}
+                          </Badge>
+                        ) : (
+                          <span className="text-gray-300 text-xs">—</span>
+                        )}
+                      </TableCell>
+                    )}
+                    {uitgavenVelden.includes('bedrag') && (
+                      <TableCell className="text-right font-medium">
+                        {formatBedrag(uitgave.bedrag)}
+                      </TableCell>
+                    )}
+                    {uitgavenVelden.includes('btw') && (
+                      <TableCell className="text-right text-blue-600">
+                        {formatBedrag(uitgave.btw)}
+                        <span className="text-xs text-gray-400 ml-1">({uitgave.btwPercentage}%)</span>
+                      </TableCell>
+                    )}
+                    {uitgavenVelden.includes('totaal') && (
+                      <TableCell className="text-right font-semibold text-red-700">
+                        {formatBedrag(uitgave.totaal)}
+                      </TableCell>
+                    )}
                     <TableCell>
                       <div className="flex items-center justify-end gap-1">
                         <Button

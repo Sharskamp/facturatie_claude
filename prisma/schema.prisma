@@ -79,6 +79,7 @@ model User {
   offerteGeldigheidDagen Int    @default(30)
   verborgenPaginas      String    @default("[]")
   bankWeergaveVelden    String    @default("[\"datum\",\"omschrijving\",\"tegenrekeningNaam\",\"tegenrekening\",\"mutatiesoort\",\"mededelingen\",\"saldoNaBoeking\",\"bedrag\",\"bron\",\"factuur\"]")
+  uitgavenWeergaveVelden String   @default("[\"datum\",\"omschrijving\",\"leverancier\",\"categorie\",\"bedrag\",\"btw\",\"totaal\"]")
   spaarrekeningen       String    @default("[]")
   aangemaakt            DateTime  @default(now())
   bijgewerkt            DateTime  @updatedAt
