@@ -235,9 +235,13 @@ export default function BankImportPagina() {
               omschrijving: t.omschrijving,
               mededelingen: (t as any).mededelingen,
               betalingskenmerk: (t as any).betalingskenmerk,
-            }) as { matchType: string; volledigeMatches: { id: string }[] };
-            if (match.matchType === "volledig" && match.volledigeMatches.length === 1) {
-              await window.api.bank.koppelAanFactuur({ inkomstenId: nieuw.id, factuurId: match.volledigeMatches[0].id });
+            }) as { matchType: string; volledigeMatches: { id: string }[]; alleenNummerMatches: { id: string }[] };
+            const kandidaat =
+              match.matchType === "volledig" && match.volledigeMatches.length === 1 ? match.volledigeMatches[0]
+              : match.matchType === "alleenNummer" && match.alleenNummerMatches.length === 1 ? match.alleenNummerMatches[0]
+              : null;
+            if (kandidaat) {
+              await window.api.bank.koppelAanFactuur({ inkomstenId: nieuw.id, factuurId: kandidaat.id });
               autoGekoppeld++;
             }
           } catch {
