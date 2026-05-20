@@ -69,6 +69,7 @@ interface MatchData {
   alleenNummerMatches: FactuurMetBetaling[];
   bedragMatches: FactuurMetBetaling[];
   alleOpen: FactuurMetBetaling[];
+  alleFacturen: FactuurMetBetaling[];
 }
 
 const BRON_OPTIES = ["Bank", "Contant", "PayPal", "iDEAL", "Overig"];
@@ -389,7 +390,7 @@ export default function InkomenPagina() {
     );
   };
 
-  const geselecteerdeFacturen = (matchData?.alleOpen ?? []).filter(f =>
+  const geselecteerdeFacturen = (matchData?.alleFacturen ?? matchData?.alleOpen ?? []).filter(f =>
     matchGeselecteerdeIds.includes(f.id)
   );
 
@@ -880,38 +881,41 @@ export default function InkomenPagina() {
                     </div>
                   )}
 
-                  {/* Geen match → toon direct alle open facturen */}
+                  {/* Geen match → toon direct alle facturen */}
                   {matchData.matchType === 'geen' && (
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
-                        Geen automatische overeenkomst — alle open facturen
+                        Geen automatische overeenkomst — alle facturen
                       </p>
                       <div className="space-y-2">
-                        {matchData.alleOpen.map(f => (
+                        {(matchData.alleFacturen ?? matchData.alleOpen).map(f => (
                           <FactuurMatchRij key={f.id} factuur={f} betaling={matchInkomen.bedrag}
                             geselecteerd={matchGeselecteerdeIds.includes(f.id)}
                             onToggle={() => toggleMatchSelectie(f.id)} />
                         ))}
-                        {matchData.alleOpen.length === 0 && (
-                          <p className="text-sm text-gray-400 text-center py-4">Geen open facturen gevonden.</p>
+                        {(matchData.alleFacturen ?? matchData.alleOpen).length === 0 && (
+                          <p className="text-sm text-gray-400 text-center py-4">Geen facturen gevonden.</p>
                         )}
                       </div>
                     </div>
                   )}
 
                   {/* Alle facturen knop / uitklapbaar (niet bij matchType 'geen') */}
-                  {matchData.matchType !== 'geen' && matchData.alleOpen.length > 0 && (
+                  {matchData.matchType !== 'geen' && (matchData.alleFacturen ?? []).length > 0 && (
                     <div>
                       <button
                         type="button"
                         onClick={() => setToontAlleFacturen(v => !v)}
                         className="text-xs text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1"
                       >
-                        {toontAlleFacturen ? "▲ Verberg alle facturen" : `▼ Bekijk alle open facturen (${matchData.alleOpen.length})`}
+                        {toontAlleFacturen
+                          ? "▲ Verberg alle facturen"
+                          : `▼ Bekijk alle facturen (${(matchData.alleFacturen ?? []).length})`
+                        }
                       </button>
                       {toontAlleFacturen && (
                         <div className="mt-2 space-y-2">
-                          {matchData.alleOpen.map(f => (
+                          {(matchData.alleFacturen ?? []).map(f => (
                             <FactuurMatchRij key={f.id} factuur={f} betaling={matchInkomen.bedrag}
                               geselecteerd={matchGeselecteerdeIds.includes(f.id)}
                               onToggle={() => toggleMatchSelectie(f.id)} />

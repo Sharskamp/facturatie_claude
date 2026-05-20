@@ -3047,19 +3047,33 @@ Gebruik null voor velden die je niet kunt vinden. Retourneer ALLEEN JSON.`
     mededelingen?: string;
     betalingskenmerk?: string;
   }) => {
-    const alleOpen = await prisma.factuur.findMany({
-      where: { status: { in: ['VERZONDEN', 'VERLOPEN'] } },
-      include: {
-        klant: { select: { naam: true, bedrijf: true } },
-        inkomsten: { select: { bedrag: true } },
-      },
-      orderBy: { vervaldatum: 'asc' },
-    })
-    const metBetaald = alleOpen.map(f => {
+    const [alleOpenRaw, alleFacturenRaw] = await Promise.all([
+      prisma.factuur.findMany({
+        where: { status: { in: ['VERZONDEN', 'VERLOPEN'] } },
+        include: {
+          klant: { select: { naam: true, bedrijf: true } },
+          inkomsten: { select: { bedrag: true } },
+        },
+        orderBy: { vervaldatum: 'asc' },
+      }),
+      prisma.factuur.findMany({
+        where: { status: { notIn: ['CONCEPT', 'GEANNULEERD'] } },
+        include: {
+          klant: { select: { naam: true, bedrijf: true } },
+          inkomsten: { select: { bedrag: true } },
+        },
+        orderBy: { datum: 'desc' },
+      }),
+    ])
+
+    const enricheer = (list: typeof alleOpenRaw) => list.map(f => {
       const reedsBetaald = f.inkomsten.reduce((s: number, i: { bedrag: number }) => s + i.bedrag, 0)
       const openstaand = Math.max(0, f.totaal - reedsBetaald)
       return { ...f, reedsBetaald, openstaand }
     })
+
+    const alleOpen = enricheer(alleOpenRaw)
+    const alleFacturen = enricheer(alleFacturenRaw)
 
     const zoekTekst = [params.omschrijving, params.mededelingen, params.betalingskenmerk]
       .filter(Boolean)
@@ -3067,12 +3081,12 @@ Gebruik null voor velden die je niet kunt vinden. Retourneer ALLEEN JSON.`
       .toLowerCase()
 
     const tol = (bedrag: number) => Math.max(bedrag * 0.02, 0.02)
-    const bedragKlopt = (f: (typeof metBetaald)[0]) =>
+    const bedragKlopt = (f: (typeof alleOpen)[0]) =>
       Math.abs(f.openstaand - params.bedrag) <= tol(f.openstaand)
 
     // Facturen waarvan het nummer voorkomt in de betaaltekst
     const nummerMatches = zoekTekst
-      ? metBetaald.filter(f => zoekTekst.includes(f.nummer.toLowerCase()))
+      ? alleOpen.filter(f => zoekTekst.includes(f.nummer.toLowerCase()))
       : []
 
     if (nummerMatches.length > 0) {
@@ -3083,18 +3097,20 @@ Gebruik null voor velden die je niet kunt vinden. Retourneer ALLEEN JSON.`
         volledigeMatches,
         alleenNummerMatches,
         bedragMatches: [],
-        alleOpen: metBetaald,
+        alleOpen,
+        alleFacturen,
       }
     }
 
     // Geen nummermatch — kijk naar bedrag
-    const bedragMatches = metBetaald.filter(bedragKlopt)
+    const bedragMatches = alleOpen.filter(bedragKlopt)
     return {
       matchType: bedragMatches.length > 0 ? 'bedrag' : 'geen',
       volledigeMatches: [],
       alleenNummerMatches: [],
       bedragMatches,
-      alleOpen: metBetaald,
+      alleOpen,
+      alleFacturen,
     }
   })
 
