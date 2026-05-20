@@ -3099,9 +3099,12 @@ Gebruik null voor velden die je niet kunt vinden. Retourneer ALLEEN JSON.`
     const bedragKlopt = (f: (typeof alleOpen)[0]) =>
       Math.abs(f.openstaand - params.bedrag) <= tol(f.openstaand)
 
-    // Facturen waarvan het nummer voorkomt in de betaaltekst
+    // Facturen waarvan het nummer voorkomt in de betaaltekst (niet als onderdeel van een langer nummer)
     const nummerMatches = zoekTekst
-      ? alleOpen.filter(f => zoekTekst.includes(f.nummer.toLowerCase()))
+      ? alleOpen.filter(f => {
+          const escaped = f.nummer.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+          return new RegExp(`(?<![0-9a-z])${escaped}(?![0-9a-z])`, 'i').test(zoekTekst)
+        })
       : []
 
     if (nummerMatches.length > 0) {
