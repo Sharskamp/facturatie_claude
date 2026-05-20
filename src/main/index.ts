@@ -816,14 +816,17 @@ function setupIpcHandlers() {
 
   ipcMain.handle('facturen:delete', async (_, id: string) => {
     await prisma.$transaction([
-      prisma.inkomen.deleteMany({ where: { factuurId: id } }),
+      prisma.inkomen.updateMany({ where: { factuurId: id }, data: { factuurId: null } }),
       prisma.factuur.delete({ where: { id } }),
     ])
     return { succes: true }
   })
 
   ipcMain.handle('facturen:deleteAll', async () => {
-    const { count } = await prisma.factuur.deleteMany()
+    const { count } = await prisma.$transaction(async (tx) => {
+      await tx.inkomen.updateMany({ where: { factuurId: { not: null } }, data: { factuurId: null } })
+      return tx.factuur.deleteMany()
+    })
     return { succes: true, count }
   })
 
