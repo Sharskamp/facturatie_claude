@@ -1,19 +1,46 @@
 import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron'
-import { join } from 'path'
+import { join, extname, basename } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { PrismaClient } from '../generated/prisma/client'
 import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3'
 import bcrypt from 'bcryptjs'
 import * as fs from 'fs'
+import * as http from 'http'
+import * as net from 'net'
+import { DOMParser } from '@xmldom/xmldom'
 import { verstuurEmail, maakFactuurEmailHtml } from '../lib/email'
-import { haalAgendaAfspraken, maakGoogleAuthUrl, wisselCodeVoorTokens, vernieuwAccessToken } from '../lib/google-calendar'
+import { haalAgendaAfspraken, haalKalenderLijst, maakGoogleAfspraak, maakGoogleAuthUrl, wisselCodeVoorTokens, vernieuwAccessToken } from '../lib/google-calendar'
 import { autoUpdater } from 'electron-updater'
 import * as os from 'os'
+import { scanBestandLokaal } from '../lib/lokale-ocr'
 
 app.setName('Streamline Facturatie')
 
 let prisma: PrismaClient
 let mainWindow: BrowserWindow | null = null
+let bankWatcher: fs.FSWatcher | null = null
+const geimporteerdeBank = new Set<string>()
+
+async function startBankWatcher() {
+  if (bankWatcher) { bankWatcher.close(); bankWatcher = null }
+  try {
+    const user = await prisma.user.findFirst()
+    const map = (user as Record<string, unknown>)?.bankAfschriftenMap as string | null
+    if (!map || !fs.existsSync(map)) return
+    bankWatcher = fs.watch(map, (_event, filename) => {
+      if (!filename) return
+      const vollePad = join(map, filename)
+      if (geimporteerdeBank.has(vollePad)) return
+      const ext = extname(filename).toLowerCase()
+      if (!['.csv', '.mt940', '.xml'].includes(ext)) return
+      setTimeout(() => {
+        if (!fs.existsSync(vollePad) || geimporteerdeBank.has(vollePad)) return
+        geimporteerdeBank.add(vollePad)
+        mainWindow?.webContents.send('bank:nieuw-bestand', { pad: vollePad, naam: filename })
+      }, 1000)
+    })
+  } catch {}
+}
 
 const logBestand = join(app.getPath('userData'), 'app.log')
 function logSchrijven(bericht: string) {
@@ -21,13 +48,262 @@ function logSchrijven(bericht: string) {
   try { fs.appendFileSync(logBestand, regel) } catch {}
 }
 
-function initPrisma() {
-  const dbPath = is.dev
+function getDbPath(): string {
+  return is.dev
     ? join(process.cwd(), 'dev.db')
     : join(app.getPath('userData'), 'adminpro.db')
+}
 
+function runMigratie(dbPath: string): void {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const Database = require('better-sqlite3')
+  const db = new Database(dbPath)
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS "Rit" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "datum" DATETIME NOT NULL,
+      "omschrijving" TEXT NOT NULL,
+      "van" TEXT NOT NULL,
+      "naar" TEXT NOT NULL,
+      "kilometers" REAL NOT NULL,
+      "retour" BOOLEAN NOT NULL DEFAULT false,
+      "zakelijk" BOOLEAN NOT NULL DEFAULT true,
+      "notities" TEXT,
+      "gefactureerd" BOOLEAN NOT NULL DEFAULT false,
+      "factuurId" TEXT,
+      "aangemaakt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "bijgewerkt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS "AuditLog" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "factuurId" TEXT,
+      "actie" TEXT NOT NULL,
+      "details" TEXT,
+      "aangemaakt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS "Product" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "naam" TEXT NOT NULL,
+      "omschrijving" TEXT,
+      "prijs" REAL NOT NULL DEFAULT 0,
+      "eenheid" TEXT DEFAULT 'stuks',
+      "btwPercentage" REAL NOT NULL DEFAULT 21,
+      "actief" BOOLEAN NOT NULL DEFAULT true,
+      "aangemaakt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "bijgewerkt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS "KlantNotitie" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "klantId" TEXT NOT NULL,
+      "tekst" TEXT NOT NULL,
+      "aangemaakt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "KlantNotitie_klantId_fkey" FOREIGN KEY ("klantId") REFERENCES "Klant" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS "Crediteur" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "leverancier" TEXT NOT NULL,
+      "factuurNummer" TEXT,
+      "factuurdatum" DATETIME NOT NULL,
+      "vervaldatum" DATETIME NOT NULL,
+      "bedrag" REAL NOT NULL,
+      "btwBedrag" REAL NOT NULL DEFAULT 0,
+      "btwPercentage" REAL NOT NULL DEFAULT 21,
+      "status" TEXT NOT NULL DEFAULT 'OPENSTAAND',
+      "betaaldOp" DATETIME,
+      "notities" TEXT,
+      "aangemaakt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "bijgewerkt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  `)
+
+  const kolomToevoegen = (tabel: string, kolom: string, definitie: string) => {
+    try { db.exec(`ALTER TABLE "${tabel}" ADD COLUMN "${kolom}" ${definitie}`) } catch {}
+  }
+
+  // User — nieuwe kolommen
+  kolomToevoegen('User', 'kmVergoeding', 'REAL NOT NULL DEFAULT 0.23')
+  kolomToevoegen('User', 'anthropicApiKey', 'TEXT')
+  kolomToevoegen('User', 'openaiApiKey', 'TEXT')
+  kolomToevoegen('User', 'aiModel', "TEXT NOT NULL DEFAULT 'claude'")
+  kolomToevoegen('User', 'donkerModus', "TEXT NOT NULL DEFAULT 'systeem'")
+  kolomToevoegen('User', 'autoStart', 'BOOLEAN NOT NULL DEFAULT false')
+  kolomToevoegen('User', 'pdfMapPad', 'TEXT')
+  kolomToevoegen('User', 'mollieApiKey', 'TEXT')
+  kolomToevoegen('User', 'emailAanhef', 'TEXT')
+  kolomToevoegen('User', 'emailAfsluitingsTekst', 'TEXT')
+  kolomToevoegen('User', 'logoBase64', 'TEXT')
+  kolomToevoegen('User', 'factuurNummerFormaat', "TEXT NOT NULL DEFAULT '{PREFIX}{JAAR}-{NNNN}'")
+  kolomToevoegen('User', 'korWaarschuwing', 'BOOLEAN NOT NULL DEFAULT true')
+  kolomToevoegen('User', 'standaardCreditnotaPrefix', "TEXT NOT NULL DEFAULT 'CN'")
+  kolomToevoegen('User', 'googleClientId', 'TEXT')
+  kolomToevoegen('User', 'googleClientSecret', 'TEXT')
+  kolomToevoegen('User', 'layoutPrimairKleur', "TEXT NOT NULL DEFAULT '#4f46e5'")
+  kolomToevoegen('User', 'layoutSecundairKleur', 'TEXT')
+  kolomToevoegen('User', 'layoutLettertype', "TEXT NOT NULL DEFAULT 'Arial, sans-serif'")
+  kolomToevoegen('User', 'layoutKoptekst', 'TEXT')
+  kolomToevoegen('User', 'layoutVoettekst', 'TEXT')
+  kolomToevoegen('User', 'layoutLogoPositie', "TEXT NOT NULL DEFAULT 'links'")
+  kolomToevoegen('User', 'layoutToonBtwNummer', 'BOOLEAN NOT NULL DEFAULT true')
+  kolomToevoegen('User', 'layoutToonKvkNummer', 'BOOLEAN NOT NULL DEFAULT true')
+  kolomToevoegen('User', 'layoutToonIban', 'BOOLEAN NOT NULL DEFAULT true')
+  kolomToevoegen('User', 'layoutToonQrCode', 'BOOLEAN NOT NULL DEFAULT true')
+  kolomToevoegen('User', 'layoutRegelSpacing', "TEXT NOT NULL DEFAULT 'normaal'")
+  kolomToevoegen('User', 'layoutLetterGrootte', "TEXT NOT NULL DEFAULT '14'")
+  kolomToevoegen('User', 'layoutLogoGrootte', "TEXT NOT NULL DEFAULT 'medium'")
+  kolomToevoegen('User', 'layoutMarges', "TEXT NOT NULL DEFAULT 'normaal'")
+  kolomToevoegen('User', 'layoutSectieVolgorde', "TEXT NOT NULL DEFAULT '[]'")
+  kolomToevoegen('User', 'onbetaaldeFactuurMelding', 'BOOLEAN NOT NULL DEFAULT true')
+  kolomToevoegen('User', 'factuurHtmlTemplate', 'TEXT')
+  kolomToevoegen('User', 'offerteGeldigheidDagen', 'INTEGER NOT NULL DEFAULT 30')
+  kolomToevoegen('User', 'verborgenPaginas', "TEXT NOT NULL DEFAULT '[]'")
+  kolomToevoegen('User', 'bankWeergaveVelden', "TEXT NOT NULL DEFAULT '[\"datum\",\"omschrijving\",\"tegenrekeningNaam\",\"tegenrekening\",\"mutatiesoort\",\"mededelingen\",\"saldoNaBoeking\",\"bedrag\",\"bron\",\"factuur\"]'")
+  kolomToevoegen('User', 'korIngangsDatum', 'TEXT')
+  kolomToevoegen('User', 'uitgavenWeergaveVelden', "TEXT NOT NULL DEFAULT '[\"datum\",\"omschrijving\",\"leverancier\",\"categorie\",\"bedrag\",\"btw\",\"totaal\"]'")
+  kolomToevoegen('User', 'spaarrekeningen', "TEXT NOT NULL DEFAULT '[]'")
+
+  // Klant — nieuwe kolommen
+  kolomToevoegen('Klant', 'betaalTermijn', 'INTEGER')
+  kolomToevoegen('Klant', 'taal', "TEXT NOT NULL DEFAULT 'nl'")
+
+  // Inkomen — nieuwe kolommen
+  kolomToevoegen('Inkomen', 'geboektAlsOmzet', 'BOOLEAN NOT NULL DEFAULT false')
+  kolomToevoegen('Inkomen', 'betalingskenmerk', 'TEXT')
+  kolomToevoegen('Uitgave', 'tegenrekening', 'TEXT')
+  // Verwijder automatisch aangemaakte inkomen-regels voor historische facturen — deze horen niet in bankimport-overzicht
+  try { db.exec(`DELETE FROM "Inkomen" WHERE "bron" = 'Historisch' AND "factuurId" IS NOT NULL`) } catch {}
+  kolomToevoegen('Inkomen', 'tegenrekeningNaam', 'TEXT')
+  kolomToevoegen('Inkomen', 'tegenrekening', 'TEXT')
+  kolomToevoegen('Inkomen', 'mutatiesoort', 'TEXT')
+  kolomToevoegen('Inkomen', 'mededelingen', 'TEXT')
+  kolomToevoegen('Inkomen', 'saldoNaBoeking', 'TEXT')
+  // Bestaande handmatige inkomenregels (niet-bank, niet-historisch, niet gekoppeld aan factuur) tellen mee als omzet
+  try { db.exec(`UPDATE "Inkomen" SET "geboektAlsOmzet" = true WHERE "factuurId" IS NULL AND ("bron" IS NULL OR ("bron" != 'Bankimport' AND "bron" != 'Historisch'))`) } catch {}
+
+  // Factuur — nieuwe kolommen
+  kolomToevoegen('Factuur', 'creditNotaVoorId', 'TEXT')
+  kolomToevoegen('Factuur', 'totaalKorting', 'REAL NOT NULL DEFAULT 0')
+  kolomToevoegen('Factuur', 'totaalKortingBedrag', 'REAL NOT NULL DEFAULT 0')
+  kolomToevoegen('Factuur', 'taal', "TEXT NOT NULL DEFAULT 'nl'")
+  kolomToevoegen('Factuur', 'mollieBetaalLink', 'TEXT')
+  kolomToevoegen('Factuur', 'molliePaymentLinkId', 'TEXT')
+  kolomToevoegen('Factuur', 'historisch', 'BOOLEAN NOT NULL DEFAULT false')
+  kolomToevoegen('Factuur', 'handmatigBedrag', 'BOOLEAN NOT NULL DEFAULT false')
+  kolomToevoegen('Factuur', 'bronBestandPad', 'TEXT')
+
+  // Offerte — nieuwe kolommen
+  kolomToevoegen('Offerte', 'totaalKorting', 'REAL NOT NULL DEFAULT 0')
+  kolomToevoegen('Offerte', 'totaalKortingBedrag', 'REAL NOT NULL DEFAULT 0')
+
+  // Categorie — nieuwe kolommen
+  kolomToevoegen('Categorie', 'standaardBtwTarief', 'REAL')
+
+  // Indexes
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Rit_datum_idx" ON "Rit"("datum")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Rit_gefactureerd_idx" ON "Rit"("gefactureerd")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "KlantNotitie_klantId_idx" ON "KlantNotitie"("klantId")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Crediteur_status_idx" ON "Crediteur"("status")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Crediteur_vervaldatum_idx" ON "Crediteur"("vervaldatum")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Factuur_klantId_idx" ON "Factuur"("klantId")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Factuur_status_idx" ON "Factuur"("status")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Factuur_datum_idx" ON "Factuur"("datum")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Factuur_status_datum_idx" ON "Factuur"("status", "datum")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Offerte_klantId_idx" ON "Offerte"("klantId")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Offerte_status_idx" ON "Offerte"("status")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Inkomen_factuurId_idx" ON "Inkomen"("factuurId")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Inkomen_datum_idx" ON "Inkomen"("datum")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Uitgave_datum_idx" ON "Uitgave"("datum")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Uitgave_categorieId_idx" ON "Uitgave"("categorieId")') } catch {}
+
+  kolomToevoegen('User', 'googlePrimaryCalendarId', 'TEXT')
+
+  db.exec(`CREATE TABLE IF NOT EXISTS "AgendaAfspraakData" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "eventId" TEXT NOT NULL,
+    "klantId" TEXT,
+    "klantIds" TEXT,
+    "locatie" TEXT,
+    "regels" TEXT,
+    "aangemaakt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`)
+  try { db.exec('ALTER TABLE "AgendaAfspraakData" ADD COLUMN "klantIds" TEXT') } catch {}
+  try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS "AgendaAfspraakData_eventId_key" ON "AgendaAfspraakData"("eventId")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "AgendaAfspraakData_eventId_idx" ON "AgendaAfspraakData"("eventId")') } catch {}
+
+  db.exec(`CREATE TABLE IF NOT EXISTS "FactuurSjabloon" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "naam" TEXT NOT NULL,
+    "regels" TEXT NOT NULL DEFAULT '[]',
+    "notities" TEXT,
+    "betalingsCondities" TEXT,
+    "btwVerlegd" BOOLEAN NOT NULL DEFAULT false,
+    "aangemaakt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "bijgewerkt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`)
+
+  db.exec(`CREATE TABLE IF NOT EXISTS "Document" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "naam" TEXT NOT NULL,
+    "bestandsPad" TEXT NOT NULL,
+    "type" TEXT NOT NULL,
+    "referentieId" TEXT NOT NULL,
+    "aangemaakt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`)
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Document_referentieId_idx" ON "Document"("referentieId")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "Document_type_referentieId_idx" ON "Document"("type", "referentieId")') } catch {}
+
+  kolomToevoegen('User', 'bankAfschriftenMap', 'TEXT')
+
+  // Seed default categories if none exist
+  const catCount = (db.prepare('SELECT COUNT(*) as count FROM "Categorie"').get() as { count: number }).count;
+  if (catCount === 0) {
+    db.exec(`
+      INSERT INTO "Categorie" (id, naam, kleur, icoon) VALUES
+      (lower(hex(randomblob(16))), 'Kantoorbenodigdheden', '#6366f1', '📎'),
+      (lower(hex(randomblob(16))), 'Reiskosten', '#f59e0b', '🚗'),
+      (lower(hex(randomblob(16))), 'Software & Abonnementen', '#3b82f6', '💻'),
+      (lower(hex(randomblob(16))), 'Marketing & Reclame', '#ec4899', '📣'),
+      (lower(hex(randomblob(16))), 'Telefoon & Internet', '#10b981', '📱'),
+      (lower(hex(randomblob(16))), 'Verzekeringen', '#8b5cf6', '🛡️'),
+      (lower(hex(randomblob(16))), 'Opleidingen & Cursussen', '#f97316', '📚'),
+      (lower(hex(randomblob(16))), 'Overig', '#6b7280', '📋')
+    `);
+  }
+
+  db.close()
+}
+
+function initPrisma() {
+  const dbPath = getDbPath()
   const adapter = new PrismaBetterSqlite3({ url: dbPath })
   prisma = new PrismaClient({ adapter })
+}
+
+async function refreshTokenIfNeeded(user: {
+  googleRefreshToken?: string | null
+  googleAccessToken?: string | null
+  googleTokenExpiry?: Date | null
+  googleClientId?: string | null
+  googleClientSecret?: string | null
+}): Promise<string | null> {
+  const tokenVerlopen = !user.googleAccessToken
+    || !user.googleTokenExpiry
+    || new Date() >= new Date(user.googleTokenExpiry.getTime() - 60_000)
+  if (!tokenVerlopen) return user.googleAccessToken!
+  if (!user.googleRefreshToken || !user.googleClientId || !user.googleClientSecret) return null
+  try {
+    const nieuwTokens = await vernieuwAccessToken(user.googleRefreshToken, user.googleClientId, user.googleClientSecret)
+    const accessToken = nieuwTokens.access_token
+    await prisma.user.updateMany({
+      data: {
+        googleAccessToken: accessToken,
+        googleTokenExpiry: nieuwTokens.expires_in
+          ? new Date(Date.now() + nieuwTokens.expires_in * 1000)
+          : new Date(Date.now() + 3600_000),
+      }
+    })
+    return accessToken
+  } catch { return null }
 }
 
 const gotTheLock = app.requestSingleInstanceLock()
@@ -67,6 +343,17 @@ function createWindow() {
 }
 
 // ── Helper functies (inline, geen externe import nodig) ──
+function vrijePoortvinden(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer()
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address() as net.AddressInfo
+      server.close(() => resolve(addr.port))
+    })
+    server.on('error', reject)
+  })
+}
+
 async function genereerNummer(prefix: string, tabel: 'factuur' | 'offerte'): Promise<string> {
   const jaar = new Date().getFullYear()
   const startsWith = `${prefix}${jaar}-`
@@ -347,6 +634,28 @@ function setupIpcHandlers() {
     return { succes: true }
   })
 
+  ipcMain.handle('klanten:deleteMetFacturen', async (_, id: string) => {
+    await prisma.$transaction([
+      prisma.factuurRegel.deleteMany({ where: { factuur: { klantId: id } } }),
+      prisma.factuur.deleteMany({ where: { klantId: id } }),
+      prisma.klant.delete({ where: { id } }),
+    ])
+    return { succes: true }
+  })
+
+  ipcMain.handle('klanten:aantalFacturen', async (_, id: string) => {
+    const aantal = await prisma.factuur.count({ where: { klantId: id } })
+    return { aantal }
+  })
+
+  ipcMain.handle('klanten:overdragenEnVerwijderen', async (_, id: string, naarKlantId: string) => {
+    await prisma.$transaction([
+      prisma.factuur.updateMany({ where: { klantId: id }, data: { klantId: naarKlantId } }),
+      prisma.klant.delete({ where: { id } }),
+    ])
+    return { succes: true }
+  })
+
   ipcMain.handle('klanten:archiveer', async (_, id: string) => {
     const klant = await prisma.klant.findUnique({ where: { id } })
     if (!klant) throw new Error('Klant niet gevonden')
@@ -474,21 +783,23 @@ function setupIpcHandlers() {
       const kortingBedrag = (subtotaal * ((data.kortingPercentage as number) ?? 0)) / 100
       subtotaal -= kortingBedrag
 
-      await prisma.factuurRegel.deleteMany({ where: { factuurId: id } })
-
-      return prisma.factuur.update({
-        where: { id },
-        data: {
-          ...data,
-          subtotaal,
-          btwBedrag,
-          kortingBedrag,
-          totaal: subtotaal + btwBedrag,
-          datum: data.datum ? new Date(data.datum as string) : undefined,
-          vervaldatum: data.vervaldatum ? new Date(data.vervaldatum as string) : undefined,
-          regels: { create: berekendeRegels as Parameters<typeof prisma.factuurRegel.create>[0]['data'][] }
-        },
-        include: { klant: true, regels: { orderBy: { volgorde: 'asc' } } }
+      // Transaction: delete old regels and update factuur atomically to prevent orphaned factuur
+      return prisma.$transaction(async (tx) => {
+        await tx.factuurRegel.deleteMany({ where: { factuurId: id } })
+        return tx.factuur.update({
+          where: { id },
+          data: {
+            ...data,
+            subtotaal,
+            btwBedrag,
+            kortingBedrag,
+            totaal: subtotaal + btwBedrag,
+            datum: data.datum ? new Date(data.datum as string) : undefined,
+            vervaldatum: data.vervaldatum ? new Date(data.vervaldatum as string) : undefined,
+            regels: { create: berekendeRegels as Parameters<typeof prisma.factuurRegel.create>[0]['data'][] }
+          },
+          include: { klant: true, regels: { orderBy: { volgorde: 'asc' } } }
+        })
       })
     }
 
@@ -504,8 +815,19 @@ function setupIpcHandlers() {
   })
 
   ipcMain.handle('facturen:delete', async (_, id: string) => {
-    await prisma.factuur.delete({ where: { id } })
+    await prisma.$transaction([
+      prisma.inkomen.updateMany({ where: { factuurId: id }, data: { factuurId: null } }),
+      prisma.factuur.delete({ where: { id } }),
+    ])
     return { succes: true }
+  })
+
+  ipcMain.handle('facturen:deleteAll', async () => {
+    const { count } = await prisma.$transaction(async (tx) => {
+      await tx.inkomen.updateMany({ where: { factuurId: { not: null } }, data: { factuurId: null } })
+      return tx.factuur.deleteMany()
+    })
+    return { succes: true, count }
   })
 
   ipcMain.handle('facturen:duplicate', async (_, id: string) => {
@@ -573,10 +895,22 @@ function setupIpcHandlers() {
         mollieBetaalLink: factuur.mollieBetaalLink,
       })
 
-      await verstuurEmail(
-        { host: user.emailSmtpHost, port: user.emailSmtpPort ?? 587, secure: user.emailSmtpSecure, user: user.emailSmtpUser, pass: user.emailSmtpPass ?? '' },
-        { van: `${user.bedrijfsnaam ?? user.naam} <${user.emailSmtpUser}>`, naar: payload.naarEmail ?? factuur.klant.email ?? '', onderwerp: `Factuur ${factuur.nummer} - ${user.bedrijfsnaam ?? user.naam}`, html: emailHtml }
-      )
+      try {
+        await verstuurEmail(
+          { host: user.emailSmtpHost, port: user.emailSmtpPort ?? 587, secure: user.emailSmtpSecure, user: user.emailSmtpUser, pass: user.emailSmtpPass ?? '' },
+          { van: `${user.bedrijfsnaam ?? user.naam} <${user.emailSmtpUser}>`, naar: payload.naarEmail ?? factuur.klant.email ?? '', onderwerp: `Factuur ${factuur.nummer} - ${user.bedrijfsnaam ?? user.naam}`, html: emailHtml }
+        )
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : 'Onbekende fout'
+        if (msg.includes('ETIMEDOUT') || msg.includes('connect')) {
+          const poort = user.emailSmtpPort ?? 587
+          throw new Error(`Verbinding met SMTP-server mislukt (${user.emailSmtpHost}:${poort}). Controleer de host, poort en firewall. Poort 25 wordt vaak geblokkeerd — gebruik poort 587 (STARTTLS) of 465 (SSL). Details: ${msg}`)
+        }
+        if (msg.includes('EAUTH') || msg.includes('535') || msg.includes('auth')) {
+          throw new Error(`SMTP-authenticatie mislukt. Controleer gebruikersnaam en wachtwoord. Details: ${msg}`)
+        }
+        throw new Error(`E-mail versturen mislukt: ${msg}`)
+      }
 
       await prisma.factuur.update({ where: { id }, data: { status: 'VERZONDEN', verzondenOp: new Date() } })
       return { succes: true, methode: 'email' }
@@ -786,11 +1120,21 @@ function setupIpcHandlers() {
   })
 
   // Inkomen
-  ipcMain.handle('inkomen:list', async (_, params?: { van?: string; tot?: string }) => {
+  ipcMain.handle('inkomen:list', async (_, params?: { van?: string; tot?: string; maand?: string }) => {
+    let vanDatum: Date | undefined
+    let totDatum: Date | undefined
+    if (params?.maand) {
+      const [jaar, mnd] = params.maand.split('-').map(Number)
+      vanDatum = new Date(jaar, mnd - 1, 1)
+      totDatum = new Date(jaar, mnd, 0, 23, 59, 59)
+    } else {
+      if (params?.van) vanDatum = new Date(params.van)
+      if (params?.tot) totDatum = new Date(params.tot)
+    }
     return prisma.inkomen.findMany({
       where: {
-        ...(params?.van ? { datum: { gte: new Date(params.van) } } : {}),
-        ...(params?.tot ? { datum: { lte: new Date(params.tot) } } : {}),
+        ...(vanDatum ? { datum: { gte: vanDatum } } : {}),
+        ...(totDatum ? { datum: { lte: totDatum } } : {}),
       },
       include: { factuur: { include: { klant: true } } },
       orderBy: { datum: 'desc' }
@@ -821,6 +1165,11 @@ function setupIpcHandlers() {
   ipcMain.handle('inkomen:delete', async (_, id: string) => {
     await prisma.inkomen.delete({ where: { id } })
     return { succes: true }
+  })
+
+  ipcMain.handle('inkomen:deleteAll', async () => {
+    const { count } = await prisma.inkomen.deleteMany()
+    return { succes: true, count }
   })
 
   // Uitgaven
@@ -856,6 +1205,11 @@ function setupIpcHandlers() {
     return { succes: true }
   })
 
+  ipcMain.handle('uitgaven:deleteAll', async () => {
+    const { count } = await prisma.uitgave.deleteMany()
+    return { succes: true, count }
+  })
+
   // Categorieën
   ipcMain.handle('categorien:list', async () => {
     return prisma.categorie.findMany({ orderBy: { naam: 'asc' } })
@@ -875,11 +1229,14 @@ function setupIpcHandlers() {
   })
 
   // Uren
+  const mapUur = (r: Record<string, unknown>) => ({ ...r, duurMinuten: (r.duur as number | null) ?? 0 })
+
   ipcMain.handle('uren:list', async (_, params?: { gefactureerd?: boolean }) => {
-    return prisma.uurregistratie.findMany({
+    const records = await prisma.uurregistratie.findMany({
       where: params?.gefactureerd !== undefined ? { gefactureerd: params.gefactureerd } : {},
       orderBy: { startTijd: 'desc' }
     })
+    return records.map(mapUur)
   })
 
   ipcMain.handle('uren:create', async (_, data: Record<string, unknown>) => {
@@ -887,16 +1244,28 @@ function setupIpcHandlers() {
     if (data.startTijd && data.eindTijd) {
       duur = Math.floor((new Date(data.eindTijd as string).getTime() - new Date(data.startTijd as string).getTime()) / 60000)
     }
-    return prisma.uurregistratie.create({
-      data: { ...data, startTijd: new Date(data.startTijd as string), eindTijd: data.eindTijd ? new Date(data.eindTijd as string) : null, duur } as Parameters<typeof prisma.uurregistratie.create>[0]['data']
+    // Strip frontend-only duurMinuten; backend owns the duur calculation
+    const { duurMinuten: _dm, ...cleanData } = data as Record<string, unknown> & { duurMinuten?: unknown }
+    void _dm
+    const record = await prisma.uurregistratie.create({
+      data: { ...cleanData, startTijd: new Date(cleanData.startTijd as string), eindTijd: cleanData.eindTijd ? new Date(cleanData.eindTijd as string) : null, duur } as Parameters<typeof prisma.uurregistratie.create>[0]['data']
     })
+    return mapUur(record as unknown as Record<string, unknown>)
   })
 
   ipcMain.handle('uren:update', async (_, id: string, data: Record<string, unknown>) => {
-    return prisma.uurregistratie.update({
+    // Recalculate duur when start/end times change
+    let duur: number | undefined
+    if (data.startTijd && data.eindTijd) {
+      duur = Math.floor((new Date(data.eindTijd as string).getTime() - new Date(data.startTijd as string).getTime()) / 60000)
+    }
+    const { duurMinuten: _dm, ...cleanData } = data as Record<string, unknown> & { duurMinuten?: unknown }
+    void _dm
+    const record = await prisma.uurregistratie.update({
       where: { id },
-      data: { ...data, startTijd: data.startTijd ? new Date(data.startTijd as string) : undefined, eindTijd: data.eindTijd ? new Date(data.eindTijd as string) : null } as Parameters<typeof prisma.uurregistratie.update>[0]['data']
+      data: { ...cleanData, startTijd: cleanData.startTijd ? new Date(cleanData.startTijd as string) : undefined, eindTijd: cleanData.eindTijd ? new Date(cleanData.eindTijd as string) : null, ...(duur !== undefined ? { duur } : {}) } as Parameters<typeof prisma.uurregistratie.update>[0]['data']
     })
+    return mapUur(record as unknown as Record<string, unknown>)
   })
 
   ipcMain.handle('uren:delete', async (_, id: string) => {
@@ -917,11 +1286,22 @@ function setupIpcHandlers() {
         korActief: true, korDrempel: true, korWaarschuwing: true,
         standaardBetaalTermijn: true, standaardBtwTarief: true,
         betalingsherinneringen: true, herinneringDagen: true,
-        googleRefreshToken: true, kmVergoeding: true, anthropicApiKey: true,
+        googleRefreshToken: true, googleClientId: true, googleClientSecret: true, googlePrimaryCalendarId: true, kmVergoeding: true,
+        anthropicApiKey: true, openaiApiKey: true, aiModel: true, factuurHtmlTemplate: true, offerteGeldigheidDagen: true,
         donkerModus: true, autoStart: true, pdfMapPad: true, mollieApiKey: true,
+        layoutPrimairKleur: true, layoutSecundairKleur: true, layoutLettertype: true,
+        layoutKoptekst: true, layoutVoettekst: true, layoutLogoPositie: true,
+        layoutToonBtwNummer: true, layoutToonKvkNummer: true, layoutToonIban: true,
+        layoutToonQrCode: true, layoutRegelSpacing: true,
+        layoutLetterGrootte: true, layoutLogoGrootte: true, layoutMarges: true, layoutSectieVolgorde: true,
+        onbetaaldeFactuurMelding: true,
+        verborgenPaginas: true,
+        bankWeergaveVelden: true,
+        uitgavenWeergaveVelden: true,
+        spaarrekeningen: true,
       }
     })
-    return { ...user, googleGekoppeld: !!user?.googleRefreshToken }
+    return { ...user, googleGekoppeld: !!user?.googleRefreshToken, googleClientId: user?.googleClientId ?? '' }
   })
 
   ipcMain.handle('instellingen:update', async (_, data: Record<string, unknown>) => {
@@ -931,12 +1311,20 @@ function setupIpcHandlers() {
       'factuurPrefix', 'offertePrefix', 'factuurVolgNummer', 'offerteVolgNummer',
       'factuurNummerFormaat', 'standaardCreditnotaPrefix',
       'emailSmtpHost', 'emailSmtpPort', 'emailSmtpUser', 'emailSmtpSecure', 'emailSmtpPass',
-      'korActief', 'korDrempel', 'korWaarschuwing',
+      'korActief', 'korDrempel', 'korWaarschuwing', 'korIngangsDatum',
       'standaardBetaalTermijn', 'standaardBtwTarief', 'betalingsCondities',
       'betalingsherinneringen', 'herinneringDagen',
-      'kmVergoeding', 'anthropicApiKey', 'mollieApiKey',
+      'kmVergoeding', 'anthropicApiKey', 'openaiApiKey', 'aiModel', 'mollieApiKey', 'googlePrimaryCalendarId',
+      'factuurHtmlTemplate', 'offerteGeldigheidDagen',
       'donkerModus', 'autoStart', 'pdfMapPad',
       'emailAanhef', 'emailAfsluitingsTekst',
+      'googleClientId', 'googleClientSecret',
+      'layoutPrimairKleur', 'layoutSecundairKleur', 'layoutLettertype',
+      'layoutKoptekst', 'layoutVoettekst', 'layoutLogoPositie',
+      'layoutToonBtwNummer', 'layoutToonKvkNummer', 'layoutToonIban',
+      'layoutToonQrCode', 'layoutRegelSpacing',
+      'layoutLetterGrootte', 'layoutLogoGrootte', 'layoutMarges', 'layoutSectieVolgorde',
+      'onbetaaldeFactuurMelding', 'verborgenPaginas', 'bankAfschriftenMap', 'bankWeergaveVelden', 'uitgavenWeergaveVelden', 'spaarrekeningen',
     ])
     const updateData: Record<string, unknown> = {}
     for (const [sleutel, waarde] of Object.entries(data)) {
@@ -945,31 +1333,97 @@ function setupIpcHandlers() {
     if (updateData.emailSmtpPass === '') delete updateData.emailSmtpPass
     if (updateData.anthropicApiKey === '') updateData.anthropicApiKey = null
     await prisma.user.updateMany({ data: updateData })
+    if ('bankAfschriftenMap' in updateData) startBankWatcher().catch(() => {})
     return { succes: true }
   })
 
   ipcMain.handle('instellingen:test-email', async (_, config: { host: string; port: number; secure: boolean; user: string; pass: string; naar: string }) => {
-    await verstuurEmail(
-      { host: config.host, port: config.port, secure: config.secure, user: config.user, pass: config.pass },
-      { van: config.user, naar: config.naar, onderwerp: 'AdminPro - Test e-mail', html: '<p>Dit is een test e-mail van AdminPro. Uw SMTP-instellingen werken correct!</p>' }
-    )
-    return { succes: true }
+    try {
+      // Port 465 = direct SSL; port 587/25/other = STARTTLS (secure must be false)
+      const secureDwingen = config.port === 465 ? true : config.port === 587 ? false : config.secure
+      const naar = config.naar?.trim() || config.user // fallback: stuur naar eigen adres
+      if (!naar) throw new Error('Geen ontvanger opgegeven. Vul je e-mailadres in bij Bedrijfsgegevens of gebruikersnaam bij SMTP.')
+      await verstuurEmail(
+        { host: config.host, port: config.port, secure: secureDwingen, user: config.user, pass: config.pass },
+        { van: config.user, naar, onderwerp: 'AdminPro - Test e-mail', html: '<p>Dit is een test e-mail van AdminPro. Uw SMTP-instellingen werken correct!</p>' }
+      )
+      return { succes: true }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Onbekende fout'
+      if (msg.includes('WRONG_VERSION') || msg.includes('SSL')) {
+        throw new Error(`SSL/TLS mismatch. Gebruik poort 465 met SSL aan, of poort 587 met SSL uit (STARTTLS). Details: ${msg}`)
+      }
+      if (msg.includes('ETIMEDOUT') || msg.includes('connect')) {
+        throw new Error(`Verbinding mislukt (${config.host}:${config.port}). Controleer host, poort en firewall. Gebruik 587 (STARTTLS) of 465 (SSL). Details: ${msg}`)
+      }
+      if (msg.includes('EAUTH') || msg.includes('535') || msg.includes('auth')) {
+        throw new Error(`Authenticatie mislukt. Controleer gebruikersnaam en wachtwoord. Details: ${msg}`)
+      }
+      throw new Error(`Test e-mail mislukt: ${msg}`)
+    }
   })
 
   ipcMain.handle('instellingen:google-auth-url', async () => {
-    return maakGoogleAuthUrl()
+    const user = await prisma.user.findFirst()
+    if (!user?.googleClientId) {
+      throw new Error('Google Client ID ontbreekt. Vul dit in bij Instellingen → Google Agenda.')
+    }
+    const port = await vrijePoortvinden()
+    const redirectUri = `http://127.0.0.1:${port}`
+    const url = maakGoogleAuthUrl(user.googleClientId, redirectUri)
+    return { url, port }
   })
 
-  ipcMain.handle('instellingen:google-koppelen', async (_, code: string) => {
-    const tokens = await wisselCodeVoorTokens(code, 'urn:ietf:wg:oauth:2.0:oob')
-    await prisma.user.updateMany({
-      data: {
-        googleRefreshToken: tokens.refresh_token,
-        googleAccessToken: tokens.access_token,
-        googleTokenExpiry: new Date(Date.now() + tokens.expires_in * 1000),
-      }
+  ipcMain.handle('instellingen:google-koppelen', async () => {
+    const user = await prisma.user.findFirst()
+    if (!user?.googleClientId || !user?.googleClientSecret) {
+      throw new Error('Google OAuth-gegevens ontbreken. Vul Client ID en Client Secret in bij Instellingen → Google Agenda.')
+    }
+    const port = await vrijePoortvinden()
+    const redirectUri = `http://127.0.0.1:${port}`
+    const authUrl = maakGoogleAuthUrl(user.googleClientId, redirectUri)
+
+    return new Promise<{ succes: true }>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        server.close()
+        reject(new Error('Time-out: geen toestemming ontvangen binnen 5 minuten.'))
+      }, 5 * 60 * 1000)
+
+      const server = http.createServer(async (req, res) => {
+        if (!req.url) return
+        const urlParams = new URL(req.url, `http://127.0.0.1:${port}`)
+        const code = urlParams.searchParams.get('code')
+        const error = urlParams.searchParams.get('error')
+
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+        if (error || !code) {
+          res.end('<html><body style="font-family:Arial;text-align:center;padding:40px"><h2>Autorisatie geweigerd</h2><p>Sluit dit venster en probeer het opnieuw in AdminPro.</p></body></html>')
+          clearTimeout(timeout)
+          server.close()
+          reject(new Error(`Google autorisatie geweigerd: ${error || 'geen code ontvangen'}`))
+          return
+        }
+        res.end('<html><body style="font-family:Arial;text-align:center;padding:40px"><h2>Verbinding geslaagd!</h2><p>Je Google Agenda is gekoppeld. Je kunt dit venster sluiten.</p></body></html>')
+        clearTimeout(timeout)
+        server.close()
+        try {
+          const tokens = await wisselCodeVoorTokens(code, redirectUri, user!.googleClientId!, user!.googleClientSecret!)
+          await prisma.user.updateMany({
+            data: {
+              googleRefreshToken: tokens.refresh_token,
+              googleAccessToken: tokens.access_token,
+              googleTokenExpiry: tokens.expires_in ? new Date(Date.now() + tokens.expires_in * 1000) : null,
+            }
+          })
+          resolve({ succes: true })
+        } catch (e) {
+          reject(e)
+        }
+      })
+
+      server.on('error', (e) => { clearTimeout(timeout); reject(e) })
+      server.listen(port, '127.0.0.1', () => { shell.openExternal(authUrl) })
     })
-    return { succes: true }
   })
 
   ipcMain.handle('instellingen:google-ontkoppelen', async () => {
@@ -980,18 +1434,171 @@ function setupIpcHandlers() {
   // Agenda
   ipcMain.handle('agenda:haal-afspraken', async (_, params?: { van?: string; tot?: string }) => {
     const user = await prisma.user.findFirst()
-    if (!user?.googleRefreshToken) return []
+    if (!user?.googleRefreshToken) return { afspraken: [], googleNietGekoppeld: true }
+    if (!user.googleClientId || !user.googleClientSecret) {
+      return { afspraken: [], fout: 'Google OAuth-gegevens ontbreken.' }
+    }
+    const accessToken = await refreshTokenIfNeeded(user)
+    if (!accessToken) return { afspraken: [], fout: 'Token vernieuwen mislukt. Koppel Google Agenda opnieuw via Instellingen.' }
 
-    let accessToken = user.googleAccessToken
-    if (!accessToken || (user.googleTokenExpiry && new Date() >= user.googleTokenExpiry)) {
-      const nieuwTokens = await vernieuwAccessToken(user.googleRefreshToken)
-      accessToken = nieuwTokens.access_token
-      await prisma.user.updateMany({
-        data: { googleAccessToken: accessToken, googleTokenExpiry: new Date(Date.now() + nieuwTokens.expires_in * 1000) }
-      })
+    const nu = new Date()
+    const vanDatum = params?.van ? new Date(params.van) : new Date(nu.getFullYear(), nu.getMonth(), 1)
+    const totDatum = params?.tot ? new Date(params.tot) : new Date(nu.getFullYear(), nu.getMonth() + 1, 0, 23, 59, 59)
+
+    try {
+      const kalenders = await haalKalenderLijst(accessToken).catch(() => [{ id: 'primary', primair: true, samenvatting: 'Primair' }])
+      const primaryId = (user as Record<string, unknown>).googlePrimaryCalendarId as string | null
+        || kalenders.find((k) => k.primair)?.id
+        || 'primary'
+      const alleAfspraken = (await Promise.all(
+        kalenders.map((kal) =>
+          haalAgendaAfspraken(accessToken, vanDatum, totDatum, kal.id)
+            .then((items) => items.map((a) => ({
+              ...a,
+              kalenderId: kal.id,
+              kalenderKleur: kal.achtergrondKleur,
+              isPrimair: kal.id === primaryId,
+            })))
+            .catch(() => [])
+        )
+      )).flat()
+      return { afspraken: alleAfspraken }
+    } catch (e) {
+      return { afspraken: [], fout: e instanceof Error ? e.message : 'Agenda ophalen mislukt' }
+    }
+  })
+
+  ipcMain.handle('agenda:haal-kalenders', async () => {
+    const user = await prisma.user.findFirst()
+    if (!user?.googleRefreshToken) return { kalenders: [], googleNietGekoppeld: true }
+    const accessToken = await refreshTokenIfNeeded(user)
+    if (!accessToken) return { kalenders: [], fout: 'Token vernieuwen mislukt.' }
+    try {
+      const kalenders = await haalKalenderLijst(accessToken)
+      const primaryId = (user as Record<string, unknown>).googlePrimaryCalendarId as string | null
+        || kalenders.find((k) => k.primair)?.id
+        || 'primary'
+      return { kalenders, primaryKalenderId: primaryId }
+    } catch (e) {
+      return { kalenders: [], fout: e instanceof Error ? e.message : 'Kalenders ophalen mislukt' }
+    }
+  })
+
+  ipcMain.handle('agenda:maak-afspraak', async (_, data: {
+    klantIds?: string[]
+    locatie?: string
+    startDatumTijd: string
+    eindDatumTijd: string
+    geheledag?: boolean
+    calendarId?: string
+    regels?: Array<{ omschrijving: string; aantal: number; eenheid?: string; prijs: number; btwPercentage: number }>
+  }) => {
+    const user = await prisma.user.findFirst()
+    if (!user?.googleRefreshToken) throw new Error('Google Agenda niet gekoppeld.')
+    const accessToken = await refreshTokenIfNeeded(user)
+    if (!accessToken) throw new Error('Token vernieuwen mislukt.')
+
+    const klantIds = data.klantIds ?? []
+    const titelDelen: string[] = []
+    if (klantIds.length > 0) {
+      const klanten = await prisma.klant.findMany({ where: { id: { in: klantIds } } })
+      // Preserve order from klantIds array
+      const gesorteerdNamen = klantIds
+        .map(id => klanten.find(k => k.id === id))
+        .filter(Boolean)
+        .map(k => k!.bedrijf || k!.naam)
+      titelDelen.push(...gesorteerdNamen)
+    }
+    if (data.locatie) titelDelen.push(data.locatie)
+    const titel = titelDelen.length > 0 ? titelDelen.join(' – ') : 'Afspraak'
+
+    const calendarId = data.calendarId
+      || (user as Record<string, unknown>).googlePrimaryCalendarId as string | null
+      || 'primary'
+
+    const eventId = await maakGoogleAfspraak(accessToken, calendarId, {
+      titel,
+      startDatumTijd: data.startDatumTijd,
+      eindDatumTijd: data.eindDatumTijd,
+      geheledag: data.geheledag,
+      locatie: data.locatie,
+    })
+
+    const { randomUUID } = require('crypto')
+    await prisma.agendaAfspraakData.create({
+      data: {
+        id: randomUUID(),
+        eventId,
+        klantId: klantIds[0] ?? null,
+        klantIds: klantIds.length > 0 ? JSON.stringify(klantIds) : null,
+        locatie: data.locatie ?? null,
+        regels: data.regels ? JSON.stringify(data.regels) : null,
+      } as Parameters<typeof prisma.agendaAfspraakData.create>[0]['data']
+    })
+
+    return { succes: true, eventId, titel }
+  })
+
+  ipcMain.handle('agenda:maak-facturen-van-afspraak', async (_, { eventId }: { eventId: string }) => {
+    const user = await prisma.user.findFirst()
+    if (!user) throw new Error('Geen gebruiker')
+
+    const afspraakData = await prisma.agendaAfspraakData.findUnique({ where: { eventId } }) as (Record<string, unknown> & { klantIds?: string; regels?: string; klantId?: string }) | null
+
+    if (!afspraakData) return { succes: false, fout: 'Geen afspraakgegevens gevonden.' }
+
+    // Parse klantIds — fall back to single klantId for backwards compatibility
+    let klantIds: string[] = []
+    if (afspraakData.klantIds) {
+      try { klantIds = JSON.parse(afspraakData.klantIds as string) } catch {}
+    } else if (afspraakData.klantId) {
+      klantIds = [afspraakData.klantId as string]
     }
 
-    return haalAgendaAfspraken(accessToken!, params?.van, params?.tot)
+    if (klantIds.length === 0) return { succes: false, fout: 'Geen klanten gekoppeld aan deze afspraak.' }
+
+    const regels: Array<{ omschrijving: string; aantal: number; prijs: number; btwPercentage: number; eenheid?: string }> = afspraakData.regels
+      ? (() => { try { return JSON.parse(afspraakData.regels as string) } catch { return [] } })()
+      : []
+
+    const aangemaakteFacturen: Array<{ id: string; nummer: string; klantNaam: string }> = []
+
+    for (const klantId of klantIds) {
+      const klant = await prisma.klant.findUnique({ where: { id: klantId } })
+      if (!klant) continue
+      const effectieveBetaalTermijn = klant.betaalTermijn ?? user.standaardBetaalTermijn
+      const nummer = await genereerNummer(user.factuurPrefix, 'factuur')
+
+      let subtotaal = 0
+      let btwBedrag = 0
+      const berekendeRegels = regels.map((regel, index) => {
+        const netto = regel.prijs * regel.aantal
+        const btw = (netto * regel.btwPercentage) / 100
+        subtotaal += netto
+        btwBedrag += btw
+        return { ...regel, kortingPercentage: 0, totaal: netto + btw, volgorde: index }
+      })
+
+      const factuur = await prisma.factuur.create({
+        data: {
+          nummer,
+          klantId,
+          datum: new Date(),
+          vervaldatum: berekenVervaldatum(effectieveBetaalTermijn),
+          subtotaal,
+          btwBedrag,
+          kortingBedrag: 0,
+          totaal: subtotaal + btwBedrag,
+          status: 'CONCEPT',
+          regels: { create: berekendeRegels },
+        },
+        select: { id: true, nummer: true },
+      })
+
+      aangemaakteFacturen.push({ id: factuur.id, nummer: factuur.nummer, klantNaam: klant.bedrijf || klant.naam })
+    }
+
+    return { succes: true, facturen: aangemaakteFacturen }
   })
 
   // ── Ritten (Kilometerregistratie) ──
@@ -1040,7 +1647,7 @@ function setupIpcHandlers() {
   })
 
   ipcMain.handle('ritten:exportCsv', async (_, csvInhoud: string) => {
-    const focusedWindow = BrowserWindow.getFocusedWindow()
+    const focusedWindow = BrowserWindow.getFocusedWindow() ?? mainWindow
     const result = await dialog.showSaveDialog(focusedWindow!, {
       defaultPath: `ritten-export-${new Date().toISOString().split('T')[0]}.csv`,
       filters: [{ name: 'CSV bestanden', extensions: ['csv'] }]
@@ -1057,13 +1664,16 @@ function setupIpcHandlers() {
   // ── PDF download ──
   ipcMain.handle('facturen:downloadPdf', async (_, factuurId: string) => {
     try {
-      const factuur = await prisma.factuur.findUnique({ where: { id: factuurId } })
+      const factuur = await prisma.factuur.findUnique({
+        where: { id: factuurId },
+        include: { regels: true, klant: true }
+      })
       if (!factuur) return { succes: false, fout: 'Factuur niet gevonden' }
 
       const parentWindow = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
       if (!parentWindow) return { succes: false, fout: 'Geen actief venster' }
 
-      const user = await prisma.user.findFirst({ select: { pdfMapPad: true } })
+      const user = await prisma.user.findFirst({ select: { pdfMapPad: true, factuurHtmlTemplate: true, logoBase64: true, naam: true, bedrijfsnaam: true, adres: true, postcode: true, stad: true, email: true, telefoon: true, website: true, kvkNummer: true, btwNummer: true, iban: true, korActief: true } })
       const pdfPad = user?.pdfMapPad
         ? join(user.pdfMapPad, `factuur-${factuur.nummer}.pdf`)
         : `factuur-${factuur.nummer}.pdf`
@@ -1074,7 +1684,6 @@ function setupIpcHandlers() {
       })
       if (result.canceled || !result.filePath) return { succes: false }
 
-      // Maak een verborgen venster met de printlayout (zelfde patroon als shell:open-print)
       const pdfWindow = new BrowserWindow({
         show: false,
         width: 900,
@@ -1087,7 +1696,43 @@ function setupIpcHandlers() {
       })
       pdfWindow.setMenuBarVisibility(false)
 
-      if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+      if (user?.factuurHtmlTemplate?.trim()) {
+        // Render custom HTML template met variabelen
+        const f = factuur as typeof factuur & { klant: { naam: string; bedrijf?: string | null; adres?: string | null; postcode?: string | null; stad?: string | null; btwNummer?: string | null }; regels: Array<{ omschrijving: string; aantal: number; eenheid?: string | null; prijs: number; btwPercentage: number; kortingPercentage: number; totaal: number }> }
+        const regelsHtml = `<table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:4px 8px;border-bottom:1px solid #ddd">Omschrijving</th><th style="text-align:center;padding:4px 8px;border-bottom:1px solid #ddd">Aantal</th><th style="text-align:right;padding:4px 8px;border-bottom:1px solid #ddd">Prijs</th><th style="text-align:right;padding:4px 8px;border-bottom:1px solid #ddd">Totaal</th></tr></thead><tbody>${f.regels.map(r => `<tr><td style="padding:4px 8px;border-bottom:1px solid #eee">${r.omschrijving}${r.eenheid ? ` / ${r.eenheid}` : ''}</td><td style="text-align:center;padding:4px 8px;border-bottom:1px solid #eee">${r.aantal}</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid #eee">€${r.prijs.toFixed(2)}</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid #eee">€${r.totaal.toFixed(2)}</td></tr>`).join('')}</tbody></table>`
+        const logoHtml = user.logoBase64 ? `<img src="${user.logoBase64}" style="max-height:80px" />` : ''
+        const vars: Record<string, string> = {
+          bedrijfsnaam: user.bedrijfsnaam ?? user.naam ?? '',
+          bedrijfAdres: user.adres ?? '',
+          bedrijfPostcode: user.postcode ?? '',
+          bedrijfStad: user.stad ?? '',
+          bedrijfEmail: user.email ?? '',
+          bedrijfTelefoon: user.telefoon ?? '',
+          bedrijfWebsite: user.website ?? '',
+          kvkNummer: user.kvkNummer ?? '',
+          btwNummer: user.btwNummer ?? '',
+          iban: user.iban ?? '',
+          logo: logoHtml,
+          factuurNummer: f.nummer,
+          factuurDatum: f.datum.toISOString().split('T')[0],
+          vervaldatum: f.vervaldatum.toISOString().split('T')[0],
+          notities: f.notities ?? '',
+          betalingsCondities: f.betalingsCondities ?? '',
+          klantNaam: f.klant.naam,
+          klantBedrijf: f.klant.bedrijf ?? '',
+          klantAdres: f.klant.adres ?? '',
+          klantPostcode: f.klant.postcode ?? '',
+          klantStad: f.klant.stad ?? '',
+          klantBtwNummer: f.klant.btwNummer ?? '',
+          subtotaal: `€${f.subtotaal.toFixed(2)}`,
+          kortingBedrag: `€${f.kortingBedrag.toFixed(2)}`,
+          btwBedrag: `€${f.btwBedrag.toFixed(2)}`,
+          totaalBedrag: `€${f.totaal.toFixed(2)}`,
+          regelsHtml,
+        }
+        const html = user.factuurHtmlTemplate.replace(/\{\{(\w+)\}\}/g, (_, k) => vars[k] ?? '')
+        await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+      } else if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
         await pdfWindow.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/#/facturen/${factuurId}/print`)
       } else {
         await pdfWindow.loadFile(join(__dirname, '../renderer/index.html'), {
@@ -1095,32 +1740,153 @@ function setupIpcHandlers() {
         })
       }
 
-      // Wacht op volledige render (fonts, afbeeldingen)
       await new Promise(resolve => setTimeout(resolve, 1500))
-
       const pdfBuffer = await pdfWindow.webContents.printToPDF({ printBackground: true, pageSize: 'A4' })
       pdfWindow.destroy()
 
       fs.writeFileSync(result.filePath, pdfBuffer)
+      await prisma.factuur.update({ where: { id: factuurId }, data: { bronBestandPad: result.filePath } })
       return { succes: true, pad: result.filePath }
     } catch (e: unknown) {
       return { succes: false, fout: e instanceof Error ? e.message : 'Onbekende fout' }
     }
   })
 
+  ipcMain.handle('facturen:openBronBestand', async (_, factuurId: string) => {
+    const factuur = await prisma.factuur.findUnique({ where: { id: factuurId }, select: { bronBestandPad: true } })
+    if (!factuur?.bronBestandPad) return { succes: false, fout: 'Geen bestand gekoppeld' }
+    if (!fs.existsSync(factuur.bronBestandPad)) return { succes: false, fout: 'Bestand niet gevonden op schijf' }
+    await shell.openPath(factuur.bronBestandPad)
+    return { succes: true }
+  })
+
   // ── Bank CSV import ──
   ipcMain.handle('bank:openBestandDialog', async () => {
-    const focusedWindow = BrowserWindow.getFocusedWindow()
+    const focusedWindow = BrowserWindow.getFocusedWindow() ?? mainWindow
     const result = await dialog.showOpenDialog(focusedWindow!, {
-      filters: [{ name: 'CSV bestanden', extensions: ['csv'] }],
+      filters: [
+        { name: 'Bank bestanden', extensions: ['csv', 'xml'] },
+        { name: 'CSV bestanden', extensions: ['csv'] },
+        { name: 'CAMT.053 XML', extensions: ['xml'] },
+      ],
       properties: ['openFile']
     })
     if (result.canceled || result.filePaths.length === 0) return null
     return result.filePaths[0]
   })
 
-  ipcMain.handle('bank:importeerCsv', async (_, { bank, filePath }: { bank: 'abn' | 'ing' | 'rabobank'; filePath: string }) => {
+  ipcMain.handle('bank:importeerCsv', async (_, { bank, filePath }: { bank: 'abn' | 'ing' | 'rabobank' | 'knab' | 'camt'; filePath: string }) => {
     const inhoud = fs.readFileSync(filePath, 'utf-8')
+
+    // ── CAMT.053 XML parser ─────────────────────────────────────────────────
+    if (bank === 'camt' || filePath.toLowerCase().endsWith('.xml')) {
+      try {
+        const doc = new DOMParser().parseFromString(inhoud, 'text/xml')
+
+        // Zoek directe child-element op tagnaam
+        function kind(parent: Element | null, tag: string): Element | null {
+          if (!parent) return null
+          for (let i = 0; i < parent.children.length; i++) {
+            const c = parent.children[i] as Element
+            if (c.localName === tag || c.tagName === tag || c.tagName.split(':').pop() === tag) return c
+          }
+          return null
+        }
+        // Diepste descendant op tagnaam
+        function zoek(node: Element | null, tag: string): Element | null {
+          if (!node) return null
+          const els = node.getElementsByTagName(tag)
+          if (els.length > 0) return els[0] as Element
+          // ook proberen met namespace-prefix
+          const all = node.getElementsByTagName('*')
+          for (let i = 0; i < all.length; i++) {
+            const el = all[i] as Element
+            if (el.localName === tag) return el
+          }
+          return null
+        }
+        function txt(node: Element | null): string {
+          return node?.textContent?.trim() ?? ''
+        }
+
+        const ntryEls = doc.getElementsByTagName('Ntry')
+        const transacties: Array<{
+          datum: string; omschrijving: string; bedrag: number; type: 'inkomen' | 'uitgave';
+          tegenrekeningNaam?: string; tegenrekening?: string; mutatiesoort?: string;
+          mededelingen?: string; betalingskenmerk?: string; saldoNaBoeking?: string
+        }> = []
+
+        for (let i = 0; i < ntryEls.length; i++) {
+          const ntry = ntryEls[i] as Element
+          const amtEl = zoek(ntry, 'Amt')
+          const bedrag = Math.abs(parseFloat(txt(amtEl).replace(',', '.')) || 0)
+          if (bedrag === 0) continue
+
+          const cdtDbt = txt(zoek(ntry, 'CdtDbtInd')).toUpperCase()
+          const isDebet = cdtDbt === 'DBIT'
+
+          // Datum: BookgDt/Dt eerst, daarna ValDt/Dt
+          const bookDt = zoek(ntry, 'BookgDt')
+          const valDt = zoek(ntry, 'ValDt')
+          const datumRaw = txt(zoek(bookDt, 'Dt')) || txt(zoek(valDt, 'Dt')) || txt(zoek(ntry, 'Dt'))
+          const datum = datumRaw.slice(0, 10)
+
+          // Mutatiesoort: BkTxCd proprietary code of domein/familie
+          const bkTxCd = zoek(ntry, 'BkTxCd')
+          const prtry = zoek(bkTxCd, 'Prtry')
+          const domn = zoek(bkTxCd, 'Domn')
+          const fmly = zoek(domn, 'Fmly')
+          const mutatiesoort = txt(zoek(prtry, 'Cd')) ||
+            [txt(zoek(domn, 'Cd')), txt(zoek(fmly, 'Cd')), txt(zoek(fmly, 'SubFmlyCd'))].filter(Boolean).join('/') ||
+            ''
+
+          // TxDtls: eerste transactiedetail
+          const txDtlsEls = ntry.getElementsByTagName('TxDtls')
+          const txDtls = txDtlsEls.length > 0 ? txDtlsEls[0] as Element : null
+
+          // Tegenpartij: Cdtr bij DBIT, Dbtr bij CRDT
+          const rltdPties = zoek(txDtls, 'RltdPties')
+          let tegenrekeningNaam = ''
+          let tegenrekening = ''
+          if (isDebet) {
+            tegenrekeningNaam = txt(zoek(zoek(rltdPties, 'Cdtr'), 'Nm'))
+            tegenrekening = txt(zoek(zoek(zoek(rltdPties, 'CdtrAcct'), 'Id'), 'IBAN'))
+          } else {
+            tegenrekeningNaam = txt(zoek(zoek(rltdPties, 'Dbtr'), 'Nm'))
+            tegenrekening = txt(zoek(zoek(zoek(rltdPties, 'DbtrAcct'), 'Id'), 'IBAN'))
+          }
+
+          // Betalingskenmerk: EndToEndId (NOTPROVIDED = leeg laten)
+          const refs = zoek(txDtls, 'Refs')
+          const e2eId = txt(zoek(refs, 'EndToEndId'))
+          const betalingskenmerk = (e2eId && e2eId !== 'NOTPROVIDED') ? e2eId : ''
+
+          // Mededelingen: RmtInf/Ustrd
+          const rmtInf = zoek(txDtls, 'RmtInf')
+          const mededelingen = txt(zoek(rmtInf, 'Ustrd')) || txt(zoek(rmtInf, 'Strd'))
+
+          // Omschrijving: AddtlNtryInf > mededelingen > tegenpartijnaam
+          const omschrijving = txt(zoek(ntry, 'AddtlNtryInf')) || mededelingen || tegenrekeningNaam || 'Onbekend'
+
+          transacties.push({
+            datum,
+            omschrijving,
+            bedrag: isDebet ? -bedrag : bedrag,
+            type: isDebet ? 'uitgave' : 'inkomen',
+            tegenrekeningNaam: tegenrekeningNaam || undefined,
+            tegenrekening: tegenrekening || undefined,
+            mutatiesoort: mutatiesoort || undefined,
+            mededelingen: (mededelingen && mededelingen !== omschrijving) ? mededelingen : undefined,
+            betalingskenmerk: betalingskenmerk || undefined,
+          })
+        }
+
+        return { transacties, autoHerkend: transacties.length > 0 }
+      } catch (err) {
+        return { transacties: [], autoHerkend: false, fout: String(err) }
+      }
+    }
+
     const regels = inhoud.split('\n').map(r => r.trim()).filter(r => r.length > 0)
 
     function parseerveldCsv(rij: string): string[] {
@@ -1146,7 +1912,7 @@ function setupIpcHandlers() {
     }
 
     const header = parseerveldCsv(regels[0]).map(h => h.replace(/"/g, '').trim())
-    const transacties: Array<{ datum: string; omschrijving: string; bedrag: number; type: 'inkomen' | 'uitgave' }> = []
+    const transacties: Array<{ datum: string; omschrijving: string; bedrag: number; type: 'inkomen' | 'uitgave'; tegenrekeningNaam?: string; tegenrekening?: string; mutatiesoort?: string; mededelingen?: string; saldoNaBoeking?: string }> = []
 
     for (let i = 1; i < regels.length; i++) {
       const velden = parseerveldCsv(regels[i]).map(v => v.replace(/"/g, '').trim())
@@ -1179,11 +1945,18 @@ function setupIpcHandlers() {
           const afBij = velden[afBijIdx]?.toLowerCase() ?? ''
           const isDebet = afBij === 'af' || afBij === 'debet' || afBij === 'd'
 
+          const tegenrekeningIdx = header.findIndex(h => h.toLowerCase().includes('tegenrekening'))
+          const mutatiesoortIdx = header.findIndex(h => h.toLowerCase().includes('mutatiesoort') || h.toLowerCase().includes('code'))
+          const mededelingenIdx = header.findIndex(h => h.toLowerCase().includes('mededelingen') || h.toLowerCase().includes('omschrijving') && h !== header[omschrijvingIdx])
+
           transacties.push({
             datum,
             omschrijving: omschrijving || 'Onbekend',
             bedrag: isDebet ? -bedragAbs : bedragAbs,
-            type: isDebet ? 'uitgave' : 'inkomen'
+            type: isDebet ? 'uitgave' : 'inkomen',
+            tegenrekening: tegenrekeningIdx >= 0 ? (velden[tegenrekeningIdx] ?? '') : '',
+            mutatiesoort: mutatiesoortIdx >= 0 ? (velden[mutatiesoortIdx] ?? '') : '',
+            mededelingen: mededelingenIdx >= 0 ? (velden[mededelingenIdx] ?? '') : '',
           })
         } else if (bank === 'rabobank') {
           // IBAN/BBAN,Munt,BIC,Volgnr,Datum,Rentedatum,Bedrag,Saldo na trn,...
@@ -1208,11 +1981,58 @@ function setupIpcHandlers() {
           const naam = velden[naamIdx] ?? ''
           const omschrijving = (velden[omschrijvingIdx] ?? naam) || 'Onbekend'
 
+          const tegenpartijNaamIdx = header.findIndex(h => h.toLowerCase().includes('tegenpartij naam'))
+          const tegenpartijRekeningIdx = header.findIndex(h => h.toLowerCase().includes('tegenpartij rekening') || h.toLowerCase().includes('tegenpartijrekening'))
+          const saldoIdx = header.findIndex(h => h.toLowerCase().includes('saldo'))
+          const kenmerkenIdx = header.findIndex(h => h.toLowerCase().includes('betalingskenmerk') || h.toLowerCase().includes('kenmerk'))
+
           transacties.push({
             datum,
             omschrijving: omschrijving || 'Onbekend',
             bedrag,
-            type: bedrag < 0 ? 'uitgave' : 'inkomen'
+            type: bedrag < 0 ? 'uitgave' : 'inkomen',
+            tegenrekeningNaam: tegenpartijNaamIdx >= 0 ? (velden[tegenpartijNaamIdx] ?? '') : (naam || ''),
+            tegenrekening: tegenpartijRekeningIdx >= 0 ? (velden[tegenpartijRekeningIdx] ?? '') : '',
+            saldoNaBoeking: saldoIdx >= 0 ? (velden[saldoIdx] ?? '') : '',
+            mededelingen: kenmerkenIdx >= 0 ? (velden[kenmerkenIdx] ?? '') : '',
+          })
+        } else if (bank === 'knab') {
+          // KNAB: Datum;Naam / Omschrijving;IBAN;Type;Af/Bij;Bedrag (EUR);Balans na boeking;...
+          const idx = (naam: string) => header.findIndex(h => h.toLowerCase().includes(naam.toLowerCase()))
+          const datumIdx = idx('datum')
+          const omschrijvingIdx = idx('naam')
+          const afBijIdx = header.findIndex(h => h.toLowerCase().replace(' ', '') === 'af/bij' || h.toLowerCase() === 'af/bij')
+          const bedragIdx = header.findIndex(h => h.toLowerCase().includes('bedrag') && !h.toLowerCase().includes('balans'))
+
+          if (datumIdx < 0 || bedragIdx < 0) continue
+
+          const datumRaw = velden[datumIdx] ?? ''
+          let datum = datumRaw
+          if (/^\d{2}-\d{2}-\d{4}$/.test(datumRaw)) {
+            const parts = datumRaw.split('-')
+            datum = `${parts[2]}-${parts[1]}-${parts[0]}`
+          } else if (/^\d{4}-\d{2}-\d{2}$/.test(datumRaw)) {
+            datum = datumRaw
+          }
+
+          const omschrijving = omschrijvingIdx >= 0 ? (velden[omschrijvingIdx] ?? '') : ''
+          const bedragStr = (velden[bedragIdx] ?? '').replace(/\./g, '').replace(',', '.')
+          const bedragAbs = Math.abs(parseFloat(bedragStr) || 0)
+          const afBij = afBijIdx >= 0 ? (velden[afBijIdx] ?? '').toLowerCase() : ''
+          const isDebet = afBij === 'af' || afBij === 'debet'
+
+          const balansIdx = header.findIndex(h => h.toLowerCase().includes('balans'))
+          const tegenpartijIdx = header.findIndex(h => h.toLowerCase().includes('tegenpartij'))
+          const typeIdx = header.findIndex(h => h.toLowerCase() === 'type')
+
+          transacties.push({
+            datum,
+            omschrijving: omschrijving || 'Onbekend',
+            bedrag: isDebet ? -bedragAbs : bedragAbs,
+            type: isDebet ? 'uitgave' : 'inkomen',
+            tegenrekeningNaam: tegenpartijIdx >= 0 ? (velden[tegenpartijIdx] ?? '') : '',
+            saldoNaBoeking: balansIdx >= 0 ? (velden[balansIdx] ?? '') : '',
+            mutatiesoort: typeIdx >= 0 ? (velden[typeIdx] ?? '') : '',
           })
         }
       } catch {
@@ -1220,7 +2040,200 @@ function setupIpcHandlers() {
       }
     }
 
+    return { transacties, headers: header, autoHerkend: transacties.length > 0 }
+  })
+
+  // Lees ruwe CSV-data terug voor handmatige kolomkoppeling
+  ipcMain.handle('bank:leesRuweData', async (_, filePath: string) => {
+    const inhoud = fs.readFileSync(filePath, 'utf-8')
+    const regels = inhoud.split('\n').map(r => r.trim()).filter(r => r.length > 0)
+
+    function parseerCsvRij(rij: string): string[] {
+      const velden: string[] = []
+      let huidig = ''
+      let inQuotes = false
+      for (let i = 0; i < rij.length; i++) {
+        const c = rij[i]
+        if (c === '"') { inQuotes = !inQuotes }
+        else if ((c === ',' || c === ';') && !inQuotes) { velden.push(huidig.trim()); huidig = '' }
+        else { huidig += c }
+      }
+      velden.push(huidig.trim())
+      return velden.map(v => v.replace(/^"|"$/g, '').trim())
+    }
+
+    const headers = regels[0] ? parseerCsvRij(regels[0]) : []
+    const alleRijen = regels.slice(1).map(r => parseerCsvRij(r)).filter(r => r.some(v => v))
+    const preview = alleRijen.slice(0, 5)
+    return { headers, preview, alleRijen }
+  })
+
+  // Importeer transacties met handmatige kolomkoppeling
+  ipcMain.handle('bank:importeerMetMapping', async (_, { alleRijen, mapping, datumFormaat }: {
+    alleRijen: string[][]
+    mapping: { datum: number; omschrijving: number; bedrag: number; afBij?: number; debitCredit?: number }
+    datumFormaat?: string
+  }) => {
+    function parseerDatum(raw: string): string {
+      const s = raw.trim()
+      if (/^\d{8}$/.test(s)) return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`
+      if (/^\d{2}-\d{2}-\d{4}$/.test(s)) { const [d, m, y] = s.split('-'); return `${y}-${m}-${d}` }
+      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s
+      if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) { const [d, m, y] = s.split('/'); return `${y}-${m}-${d}` }
+      if (/^\d{2}-\d{2}-\d{2}$/.test(s) && datumFormaat === 'DD-MM-YY') {
+        const [d, m, y] = s.split('-')
+        return `20${y}-${m}-${d}`
+      }
+      return s
+    }
+
+    const transacties: Array<{ datum: string; omschrijving: string; bedrag: number; type: 'inkomen' | 'uitgave'; tegenrekeningNaam?: string; tegenrekening?: string; mutatiesoort?: string; mededelingen?: string; saldoNaBoeking?: string }> = []
+    for (const rij of alleRijen) {
+      try {
+        const datum = parseerDatum(rij[mapping.datum] ?? '')
+        const omschrijving = (rij[mapping.omschrijving] ?? '').trim() || 'Onbekend'
+        const bedragStr = (rij[mapping.bedrag] ?? '').replace(/\./g, '').replace(',', '.')
+        let bedrag = parseFloat(bedragStr) || 0
+
+        if (mapping.afBij !== undefined) {
+          const afBijWaarde = (rij[mapping.afBij] ?? '').toLowerCase().trim()
+          if (afBijWaarde === 'af' || afBijWaarde === 'd' || afBijWaarde === 'debet') {
+            bedrag = -Math.abs(bedrag)
+          } else {
+            bedrag = Math.abs(bedrag)
+          }
+        } else if (mapping.debitCredit !== undefined) {
+          const dc = (rij[mapping.debitCredit] ?? '').toLowerCase().trim()
+          if (dc === 'debit' || dc === 'd') bedrag = -Math.abs(bedrag)
+          else bedrag = Math.abs(bedrag)
+        }
+
+        if (!datum) continue
+        transacties.push({ datum, omschrijving, bedrag, type: bedrag < 0 ? 'uitgave' : 'inkomen' })
+      } catch { continue }
+    }
     return transacties
+  })
+
+  ipcMain.handle('bank:controleerDuplicaten', async () => {
+    const [latestInkomen, latestUitgave] = await Promise.all([
+      prisma.inkomen.findFirst({ orderBy: { datum: 'desc' }, select: { datum: true } }),
+      prisma.uitgave.findFirst({ orderBy: { datum: 'desc' }, select: { datum: true } }),
+    ])
+    const dates = [latestInkomen?.datum, latestUitgave?.datum].filter(Boolean) as Date[]
+    if (dates.length === 0) return { latesteDatum: null }
+    const max = new Date(Math.max(...dates.map(d => d.getTime())))
+    return { latesteDatum: max.toISOString().split('T')[0] }
+  })
+
+  // ── Historische facturen importeren ──
+  ipcMain.handle('facturen:importeerHistorisch', async (_, payload: {
+    nummer: string
+    klantId: string
+    datum: string
+    vervaldatum: string
+    status: string
+    subtotaal: number
+    btwBedrag: number
+    totaal: number
+    notities?: string
+    betalingsCondities?: string
+    btwVerlegd?: boolean
+    verzondenOp?: string
+    betaaldOp?: string
+    handmatigBedrag: boolean
+    bronBestandPad?: string
+    regels: Array<{
+      omschrijving: string
+      aantal: number
+      prijs: number
+      btwPercentage: number
+      kortingPercentage?: number
+      totaal: number
+    }>
+  }) => {
+    const bestaand = await prisma.factuur.findUnique({ where: { nummer: payload.nummer } })
+    if (bestaand) throw new Error(`Factuurnummer ${payload.nummer} bestaat al in het systeem.`)
+
+    let opgeslagenBronPad: string | undefined
+    if (payload.bronBestandPad && fs.existsSync(payload.bronBestandPad)) {
+      const bijlagenMap = join(app.getPath('userData'), 'bijlagen')
+      if (!fs.existsSync(bijlagenMap)) fs.mkdirSync(bijlagenMap, { recursive: true })
+      const ext = extname(payload.bronBestandPad)
+      const doelBestand = join(bijlagenMap, `${payload.nummer.replace(/[^a-zA-Z0-9-_]/g, '_')}${ext}`)
+      fs.copyFileSync(payload.bronBestandPad, doelBestand)
+      opgeslagenBronPad = doelBestand
+    }
+
+    const factuur = await prisma.factuur.create({
+      data: {
+        nummer: payload.nummer,
+        klantId: payload.klantId,
+        datum: new Date(payload.datum),
+        vervaldatum: new Date(payload.vervaldatum),
+        status: payload.status,
+        subtotaal: payload.subtotaal,
+        btwBedrag: payload.btwBedrag,
+        kortingBedrag: 0,
+        kortingPercentage: 0,
+        totaal: payload.totaal,
+        notities: payload.notities,
+        betalingsCondities: payload.betalingsCondities,
+        btwVerlegd: payload.btwVerlegd ?? false,
+        historisch: true,
+        handmatigBedrag: payload.handmatigBedrag,
+        bronBestandPad: opgeslagenBronPad,
+        verzondenOp: payload.verzondenOp ? new Date(payload.verzondenOp) : undefined,
+        regels: {
+          create: payload.regels.map((r, i) => ({
+            omschrijving: r.omschrijving,
+            aantal: r.aantal,
+            prijs: r.prijs,
+            btwPercentage: r.btwPercentage,
+            kortingPercentage: r.kortingPercentage ?? 0,
+            totaal: r.totaal,
+            volgorde: i,
+          }))
+        }
+      },
+      include: { klant: true, regels: true }
+    })
+
+    return factuur
+  })
+
+  // Haal onbetaalde facturen op voor meldingen
+  ipcMain.handle('facturen:onbetaaldeMeldingen', async () => {
+    const user = await prisma.user.findFirst({ select: { onbetaaldeFactuurMelding: true } })
+    if (!user?.onbetaaldeFactuurMelding) return { facturen: [] }
+
+    const nu = new Date()
+    const over7Dagen = new Date(nu.getTime() + 7 * 24 * 60 * 60 * 1000)
+
+    const facturen = await prisma.factuur.findMany({
+      where: {
+        status: { in: ['VERZONDEN', 'VERLOPEN'] },
+        OR: [
+          { vervaldatum: { lt: nu } }, // al vervallen
+          { vervaldatum: { lte: over7Dagen, gte: nu } }, // vervalt binnen 7 dagen
+        ]
+      },
+      include: { klant: true },
+      orderBy: { vervaldatum: 'asc' },
+    })
+
+    return {
+      facturen: facturen.map(f => ({
+        id: f.id,
+        nummer: f.nummer,
+        klantNaam: f.klant.bedrijf ?? f.klant.naam,
+        totaal: f.totaal,
+        vervaldatum: f.vervaldatum.toISOString(),
+        status: f.status,
+        dagenTeLaat: f.vervaldatum < nu ? Math.floor((nu.getTime() - f.vervaldatum.getTime()) / 86400000) : 0,
+        dagenTotVervaldatum: f.vervaldatum >= nu ? Math.ceil((f.vervaldatum.getTime() - nu.getTime()) / 86400000) : 0,
+      }))
+    }
   })
 
   // ── Uren → Factuur ──
@@ -1284,19 +2297,19 @@ function setupIpcHandlers() {
 
   // ── Bon uploaden (Uitgaven) ──
   ipcMain.handle('uitgaven:uploadBon', async (_, { uitgaveId }: { uitgaveId: string }) => {
-    const focusedWindow = BrowserWindow.getFocusedWindow()
-    const result = await dialog.showOpenDialog(focusedWindow!, {
-      filters: [{ name: 'Afbeeldingen', extensions: ['jpg', 'jpeg', 'png', 'pdf', 'webp'] }],
+    const venster = BrowserWindow.getFocusedWindow() ?? mainWindow
+    const result = await dialog.showOpenDialog(venster!, {
+      filters: [{ name: 'Afbeeldingen & PDF', extensions: ['jpg', 'jpeg', 'png', 'pdf', 'webp'] }],
       properties: ['openFile']
     })
     if (result.canceled || result.filePaths.length === 0) return { succes: false }
 
     const bronPad = result.filePaths[0]
-    const bestandsnaam = bronPad.split('/').pop() ?? bronPad.split('\\').pop() ?? 'bon'
+    const bestandsnaam = basename(bronPad)
     const bonMap = join(app.getPath('userData'), 'bonnen')
     if (!fs.existsSync(bonMap)) fs.mkdirSync(bonMap, { recursive: true })
 
-    const doelPad = join(bonMap, `${uitgaveId}-${bestandsnaam}`)
+    const doelPad = join(bonMap, `${uitgaveId}-${Date.now()}-${bestandsnaam}`)
     fs.copyFileSync(bronPad, doelPad)
 
     await prisma.uitgave.update({ where: { id: uitgaveId }, data: { bonBestand: doelPad } })
@@ -1306,6 +2319,26 @@ function setupIpcHandlers() {
   ipcMain.handle('uitgaven:openBon', async (_, { pad }: { pad: string }) => {
     await shell.openPath(pad)
     return { succes: true }
+  })
+
+  // Opens a file dialog and copies the selected file to the bonnen folder.
+  // Does NOT require an existing uitgaveId — used for scanning before saving.
+  ipcMain.handle('uitgaven:kiesBon', async () => {
+    const venster = BrowserWindow.getFocusedWindow() ?? mainWindow
+    const result = await dialog.showOpenDialog(venster!, {
+      filters: [{ name: 'Afbeeldingen & PDF', extensions: ['jpg', 'jpeg', 'png', 'pdf', 'webp'] }],
+      properties: ['openFile']
+    })
+    if (result.canceled || result.filePaths.length === 0) return { succes: false }
+
+    const bronPad = result.filePaths[0]
+    const bestandsnaam = basename(bronPad)
+    const bonMap = join(app.getPath('userData'), 'bonnen')
+    if (!fs.existsSync(bonMap)) fs.mkdirSync(bonMap, { recursive: true })
+
+    const doelPad = join(bonMap, `tmp-${Date.now()}-${bestandsnaam}`)
+    fs.copyFileSync(bronPad, doelPad)
+    return { succes: true, pad: doelPad }
   })
 
   // ── Producten (catalogus) ──
@@ -1379,15 +2412,34 @@ function setupIpcHandlers() {
   // ── Betalingsherinneringen sturen ──
   ipcMain.handle('facturen:stuurHerinneringen', async () => stuurHerinneringen())
 
-  ipcMain.handle('uitgaven:scanBon', async (_, { bonPad }: { bonPad: string }) => {
+  ipcMain.handle('uitgaven:scanBon', async (_, { bonPad, lokaal }: { bonPad: string; lokaal?: boolean }) => {
     const user = await prisma.user.findFirst()
-    if (!user?.anthropicApiKey) {
-      return { error: 'Geen Anthropic API sleutel ingesteld. Ga naar Instellingen > AI.' }
+    const model = user?.aiModel ?? 'claude'
+    const eigenBedrijfsnaam = user?.bedrijfsnaam ?? undefined
+    const eigenEmail = user?.email ?? undefined
+
+    // Lokale OCR pad (geen API nodig)
+    if (lokaal) {
+      const result = await scanBestandLokaal(bonPad, { eigenBedrijfsnaam, eigenEmail })
+      if (result.error) return result
+      return {
+        bedrag: result.totaal ?? null,
+        leverancier: result.klantNaam ?? null,
+        datum: result.datum ?? null,
+        omschrijving: result.omschrijving ?? null,
+      }
     }
 
     const ext = bonPad.split('.').pop()?.toLowerCase() ?? ''
+    // PDF nu ook ondersteunen via lokale OCR als fallback
     if (ext === 'pdf') {
-      return { error: 'PDF scanning niet ondersteund. Gebruik een afbeelding (JPG, PNG, WEBP).' }
+      const result = await scanBestandLokaal(bonPad, { eigenBedrijfsnaam })
+      if (result.error) return result
+      return {
+        bedrag: result.totaal ?? null,
+        leverancier: result.klantNaam ?? null,
+        datum: result.datum ?? null,
+      }
     }
 
     let mediaType: string
@@ -1402,6 +2454,125 @@ function setupIpcHandlers() {
     }
 
     const base64 = fs.readFileSync(bonPad).toString('base64')
+    const prompt = 'Dit is een kassabon of factuur. Extraheer: 1) totaalbedrag (alleen getal, geen €-teken, punt als decimaalscheidingsteken), 2) naam van de winkel/leverancier, 3) datum (formaat YYYY-MM-DD). Reageer ALLEEN met JSON: {"bedrag": 12.50, "leverancier": "Albert Heijn", "datum": "2025-03-15"}. Als je een waarde niet kunt vinden, gebruik null.'
+
+    const parseResultaat = (tekst: string) => {
+      const schoon = tekst.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
+      const parsed = JSON.parse(schoon) as { bedrag?: number | null; leverancier?: string | null; datum?: string | null }
+      return { bedrag: parsed.bedrag ?? null, leverancier: parsed.leverancier ?? null, datum: parsed.datum ?? null }
+    }
+
+    try {
+      if (model === 'openai') {
+        if (!user?.openaiApiKey) return { error: 'Geen OpenAI API sleutel ingesteld. Ga naar Instellingen > AI.' }
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${user.openaiApiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'gpt-4o-mini',
+            max_tokens: 256,
+            messages: [{
+              role: 'user',
+              content: [
+                { type: 'image_url', image_url: { url: `data:${mediaType};base64,${base64}`, detail: 'low' } },
+                { type: 'text', text: prompt }
+              ]
+            }]
+          })
+        })
+        if (!response.ok) {
+          const fout = await response.text()
+          return { error: `OpenAI fout (${response.status}): ${fout.slice(0, 200)}` }
+        }
+        const data = await response.json() as { choices: Array<{ message: { content: string } }> }
+        return parseResultaat(data.choices?.[0]?.message?.content ?? '{}')
+      } else {
+        // Claude (standaard)
+        if (!user?.anthropicApiKey) return { error: 'Geen Anthropic API sleutel ingesteld. Ga naar Instellingen > AI.' }
+        const response = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'x-api-key': user.anthropicApiKey,
+            'anthropic-version': '2023-06-01',
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'claude-haiku-4-5-20251001',
+            max_tokens: 256,
+            system: 'Je bent een assistent die bonnen uitleest. Reageer alleen met het gevraagde JSON-formaat, niets anders.',
+            messages: [{
+              role: 'user',
+              content: [
+                { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
+                { type: 'text', text: prompt }
+              ]
+            }]
+          })
+        })
+        if (!response.ok) {
+          const fout = await response.text()
+          return { error: `Claude fout (${response.status}): ${fout.slice(0, 200)}` }
+        }
+        const apiResp = await response.json() as { content: Array<{ text: string }> }
+        return parseResultaat(apiResp.content?.[0]?.text ?? '{}')
+      }
+    } catch (e: unknown) {
+      return { error: e instanceof Error ? e.message : 'Onbekende fout bij scannen' }
+    }
+  })
+
+  // ── Kies meerdere PDF/afbeelding bestanden voor bulk import ──
+  ipcMain.handle('facturen:kiesBestanden', async () => {
+    const venster = BrowserWindow.getFocusedWindow() ?? mainWindow
+    const result = await dialog.showOpenDialog(venster!, {
+      filters: [{ name: 'Facturen (PDF/afbeelding)', extensions: ['pdf', 'jpg', 'jpeg', 'png', 'webp'] }],
+      properties: ['openFile', 'multiSelections'],
+    })
+    if (result.canceled || result.filePaths.length === 0) return []
+    return result.filePaths
+  })
+
+  // ── Factuur PDF/afbeelding scannen met AI ──
+  ipcMain.handle('facturen:scanPdf', async (_, { pad }: { pad: string }) => {
+    const user = await prisma.user.findFirst()
+    if (!user?.anthropicApiKey) return { error: 'Geen Anthropic API sleutel ingesteld. Ga naar Instellingen > AI.' }
+
+    const ext = pad.split('.').pop()?.toLowerCase() ?? ''
+    const base64 = fs.readFileSync(pad).toString('base64')
+
+    type ContentBlock =
+      | { type: 'document'; source: { type: 'base64'; media_type: 'application/pdf'; data: string } }
+      | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
+      | { type: 'text'; text: string }
+
+    let mediaBlock: ContentBlock
+    if (ext === 'pdf') {
+      mediaBlock = { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } }
+    } else if (ext === 'jpg' || ext === 'jpeg') {
+      mediaBlock = { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: base64 } }
+    } else if (ext === 'png') {
+      mediaBlock = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: base64 } }
+    } else if (ext === 'webp') {
+      mediaBlock = { type: 'image', source: { type: 'base64', media_type: 'image/webp', data: base64 } }
+    } else {
+      return { error: `Bestandstype .${ext} wordt niet ondersteund. Gebruik PDF, JPG, PNG of WEBP.` }
+    }
+
+    const prompt = `Dit is een factuur. Extraheer de volgende gegevens en retourneer ALLEEN geldige JSON zonder uitleg:
+{
+  "nummer": "factuurnummer als string",
+  "klantNaam": "naam van de klant (bedrijf of persoon) aan wie de factuur gericht is",
+  "klantEmail": "e-mailadres van de klant indien zichtbaar, anders null",
+  "klantAdres": "adres van de klant indien zichtbaar, anders null",
+  "datum": "factuurdatum in YYYY-MM-DD formaat",
+  "vervaldatum": "vervaldatum in YYYY-MM-DD formaat, anders null",
+  "subtotaal": getal zonder valuta,
+  "btwBedrag": getal zonder valuta,
+  "totaal": totaalbedrag als getal zonder valuta,
+  "status": "BETAALD of VERZONDEN",
+  "notities": "eventuele notities of referentie, anders null"
+}
+Gebruik null voor velden die je niet kunt vinden. Retourneer ALLEEN JSON.`
 
     try {
       const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -1413,33 +2584,49 @@ function setupIpcHandlers() {
         },
         body: JSON.stringify({
           model: 'claude-haiku-4-5-20251001',
-          max_tokens: 256,
-          system: 'Je bent een assistent die bonnen uitleest. Reageer alleen met het gevraagde JSON-formaat, niets anders.',
-          messages: [{
-            role: 'user',
-            content: [
-              { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
-              { type: 'text', text: 'Dit is een kassabon of factuur. Extraheer: 1) totaalbedrag (alleen getal, geen €-teken, punt als decimaalscheidingsteken), 2) naam van de winkel/leverancier, 3) datum (formaat YYYY-MM-DD). Reageer ALLEEN met JSON: {"bedrag": 12.50, "leverancier": "Albert Heijn", "datum": "2025-03-15"}. Als je een waarde niet kunt vinden, gebruik null.' }
-            ]
-          }]
+          max_tokens: 512,
+          system: 'Je bent een assistent die facturen uitleest. Reageer ALLEEN met het gevraagde JSON-object, niets anders.',
+          messages: [{ role: 'user', content: [mediaBlock, { type: 'text', text: prompt }] }]
         })
       })
-
       if (!response.ok) {
         const fout = await response.text()
-        return { error: `API fout (${response.status}): ${fout.slice(0, 200)}` }
+        return { error: `Claude fout (${response.status}): ${fout.slice(0, 200)}` }
       }
-
       const apiResp = await response.json() as { content: Array<{ text: string }> }
       const tekst = apiResp.content?.[0]?.text ?? '{}'
-
-      // Strip mogelijke markdown code fences
-      const schoonTekst = tekst.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
-      const parsed = JSON.parse(schoonTekst) as { bedrag?: number | null; leverancier?: string | null; datum?: string | null }
-      return { bedrag: parsed.bedrag ?? null, leverancier: parsed.leverancier ?? null, datum: parsed.datum ?? null }
+      const schoon = tekst.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
+      const parsed = JSON.parse(schoon) as {
+        nummer?: string | null; klantNaam?: string | null; klantEmail?: string | null;
+        klantAdres?: string | null; datum?: string | null; vervaldatum?: string | null;
+        subtotaal?: number | null; btwBedrag?: number | null; totaal?: number | null;
+        status?: string | null; notities?: string | null;
+      }
+      return {
+        nummer: parsed.nummer ?? null,
+        klantNaam: parsed.klantNaam ?? null,
+        klantEmail: parsed.klantEmail ?? null,
+        klantAdres: parsed.klantAdres ?? null,
+        datum: parsed.datum ?? null,
+        vervaldatum: parsed.vervaldatum ?? null,
+        subtotaal: parsed.subtotaal ?? null,
+        btwBedrag: parsed.btwBedrag ?? null,
+        totaal: parsed.totaal ?? null,
+        status: parsed.status ?? 'BETAALD',
+        notities: parsed.notities ?? null,
+      }
     } catch (e: unknown) {
       return { error: e instanceof Error ? e.message : 'Onbekende fout bij scannen' }
     }
+  })
+
+  // ── Factuur/bon scannen zonder cloud AI (lokale OCR) ──
+  ipcMain.handle('facturen:scanPdfLokaal', async (_, { pad }: { pad: string }) => {
+    const user = await prisma.user.findFirst()
+    return scanBestandLokaal(pad, {
+      eigenBedrijfsnaam: user?.bedrijfsnaam ?? undefined,
+      eigenEmail: user?.email ?? undefined,
+    })
   })
 
   // ── Vaste Activa ──
@@ -1469,7 +2656,8 @@ function setupIpcHandlers() {
   ipcMain.handle('audit:list', async (_, factuurId: string) => {
     return prisma.auditLog.findMany({
       where: { factuurId },
-      orderBy: { aangemaakt: 'desc' }
+      orderBy: { aangemaakt: 'desc' },
+      take: 100
     })
   })
 
@@ -1660,47 +2848,650 @@ function setupIpcHandlers() {
       throw new Error(fout.detail || fout.message || `Mollie API fout (${response.status})`)
     }
 
-    const data = await response.json() as { _links?: { paymentLink?: { href: string } } }
+    const data = await response.json() as { id?: string; _links?: { paymentLink?: { href: string } } }
     const betaalLink = data._links?.paymentLink?.href ?? ''
+    const paymentLinkId = data.id ?? ''
 
-    await prisma.factuur.update({ where: { id: factuurId }, data: { mollieBetaalLink: betaalLink } })
+    await prisma.factuur.update({ where: { id: factuurId }, data: { mollieBetaalLink: betaalLink, molliePaymentLinkId: paymentLinkId } })
     return { url: betaalLink }
+  })
+
+  ipcMain.handle('mollie:checkBetalingStatus', async (_, factuurId: string) => {
+    const user = await prisma.user.findFirst()
+    if (!user?.mollieApiKey) return { fout: 'Geen Mollie API-sleutel geconfigureerd' }
+
+    const factuur = await prisma.factuur.findUnique({ where: { id: factuurId } })
+    if (!factuur?.molliePaymentLinkId) return { fout: 'Geen Mollie betaallink-ID gevonden. Maak eerst een betaallink aan.' }
+
+    const response = await fetch(`https://api.mollie.com/v2/payment-links/${factuur.molliePaymentLinkId}`, {
+      headers: { 'Authorization': `Bearer ${user.mollieApiKey}` }
+    })
+    if (!response.ok) return { fout: `Mollie API fout (${response.status})` }
+
+    const link = await response.json() as { paidAt?: string | null }
+    if (link.paidAt) {
+      await prisma.factuur.update({ where: { id: factuurId }, data: { status: 'BETAALD' } })
+      return { betaald: true }
+    }
+    return { betaald: false }
+  })
+
+  // ── Crediteuren ──
+  ipcMain.handle('crediteuren:list', async (_, params?: { status?: string }) => {
+    return prisma.crediteur.findMany({
+      where: params?.status ? { status: params.status } : undefined,
+      orderBy: { vervaldatum: 'asc' }
+    })
+  })
+
+  ipcMain.handle('crediteuren:create', async (_, data: Record<string, unknown>) => {
+    return prisma.crediteur.create({
+      data: {
+        ...data,
+        factuurdatum: new Date(data.factuurdatum as string),
+        vervaldatum: new Date(data.vervaldatum as string),
+      } as Parameters<typeof prisma.crediteur.create>[0]['data']
+    })
+  })
+
+  ipcMain.handle('crediteuren:update', async (_, id: string, data: Record<string, unknown>) => {
+    return prisma.crediteur.update({
+      where: { id },
+      data: {
+        ...data,
+        factuurdatum: data.factuurdatum ? new Date(data.factuurdatum as string) : undefined,
+        vervaldatum: data.vervaldatum ? new Date(data.vervaldatum as string) : undefined,
+        betaaldOp: data.betaaldOp ? new Date(data.betaaldOp as string) : (data.betaaldOp === null ? null : undefined),
+      } as Parameters<typeof prisma.crediteur.update>[0]['data']
+    })
+  })
+
+  ipcMain.handle('crediteuren:delete', async (_, id: string) => {
+    await prisma.crediteur.delete({ where: { id } })
+    return { succes: true }
+  })
+
+  // ── Klant Notities ──
+  ipcMain.handle('klanten:notities:list', async (_, klantId: string) => {
+    return prisma.klantNotitie.findMany({
+      where: { klantId },
+      orderBy: { aangemaakt: 'desc' }
+    })
+  })
+
+  ipcMain.handle('klanten:notities:create', async (_, data: { klantId: string; tekst: string }) => {
+    return prisma.klantNotitie.create({ data })
+  })
+
+  ipcMain.handle('klanten:notities:delete', async (_, id: string) => {
+    await prisma.klantNotitie.delete({ where: { id } })
+    return { succes: true }
+  })
+
+  // ── Ritten doorbelasten ──
+  ipcMain.handle('ritten:doorbelasten', async (_, payload: { klantId: string; ritIds: string[] }) => {
+    const user = await prisma.user.findFirst()
+    const klant = await prisma.klant.findUnique({ where: { id: payload.klantId } })
+    if (!user || !klant) throw new Error('Gebruiker of klant niet gevonden')
+
+    const ritten = await prisma.rit.findMany({ where: { id: { in: payload.ritIds } }, orderBy: { datum: 'asc' } })
+    if (!ritten.length) throw new Error('Geen ritten geselecteerd')
+
+    const kmVergoeding = user.kmVergoeding ?? 0.23
+    const regels = ritten.map(r => {
+      const km = r.retour ? r.kilometers * 2 : r.kilometers
+      return {
+        omschrijving: `${r.van} → ${r.naar}${r.retour ? ' (retour)' : ''} — ${r.omschrijving}`,
+        aantal: km,
+        eenheid: 'km',
+        prijs: kmVergoeding,
+        btwPercentage: 0,
+        kortingPercentage: 0,
+        totaal: km * kmVergoeding,
+        volgorde: 0,
+      }
+    })
+
+    const subtotaal = regels.reduce((s, r) => s + r.totaal, 0)
+    const volgNummer = user.factuurVolgNummer
+    const jaar = new Date().getFullYear()
+    const nummerFormaat = user.factuurNummerFormaat ?? '{PREFIX}{JAAR}-{NNNN}'
+    const nummer = nummerFormaat
+      .replace('{PREFIX}', user.factuurPrefix ?? 'F')
+      .replace('{JAAR}', String(jaar))
+      .replace('{NNNN}', String(volgNummer).padStart(4, '0'))
+      .replace('{NN}', String(volgNummer).padStart(2, '0'))
+
+    const vervaldatum = new Date()
+    vervaldatum.setDate(vervaldatum.getDate() + (klant.betaalTermijn ?? user.standaardBetaalTermijn ?? 30))
+
+    const factuur = await prisma.factuur.create({
+      data: {
+        nummer,
+        klantId: payload.klantId,
+        status: 'CONCEPT',
+        datum: new Date(),
+        vervaldatum,
+        subtotaal,
+        kortingBedrag: 0,
+        kortingPercentage: 0,
+        btwBedrag: 0,
+        totaal: subtotaal,
+        regels: { create: regels },
+      }
+    })
+
+    await prisma.user.update({ where: { id: user.id }, data: { factuurVolgNummer: volgNummer + 1 } })
+    await prisma.rit.updateMany({ where: { id: { in: payload.ritIds } }, data: { gefactureerd: true, factuurId: factuur.id } })
+
+    return { factuurId: factuur.id, nummer: factuur.nummer }
+  })
+
+  // ── Offertes auto-verlopen ──
+  ipcMain.handle('offertes:checkVerlopen', async () => {
+    const nu = new Date()
+    const resultaat = await prisma.offerte.updateMany({
+      where: { status: 'VERZONDEN', geldigTot: { lt: nu } },
+      data: { status: 'VERLOPEN' }
+    })
+    return { bijgewerkt: resultaat.count }
+  })
+
+  // ── Rapport: BTW export ──
+  ipcMain.handle('rapport:exportBtw', async (_, params: { van: string; tot: string; kwartaal?: string }) => {
+    const van = new Date(params.van)
+    const tot = new Date(params.tot)
+    tot.setHours(23, 59, 59, 999)
+
+    const [facturen, uitgaven] = await Promise.all([
+      prisma.factuur.findMany({
+        where: { status: { in: ['BETAALD', 'VERZONDEN'] }, datum: { gte: van, lte: tot } },
+        include: { regels: true }
+      }),
+      prisma.uitgave.findMany({
+        where: { datum: { gte: van, lte: tot }, zakelijk: true },
+        include: { categorie: true }
+      })
+    ])
+
+    const bom = '﻿'
+    const sep = ';'
+    const esc = (v: unknown) => {
+      const s = String(v ?? '')
+      return s.includes(sep) || s.includes('"') ? `"${s.replace(/"/g, '""')}"` : s
+    }
+
+    const factuurRijen = facturen.map(f => {
+      const btwBedrag = f.btwVerlegd ? 0 : f.btwBedrag
+      return [
+        f.datum.toISOString().split('T')[0],
+        f.nummer,
+        `Omzet`,
+        f.subtotaal.toFixed(2).replace('.', ','),
+        btwBedrag.toFixed(2).replace('.', ','),
+        f.totaal.toFixed(2).replace('.', ','),
+        f.status,
+      ].map(esc).join(sep)
+    })
+
+    const uitgaveRijen = uitgaven.map(u => [
+      u.datum.toISOString().split('T')[0],
+      u.leverancier ?? u.omschrijving,
+      u.categorie?.naam ?? 'Kosten',
+      (-(u.bedrag - u.btwBedrag)).toFixed(2).replace('.', ','),
+      (-u.btwBedrag).toFixed(2).replace('.', ','),
+      (-u.bedrag).toFixed(2).replace('.', ','),
+      '',
+    ].map(esc).join(sep))
+
+    const headers = ['Datum', 'Omschrijving', 'Type', 'Bedrag excl. BTW', 'BTW bedrag', 'Bedrag incl. BTW', 'Status'].join(sep)
+    const csv = bom + [headers, ...factuurRijen, ...uitgaveRijen].join('\n')
+
+    const periode = params.kwartaal ?? `${van.toISOString().slice(0,10)}_${tot.toISOString().slice(0,10)}`
+    const result = await dialog.showSaveDialog({
+      defaultPath: `btw-aangifte-${periode}.csv`,
+      filters: [{ name: 'CSV', extensions: ['csv'] }]
+    })
+    if (result.canceled || !result.filePath) return { geannuleerd: true }
+    fs.writeFileSync(result.filePath, csv, 'utf8')
+    return { succes: true, pad: result.filePath }
+  })
+
+  // ── Bank: koppel transactie aan factuur ──
+  ipcMain.handle('bank:zoekFactuurMatch', async (_, params: {
+    bedrag: number;
+    datum: string;
+    omschrijving?: string;
+    mededelingen?: string;
+    betalingskenmerk?: string;
+  }) => {
+    const [alleOpenRaw, alleFacturenRaw] = await Promise.all([
+      prisma.factuur.findMany({
+        where: { status: { in: ['VERZONDEN', 'VERLOPEN'] } },
+        include: {
+          klant: { select: { naam: true, bedrijf: true } },
+          inkomsten: { select: { bedrag: true } },
+        },
+        orderBy: { vervaldatum: 'asc' },
+      }),
+      prisma.factuur.findMany({
+        where: { status: { notIn: ['CONCEPT', 'GEANNULEERD'] } },
+        include: {
+          klant: { select: { naam: true, bedrijf: true } },
+          inkomsten: { select: { bedrag: true } },
+        },
+        orderBy: { datum: 'desc' },
+      }),
+    ])
+
+    const enricheer = (list: typeof alleOpenRaw) => list.map(f => {
+      const reedsBetaald = f.inkomsten.reduce((s: number, i: { bedrag: number }) => s + i.bedrag, 0)
+      const openstaand = Math.max(0, f.totaal - reedsBetaald)
+      return { ...f, reedsBetaald, openstaand }
+    })
+
+    const alleOpen = enricheer(alleOpenRaw)
+    const alleFacturen = enricheer(alleFacturenRaw)
+
+    const zoekTekst = [params.omschrijving, params.mededelingen, params.betalingskenmerk]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+
+    const tol = (bedrag: number) => Math.max(bedrag * 0.02, 0.02)
+    const bedragKlopt = (f: (typeof alleOpen)[0]) =>
+      Math.abs(f.openstaand - params.bedrag) <= tol(f.openstaand)
+
+    // Facturen waarvan het nummer voorkomt in de betaaltekst (niet als onderdeel van een langer nummer)
+    const nummerMatches = zoekTekst
+      ? alleOpen.filter(f => {
+          const escaped = f.nummer.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+          return new RegExp(`(?<![0-9a-z])${escaped}(?![0-9a-z])`, 'i').test(zoekTekst)
+        })
+      : []
+
+    if (nummerMatches.length > 0) {
+      const volledigeMatches = nummerMatches.filter(bedragKlopt)
+      const alleenNummerMatches = nummerMatches.filter(f => !volledigeMatches.find(v => v.id === f.id))
+      return {
+        matchType: volledigeMatches.length > 0 ? 'volledig' : 'alleenNummer',
+        volledigeMatches,
+        alleenNummerMatches,
+        bedragMatches: [],
+        alleOpen,
+        alleFacturen,
+      }
+    }
+
+    // Geen nummermatch — kijk naar bedrag
+    const bedragMatches = alleOpen.filter(bedragKlopt)
+    return {
+      matchType: bedragMatches.length > 0 ? 'bedrag' : 'geen',
+      volledigeMatches: [],
+      alleenNummerMatches: [],
+      bedragMatches,
+      alleOpen,
+      alleFacturen,
+    }
+  })
+
+  ipcMain.handle('bank:koppelAanFactuur', async (_, params: { inkomstenId: string; factuurId: string }) => {
+    const [factuur, inkomen] = await Promise.all([
+      prisma.factuur.findUnique({ where: { id: params.factuurId }, include: { inkomsten: { select: { bedrag: true } } } }),
+      prisma.inkomen.findUnique({ where: { id: params.inkomstenId }, select: { bedrag: true } }),
+    ])
+    if (!factuur || !inkomen) throw new Error('Niet gevonden')
+    const reedsBetaald = factuur.inkomsten.reduce((s: number, i: { bedrag: number }) => s + i.bedrag, 0)
+    const totaalNaBetaling = reedsBetaald + inkomen.bedrag
+    const volledigBetaald = totaalNaBetaling >= factuur.totaal * 0.99
+    const [updatedFactuur] = await Promise.all([
+      prisma.factuur.update({
+        where: { id: params.factuurId },
+        data: { status: volledigBetaald ? 'BETAALD' : factuur.status },
+      }),
+      prisma.inkomen.update({ where: { id: params.inkomstenId }, data: { factuurId: params.factuurId } }),
+    ])
+    return {
+      succes: true,
+      factuurNummer: updatedFactuur.nummer,
+      volledigBetaald,
+      openstaand: Math.max(0, factuur.totaal - totaalNaBetaling),
+    }
+  })
+
+  ipcMain.handle('bank:koppelAanMeerdereFacturen', async (_, params: {
+    inkomstenId: string;
+    koppelingen: { factuurId: string; bedrag: number }[];
+  }) => {
+    const origineel = await prisma.inkomen.findUnique({ where: { id: params.inkomstenId } })
+    if (!origineel) throw new Error('Inkomen niet gevonden')
+
+    const resultaten: { factuurNummer: string; volledigBetaald: boolean; openstaand: number }[] = []
+
+    for (let idx = 0; idx < params.koppelingen.length; idx++) {
+      const { factuurId, bedrag } = params.koppelingen[idx]
+      const factuur = await prisma.factuur.findUnique({
+        where: { id: factuurId },
+        include: { inkomsten: { select: { bedrag: true } } },
+      })
+      if (!factuur) continue
+
+      const reedsBetaald = factuur.inkomsten.reduce((s: number, i: { bedrag: number }) => s + i.bedrag, 0)
+      const totaalNaBetaling = reedsBetaald + bedrag
+      const volledigBetaald = totaalNaBetaling >= factuur.totaal * 0.99
+
+      if (idx === 0) {
+        await prisma.inkomen.update({
+          where: { id: params.inkomstenId },
+          data: { factuurId, bedrag },
+        })
+      } else {
+        await prisma.inkomen.create({
+          data: {
+            datum: origineel.datum,
+            omschrijving: origineel.omschrijving,
+            bedrag,
+            bron: origineel.bron,
+            factuurId,
+            tegenrekeningNaam: origineel.tegenrekeningNaam,
+            tegenrekening: origineel.tegenrekening,
+            mutatiesoort: origineel.mutatiesoort,
+            mededelingen: origineel.mededelingen,
+            betalingskenmerk: origineel.betalingskenmerk,
+            saldoNaBoeking: origineel.saldoNaBoeking,
+            geboektAlsOmzet: false,
+          },
+        })
+      }
+
+      await prisma.factuur.update({
+        where: { id: factuurId },
+        data: { status: volledigBetaald ? 'BETAALD' : factuur.status },
+      })
+
+      resultaten.push({
+        factuurNummer: factuur.nummer,
+        volledigBetaald,
+        openstaand: Math.max(0, factuur.totaal - totaalNaBetaling),
+      })
+    }
+
+    return { succes: true, resultaten }
+  })
+
+  // ── Excel export per jaar ──
+  ipcMain.handle('app:exporteerExcel', async (_, jaar: number) => {
+    const XLSX = require('xlsx') as typeof import('xlsx')
+
+    const begin = new Date(jaar, 0, 1)
+    const einde = new Date(jaar, 11, 31, 23, 59, 59)
+
+    const [facturen, uitgaven, inkomen, crediteuren] = await Promise.all([
+      prisma.factuur.findMany({
+        where: { datum: { gte: begin, lte: einde } },
+        include: { klant: { select: { naam: true, bedrijf: true } }, regels: true },
+        orderBy: { datum: 'asc' }
+      }),
+      prisma.uitgave.findMany({
+        where: { datum: { gte: begin, lte: einde } },
+        include: { categorie: { select: { naam: true } } },
+        orderBy: { datum: 'asc' }
+      }),
+      prisma.inkomen.findMany({
+        where: { datum: { gte: begin, lte: einde } },
+        orderBy: { datum: 'asc' }
+      }),
+      prisma.crediteur.findMany({
+        where: { factuurdatum: { gte: begin, lte: einde } },
+        orderBy: { factuurdatum: 'asc' }
+      }),
+    ])
+
+    const wb = XLSX.utils.book_new()
+
+    const factuurRijen = facturen.map(f => ({
+      Nummer: f.nummer,
+      Datum: f.datum.toISOString().split('T')[0],
+      Vervaldatum: f.vervaldatum.toISOString().split('T')[0],
+      Klant: f.klant.bedrijf ?? f.klant.naam,
+      Status: f.status,
+      'Subtotaal excl. BTW': f.subtotaal,
+      'BTW bedrag': f.btwBedrag,
+      'Totaal incl. BTW': f.totaal,
+      Regels: f.regels.length,
+    }))
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(factuurRijen), 'Facturen')
+
+    const uitgaveRijen = uitgaven.map(u => ({
+      Datum: u.datum.toISOString().split('T')[0],
+      Omschrijving: u.omschrijving,
+      Leverancier: u.leverancier ?? '',
+      Categorie: u.categorie?.naam ?? '',
+      'Bedrag incl. BTW': u.bedrag,
+      'BTW%': u.btwPercentage,
+      'BTW bedrag': u.btwBedrag,
+      'Zakelijk%': u.zakelijkPercent,
+    }))
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(uitgaveRijen), 'Uitgaven')
+
+    const inkomenRijen = inkomen.map(i => ({
+      Datum: i.datum.toISOString().split('T')[0],
+      Omschrijving: i.omschrijving,
+      Bedrag: i.bedrag,
+      Bron: i.bron ?? '',
+    }))
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(inkomenRijen), 'Inkomen')
+
+    const crediteurRijen = crediteuren.map(c => ({
+      Leverancier: c.leverancier,
+      Factuurnummer: c.factuurNummer ?? '',
+      Factuurdatum: c.factuurdatum.toISOString().split('T')[0],
+      Vervaldatum: c.vervaldatum.toISOString().split('T')[0],
+      Bedrag: c.bedrag,
+      'BTW bedrag': c.btwBedrag,
+      Status: c.status,
+    }))
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(crediteurRijen), 'Crediteuren')
+
+    const parentWindow = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
+    const result = await dialog.showSaveDialog(parentWindow!, {
+      defaultPath: `boekhouding-${jaar}.xlsx`,
+      filters: [{ name: 'Excel', extensions: ['xlsx'] }]
+    })
+    if (result.canceled || !result.filePath) return { geannuleerd: true }
+
+    XLSX.writeFile(wb, result.filePath)
+    return { succes: true, pad: result.filePath }
+  })
+
+  // ── PDF-archief (alle facturen van een jaar naar map) ──
+  ipcMain.handle('app:exportPdfArchief', async (_, jaar: number) => {
+    const facturen = await prisma.factuur.findMany({
+      where: { datum: { gte: new Date(jaar, 0, 1), lte: new Date(jaar, 11, 31, 23, 59, 59) }, status: { not: 'CONCEPT' } },
+      orderBy: { datum: 'asc' },
+      select: { id: true, nummer: true }
+    })
+    if (!facturen.length) return { fout: `Geen facturen gevonden voor ${jaar}` }
+
+    const parentWindow = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
+    const dirResult = await dialog.showOpenDialog(parentWindow!, {
+      title: `Map kiezen voor PDF-archief ${jaar}`,
+      properties: ['openDirectory', 'createDirectory']
+    })
+    if (dirResult.canceled || !dirResult.filePaths[0]) return { geannuleerd: true }
+
+    const doelMap = dirResult.filePaths[0]
+    const user = await prisma.user.findFirst({ select: { factuurHtmlTemplate: true, logoBase64: true, naam: true, bedrijfsnaam: true, adres: true, postcode: true, stad: true, email: true, telefoon: true, website: true, kvkNummer: true, btwNummer: true, iban: true, korActief: true } })
+
+    let aangemaakt = 0
+    for (const f of facturen) {
+      let pdfWindow: BrowserWindow | null = null
+      try {
+        pdfWindow = new BrowserWindow({
+          show: false, width: 900, height: 1200,
+          webPreferences: { preload: join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false }
+        })
+        pdfWindow.setMenuBarVisibility(false)
+
+        if (user?.factuurHtmlTemplate?.trim()) {
+          const factuur = await prisma.factuur.findUnique({ where: { id: f.id }, include: { regels: true, klant: true } })
+          if (factuur) {
+            const regelsHtml = `<table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:4px 8px;border-bottom:1px solid #ddd">Omschrijving</th><th style="text-align:center;padding:4px 8px;border-bottom:1px solid #ddd">Aantal</th><th style="text-align:right;padding:4px 8px;border-bottom:1px solid #ddd">Prijs</th><th style="text-align:right;padding:4px 8px;border-bottom:1px solid #ddd">Totaal</th></tr></thead><tbody>${factuur.regels.map((r: { omschrijving: string; aantal: number; eenheid?: string | null; prijs: number; totaal: number }) => `<tr><td style="padding:4px 8px;border-bottom:1px solid #eee">${r.omschrijving}${r.eenheid ? ` / ${r.eenheid}` : ''}</td><td style="text-align:center;padding:4px 8px;border-bottom:1px solid #eee">${r.aantal}</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid #eee">€${r.prijs.toFixed(2)}</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid #eee">€${r.totaal.toFixed(2)}</td></tr>`).join('')}</tbody></table>`
+            const vars: Record<string, string> = {
+              bedrijfsnaam: user.bedrijfsnaam ?? user.naam ?? '', bedrijfAdres: user.adres ?? '', bedrijfPostcode: user.postcode ?? '',
+              bedrijfStad: user.stad ?? '', bedrijfEmail: user.email ?? '', bedrijfTelefoon: user.telefoon ?? '',
+              bedrijfWebsite: user.website ?? '', kvkNummer: user.kvkNummer ?? '', btwNummer: user.btwNummer ?? '',
+              iban: user.iban ?? '', logo: user.logoBase64 ? `<img src="${user.logoBase64}" style="max-height:80px" />` : '',
+              factuurNummer: factuur.nummer, factuurDatum: factuur.datum.toISOString().split('T')[0],
+              vervaldatum: factuur.vervaldatum.toISOString().split('T')[0], notities: factuur.notities ?? '',
+              betalingsCondities: factuur.betalingsCondities ?? '', klantNaam: (factuur.klant as { naam: string }).naam,
+              klantBedrijf: (factuur.klant as { bedrijf?: string | null }).bedrijf ?? '',
+              klantAdres: (factuur.klant as { adres?: string | null }).adres ?? '',
+              klantPostcode: (factuur.klant as { postcode?: string | null }).postcode ?? '',
+              klantStad: (factuur.klant as { stad?: string | null }).stad ?? '',
+              klantBtwNummer: (factuur.klant as { btwNummer?: string | null }).btwNummer ?? '',
+              subtotaal: `€${factuur.subtotaal.toFixed(2)}`, kortingBedrag: `€${factuur.kortingBedrag.toFixed(2)}`,
+              btwBedrag: `€${factuur.btwBedrag.toFixed(2)}`, totaalBedrag: `€${factuur.totaal.toFixed(2)}`, regelsHtml,
+            }
+            const html = user.factuurHtmlTemplate.replace(/\{\{(\w+)\}\}/g, (_, k) => vars[k] ?? '')
+            await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+          }
+        } else if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+          await pdfWindow.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/#/facturen/${f.id}/print`)
+        } else {
+          await pdfWindow.loadFile(join(__dirname, '../renderer/index.html'), { hash: `/facturen/${f.id}/print` })
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 1200))
+        const pdfBuffer = await pdfWindow.webContents.printToPDF({ printBackground: true, pageSize: 'A4' })
+        const veiligNummer = f.nummer.replace(/[/\\:*?"<>|]/g, '-')
+        fs.writeFileSync(join(doelMap, `${veiligNummer}.pdf`), pdfBuffer)
+        aangemaakt++
+      } catch {
+        // sla individuele fouten over
+      } finally {
+        pdfWindow?.destroy()
+      }
+    }
+
+    shell.openPath(doelMap)
+    return { succes: true, aangemaakt, pad: doelMap }
+  })
+
+  // ── Update installeren ──
+  ipcMain.handle('app:installUpdate', () => {
+    autoUpdater.quitAndInstall()
+  })
+
+  // Factuur sjablonen
+  ipcMain.handle('factuurSjablonen:list', async () => {
+    return prisma.factuurSjabloon.findMany({ orderBy: { aangemaakt: 'desc' } })
+  })
+
+  ipcMain.handle('factuurSjablonen:create', async (_, data: { naam: string; regels: unknown[]; notities?: string; betalingsCondities?: string; btwVerlegd?: boolean }) => {
+    return prisma.factuurSjabloon.create({
+      data: {
+        naam: data.naam,
+        regels: JSON.stringify(data.regels),
+        notities: data.notities,
+        betalingsCondities: data.betalingsCondities,
+        btwVerlegd: data.btwVerlegd ?? false,
+      }
+    })
+  })
+
+  ipcMain.handle('factuurSjablonen:delete', async (_, id: string) => {
+    await prisma.factuurSjabloon.delete({ where: { id } })
+    return { succes: true }
+  })
+
+  // Documenten
+  ipcMain.handle('documenten:list', async (_, { type, referentieId }: { type: string; referentieId: string }) => {
+    return prisma.document.findMany({ where: { type, referentieId }, orderBy: { aangemaakt: 'desc' } })
+  })
+
+  ipcMain.handle('documenten:upload', async (_, { type, referentieId }: { type: string; referentieId: string }) => {
+    const { canceled, filePaths } = await dialog.showOpenDialog({ properties: ['openFile'] })
+    if (canceled || !filePaths[0]) return { succes: false }
+    const bronPad = filePaths[0]
+    const documentenMap = join(app.getPath('userData'), 'documenten')
+    await fs.promises.mkdir(documentenMap, { recursive: true })
+    const doelNaam = `${Date.now()}-${basename(bronPad)}`
+    const doelPad = join(documentenMap, doelNaam)
+    await fs.promises.copyFile(bronPad, doelPad)
+    const doc = await prisma.document.create({
+      data: { naam: basename(bronPad), bestandsPad: doelPad, type, referentieId }
+    })
+    return { succes: true, id: doc.id }
+  })
+
+  ipcMain.handle('documenten:open', async (_, id: string) => {
+    const doc = await prisma.document.findUnique({ where: { id } })
+    if (!doc) return { succes: false }
+    await shell.openPath(doc.bestandsPad)
+    return { succes: true }
+  })
+
+  ipcMain.handle('documenten:delete', async (_, id: string) => {
+    const doc = await prisma.document.findUnique({ where: { id } })
+    if (doc) {
+      try { await fs.promises.unlink(doc.bestandsPad) } catch {}
+      await prisma.document.delete({ where: { id } })
+    }
+    return { succes: true }
+  })
+
+  // Enkele betalingsherinnering
+  ipcMain.handle('facturen:stuurHerinnering', async (_, id: string) => {
+    const user = await prisma.user.findFirst()
+    if (!user) throw new Error('Geen gebruiker')
+    if (!user.emailSmtpHost || !user.emailSmtpUser) throw new Error('SMTP niet geconfigureerd')
+    const factuur = await prisma.factuur.findUnique({ where: { id }, include: { klant: true } })
+    if (!factuur) throw new Error('Factuur niet gevonden')
+    if (!factuur.klant.email) throw new Error(`${factuur.klant.naam} heeft geen e-mailadres`)
+    const nu = new Date()
+    const dagenTeLasten = Math.max(0, Math.floor((nu.getTime() - new Date(factuur.vervaldatum).getTime()) / (1000 * 60 * 60 * 24)))
+    const html = `<p>Geachte ${factuur.klant.naam},</p><p>Wij verzoeken u vriendelijk onderstaande factuur te voldoen.</p>
+<table style="border-collapse:collapse"><tr><td style="padding:4px 8px"><strong>Factuurnummer:</strong></td><td>${factuur.nummer}</td></tr>
+<tr><td style="padding:4px 8px"><strong>Openstaand bedrag:</strong></td><td><strong>€ ${factuur.totaal.toFixed(2).replace('.', ',')}</strong></td></tr>
+${dagenTeLasten > 0 ? `<tr><td style="padding:4px 8px"><strong>Dagen te laat:</strong></td><td>${dagenTeLasten} dagen</td></tr>` : ''}
+</table><p>Met vriendelijke groet,<br>${user.naam}${user.bedrijfsnaam ? '<br>' + user.bedrijfsnaam : ''}</p>`
+    await verstuurEmail(
+      { host: user.emailSmtpHost, port: user.emailSmtpPort ?? 587, secure: user.emailSmtpSecure, user: user.emailSmtpUser, pass: user.emailSmtpPass ?? '' },
+      { van: user.emailSmtpUser, naar: factuur.klant.email, onderwerp: `Betalingsherinnering - Factuur ${factuur.nummer}`, html }
+    )
+    await prisma.factuur.update({ where: { id }, data: { herinneringVerzondenOp: nu } })
+    return { succes: true }
   })
 }
 
 app.whenReady().then(async () => {
-  initPrisma()
-
-  // Voer database migratie uit bij eerste start
+  const dbPath = getDbPath()
   try {
-    const { execSync } = require('child_process')
-    const prismaPath = is.dev
-      ? join(process.cwd(), 'node_modules/.bin/prisma')
-      : join(process.resourcesPath, 'node_modules/.bin/prisma')
-    // In productie: gebruik prisma migrate deploy
-    // In dev: skip (al gedaan door developer)
-    if (!is.dev) {
-      const migrationsPath = join(process.resourcesPath, 'migrations')
-      process.env.DATABASE_URL = `file:${join(app.getPath('userData'), 'adminpro.db')}`
-      execSync(`"${prismaPath}" migrate deploy --schema="${join(process.resourcesPath, 'schema.prisma')}"`, {
-        env: { ...process.env }
-      })
-    }
+    runMigratie(dbPath)
     logSchrijven('Database migratie succesvol')
   } catch (e) {
-    logSchrijven(`Database migratie fout (niet kritiek): ${e}`)
+    logSchrijven(`Database migratie fout: ${e}`)
   }
+  initPrisma()
 
   setupIpcHandlers()
   createWindow()
 
   if (!is.dev) {
-    autoUpdater.checkForUpdatesAndNotify().catch(e => logSchrijven(`Update check fout: ${e}`))
+    autoUpdater.checkForUpdates().catch(e => logSchrijven(`Update check fout: ${e}`))
+    autoUpdater.on('update-available', () => {
+      mainWindow?.webContents.send('update:beschikbaar')
+    })
+    autoUpdater.on('update-downloaded', () => {
+      mainWindow?.webContents.send('update:gedownload')
+    })
   }
 
   // Maak terugkerende facturen aan bij opstarten
   maakTermijnFacturen().catch(e => console.error('Fout bij opstarten terugkerende facturen:', e))
   stuurHerinneringen().catch(e => console.error('Fout bij sturen herinneringen:', e))
+  startBankWatcher().catch(() => {})
 
   // Notificatie voor vervallen facturen
   setTimeout(async () => {

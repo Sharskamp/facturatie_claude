@@ -43,6 +43,8 @@ model User {
   herinneringDagen      Int       @default(7)
   kmVergoeding          Float     @default(0.23)
   anthropicApiKey       String?
+  openaiApiKey          String?
+  aiModel               String    @default("claude")
   donkerModus           String    @default("systeem")
   autoStart             Boolean   @default(false)
   pdfMapPad             String?
@@ -52,8 +54,58 @@ model User {
   logoBase64            String?
   factuurNummerFormaat  String    @default("{PREFIX}{JAAR}-{NNNN}")
   korWaarschuwing       Boolean   @default(true)
+  // Google OAuth credentials (stored by user in settings)
+  googleClientId        String?
+  googleClientSecret    String?
+  googlePrimaryCalendarId String?
+  // Invoice layout settings
+  layoutPrimairKleur    String    @default("#4f46e5")
+  layoutSecundairKleur  String?
+  layoutLettertype      String    @default("Arial, sans-serif")
+  layoutKoptekst        String?
+  layoutVoettekst       String?
+  layoutLogoPositie     String    @default("links")
+  layoutToonBtwNummer   Boolean   @default(true)
+  layoutToonKvkNummer   Boolean   @default(true)
+  layoutToonIban        Boolean   @default(true)
+  layoutToonQrCode      Boolean   @default(true)
+  layoutRegelSpacing    String    @default("normaal")
+  layoutLetterGrootte   String    @default("14")
+  layoutLogoGrootte     String    @default("medium")
+  layoutMarges          String    @default("normaal")
+  layoutSectieVolgorde  String    @default("[]")
+  onbetaaldeFactuurMelding Boolean @default(true)
+  factuurHtmlTemplate   String?
+  offerteGeldigheidDagen Int    @default(30)
+  verborgenPaginas      String    @default("[]")
+  bankWeergaveVelden    String    @default("[\"datum\",\"omschrijving\",\"tegenrekeningNaam\",\"tegenrekening\",\"mutatiesoort\",\"mededelingen\",\"saldoNaBoeking\",\"bedrag\",\"bron\",\"factuur\"]")
+  uitgavenWeergaveVelden String   @default("[\"datum\",\"omschrijving\",\"leverancier\",\"categorie\",\"bedrag\",\"btw\",\"totaal\"]")
+  spaarrekeningen       String    @default("[]")
   aangemaakt            DateTime  @default(now())
   bijgewerkt            DateTime  @updatedAt
+}
+
+model FactuurSjabloon {
+  id                 String   @id @default(cuid())
+  naam               String
+  regels             String   @default("[]")
+  notities           String?
+  betalingsCondities String?
+  btwVerlegd         Boolean  @default(false)
+  aangemaakt         DateTime @default(now())
+  bijgewerkt         DateTime @updatedAt
+}
+
+model Document {
+  id           String   @id @default(cuid())
+  naam         String
+  bestandsPad  String
+  type         String
+  referentieId String
+  aangemaakt   DateTime @default(now())
+
+  @@index([referentieId])
+  @@index([type, referentieId])
 }
 
 model Rit {
@@ -66,8 +118,13 @@ model Rit {
   retour       Boolean  @default(false)
   zakelijk     Boolean  @default(true)
   notities     String?
+  gefactureerd Boolean  @default(false)
+  factuurId    String?
   aangemaakt   DateTime @default(now())
   bijgewerkt   DateTime @updatedAt
+
+  @@index([datum])
+  @@index([gefactureerd])
 }
 
 model Klant {
@@ -89,6 +146,7 @@ model Klant {
   taal          String    @default("nl")
   facturen      Factuur[]
   offertes      Offerte[]
+  klantNotities KlantNotitie[]
   aangemaakt    DateTime  @default(now())
   bijgewerkt    DateTime  @updatedAt
 }
@@ -123,9 +181,18 @@ model Factuur {
   totaalKorting     Float          @default(0)
   totaalKortingBedrag Float        @default(0)
   taal              String         @default("nl")
-  mollieBetaalLink  String?
+  mollieBetaalLink     String?
+  molliePaymentLinkId  String?
+  historisch           Boolean        @default(false)
+  handmatigBedrag   Boolean        @default(false)
+  bronBestandPad    String?
   aangemaakt        DateTime       @default(now())
   bijgewerkt        DateTime       @updatedAt
+
+  @@index([klantId])
+  @@index([status])
+  @@index([datum])
+  @@index([status, datum])
 }
 
 model FactuurRegel {
@@ -164,6 +231,9 @@ model Offerte {
   totaalKortingBedrag Float        @default(0)
   aangemaakt        DateTime       @default(now())
   bijgewerkt        DateTime       @updatedAt
+
+  @@index([klantId])
+  @@index([status])
 }
 
 model OfferteRegel {
@@ -189,8 +259,18 @@ model Inkomen {
   factuur      Factuur? @relation(fields: [factuurId], references: [id])
   bron         String?
   notities     String?
+  geboektAlsOmzet Boolean @default(false)
+  tegenrekeningNaam String?
+  tegenrekening     String?
+  mutatiesoort      String?
+  mededelingen      String?
+  betalingskenmerk  String?
+  saldoNaBoeking    String?
   aangemaakt   DateTime @default(now())
   bijgewerkt   DateTime @updatedAt
+
+  @@index([factuurId])
+  @@index([datum])
 }
 
 model Uitgave {
@@ -204,11 +284,15 @@ model Uitgave {
   categorie       Categorie? @relation(fields: [categorieId], references: [id])
   leverancier     String?
   bonBestand      String?
+  tegenrekening   String?
   notities        String?
   zakelijk        Boolean    @default(true)
   zakelijkPercent Float      @default(100)
   aangemaakt      DateTime   @default(now())
   bijgewerkt      DateTime   @updatedAt
+
+  @@index([datum])
+  @@index([categorieId])
 }
 
 model Categorie {
@@ -269,4 +353,45 @@ model Product {
   actief        Boolean  @default(true)
   aangemaakt    DateTime @default(now())
   bijgewerkt    DateTime @updatedAt
+}
+
+model KlantNotitie {
+  id         String   @id @default(cuid())
+  klantId    String
+  klant      Klant    @relation(fields: [klantId], references: [id], onDelete: Cascade)
+  tekst      String
+  aangemaakt DateTime @default(now())
+
+  @@index([klantId])
+}
+
+model Crediteur {
+  id             String    @id @default(cuid())
+  leverancier    String
+  factuurNummer  String?
+  factuurdatum   DateTime
+  vervaldatum    DateTime
+  bedrag         Float
+  btwBedrag      Float     @default(0)
+  btwPercentage  Float     @default(21)
+  status         String    @default("OPENSTAAND")
+  betaaldOp      DateTime?
+  notities       String?
+  aangemaakt     DateTime  @default(now())
+  bijgewerkt     DateTime  @updatedAt
+
+  @@index([status])
+  @@index([vervaldatum])
+}
+
+model AgendaAfspraakData {
+  id        String   @id @default(cuid())
+  eventId   String   @unique
+  klantId   String?
+  klantIds  String?
+  locatie   String?
+  regels    String?
+  aangemaakt DateTime @default(now())
+
+  @@index([eventId])
 }

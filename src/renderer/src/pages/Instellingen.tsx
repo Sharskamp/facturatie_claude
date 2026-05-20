@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { FactuurLayoutPreview } from "@/components/facturen/FactuurLayoutPreview";
 import {
   Building2,
   FileText,
@@ -16,6 +17,13 @@ import {
   Car,
   Download,
   Settings,
+  Palette,
+  ChevronUp,
+  ChevronDown,
+  Eye,
+  EyeOff,
+  Menu,
+  CreditCard,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -30,17 +38,36 @@ import {
 } from "@/components/ui/select";
 import { useTheme } from "@/context/theme";
 
-type Tab = "bedrijf" | "facturen" | "email" | "google" | "kor" | "ai" | "overig" | "geavanceerd";
+type Tab = "bedrijf" | "facturen" | "layout" | "email" | "google" | "kor" | "ai" | "overig" | "geavanceerd" | "navigatie" | "bank";
 
 const TAB_CONFIG: Array<{ id: Tab; label: string; icon: React.ElementType }> = [
   { id: "bedrijf", label: "Bedrijfsgegevens", icon: Building2 },
   { id: "facturen", label: "Facturen", icon: FileText },
+  { id: "layout", label: "Factuurlayout", icon: Palette },
   { id: "email", label: "Email", icon: Mail },
   { id: "google", label: "Google Agenda", icon: Calendar },
   { id: "kor", label: "KOR", icon: Calculator },
   { id: "ai", label: "AI / OCR", icon: Bot },
   { id: "overig", label: "Overig", icon: MoreHorizontal },
+  { id: "navigatie", label: "Navigatie", icon: Menu },
+  { id: "bank", label: "Bankimport", icon: CreditCard },
   { id: "geavanceerd", label: "Geavanceerd", icon: Settings },
+];
+
+const ALLE_PAGINAS = [
+  { href: "/klanten", naam: "Klanten" },
+  { href: "/facturen", naam: "Facturen" },
+  { href: "/offertes", naam: "Offertes" },
+  { href: "/agenda", naam: "Agenda" },
+  { href: "/inkomen", naam: "Inkomen" },
+  { href: "/uitgaven", naam: "Uitgaven" },
+  { href: "/crediteuren", naam: "Crediteuren" },
+  { href: "/uren", naam: "Uren" },
+  { href: "/kilometer", naam: "Kilometer" },
+  { href: "/bank-import", naam: "Bankimport" },
+  { href: "/producten", naam: "Producten" },
+  { href: "/vaste-activa", naam: "Vaste activa" },
+  { href: "/rapporten", naam: "Rapporten" },
 ];
 
 interface Instellingen {
@@ -63,24 +90,30 @@ interface Instellingen {
   betalingsherinneringen?: boolean;
   herinneringDagen?: number;
   // Email / SMTP
-  smtpHost?: string;
-  smtpPort?: number;
-  smtpSecure?: boolean;
-  smtpUser?: string;
-  smtpPass?: string;
+  emailSmtpHost?: string;
+  emailSmtpPort?: number;
+  emailSmtpSecure?: boolean;
+  emailSmtpUser?: string;
+  emailSmtpPass?: string;
   // Google
   googleGekoppeld?: boolean;
   googleEmail?: string;
+  googleClientId?: string;
+  googleClientSecret?: string;
   // KOR
   korActief?: boolean;
   korDrempel?: number;
+  korIngangsDatum?: string;
   // AI / OCR
   anthropicApiKey?: string;
+  openaiApiKey?: string;
+  aiModel?: string;
   // Email sjabloon
   emailAanhef?: string;
   emailAfsluitingsTekst?: string;
   // Overig
   kmVergoeding?: number;
+  bankAfschriftenMap?: string;
   // Geavanceerd
   pdfMapPad?: string;
   mollieApiKey?: string;
@@ -89,6 +122,149 @@ interface Instellingen {
   factuurVolgNummer?: number;
   donkerModus?: string;
   autoStart?: boolean;
+  // Layout
+  layoutPrimairKleur?: string;
+  layoutSecundairKleur?: string;
+  layoutLettertype?: string;
+  layoutKoptekst?: string;
+  layoutVoettekst?: string;
+  layoutLogoPositie?: string;
+  layoutToonBtwNummer?: boolean;
+  layoutToonKvkNummer?: boolean;
+  layoutToonIban?: boolean;
+  layoutToonQrCode?: boolean;
+  layoutRegelSpacing?: string;
+  layoutLetterGrootte?: string;
+  layoutLogoGrootte?: string;
+  layoutMarges?: string;
+  layoutSectieVolgorde?: string;
+  onbetaaldeFactuurMelding?: boolean;
+  factuurHtmlTemplate?: string;
+  offerteGeldigheidDagen?: number;
+  verborgenPaginas?: string;
+  bankWeergaveVelden?: string;
+  uitgavenWeergaveVelden?: string;
+  spaarrekeningen?: string;
+}
+
+const ALLE_BANK_VELDEN = [
+  { id: 'datum', label: 'Datum', verplicht: true },
+  { id: 'omschrijving', label: 'Omschrijving', verplicht: true },
+  { id: 'bedrag', label: 'Bedrag', verplicht: true },
+  { id: 'tegenrekeningNaam', label: 'Naam tegenpartij' },
+  { id: 'tegenrekening', label: 'Tegenrekening (IBAN)' },
+  { id: 'mutatiesoort', label: 'Mutatiesoort' },
+  { id: 'mededelingen', label: 'Mededelingen' },
+  { id: 'betalingskenmerk', label: 'Betalingskenmerk (EndToEndId)' },
+  { id: 'saldoNaBoeking', label: 'Saldo na boeking' },
+  { id: 'bron', label: 'Bron' },
+  { id: 'factuur', label: 'Gekoppelde factuur' },
+];
+
+const ALLE_UITGAVEN_VELDEN = [
+  { id: 'datum', label: 'Datum', verplicht: true },
+  { id: 'omschrijving', label: 'Omschrijving', verplicht: true },
+  { id: 'bedrag', label: 'Excl. BTW', verplicht: true },
+  { id: 'totaal', label: 'Totaal', verplicht: true },
+  { id: 'leverancier', label: 'Leverancier' },
+  { id: 'categorie', label: 'Categorie' },
+  { id: 'btw', label: 'BTW' },
+];
+
+function parseVelden(json: string | undefined, alle: { id: string }[]): string[] {
+  try {
+    const parsed = JSON.parse(json ?? '[]');
+    if (Array.isArray(parsed) && parsed.length > 0) return parsed as string[];
+  } catch {}
+  return alle.map(v => v.id);
+}
+
+function KolomConfigurator({
+  titel,
+  omschrijving,
+  allVelden,
+  velden,
+  setVelden,
+}: {
+  titel: string;
+  omschrijving: string;
+  allVelden: { id: string; label: string; verplicht?: boolean }[];
+  velden: string[];
+  setVelden: (v: string[]) => void;
+}) {
+  const gesorteerd = [
+    ...velden.map(id => allVelden.find(v => v.id === id)!).filter(Boolean),
+    ...allVelden.filter(v => !velden.includes(v.id)),
+  ];
+
+  const toggle = (id: string) => {
+    setVelden(velden.includes(id) ? velden.filter(v => v !== id) : [...velden, id]);
+  };
+
+  const verplaats = (id: string, richting: -1 | 1) => {
+    const idx = velden.indexOf(id);
+    if (idx < 0) return;
+    const swap = idx + richting;
+    if (swap < 0 || swap >= velden.length) return;
+    const nieuw = [...velden];
+    [nieuw[idx], nieuw[swap]] = [nieuw[swap], nieuw[idx]];
+    setVelden(nieuw);
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{titel}</CardTitle>
+        <CardDescription>{omschrijving}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-1">
+        {gesorteerd.map((veld) => {
+          const actief = velden.includes(veld.id);
+          const positie = velden.indexOf(veld.id);
+          return (
+            <div
+              key={veld.id}
+              className={`flex items-center justify-between py-2.5 px-3 rounded-lg border ${actief ? 'border-indigo-200 bg-indigo-50 dark:bg-indigo-900/20 dark:border-indigo-700' : 'border-gray-200 bg-gray-50 dark:bg-gray-800 dark:border-gray-700 opacity-50'}`}
+            >
+              <div className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  checked={actief}
+                  disabled={veld.verplicht}
+                  onChange={() => toggle(veld.id)}
+                  className="h-4 w-4 text-indigo-600 rounded disabled:opacity-40"
+                />
+                <span className="text-sm font-medium text-gray-800 dark:text-gray-200">{veld.label}</span>
+                {veld.verplicht && <span className="text-xs text-gray-400">(verplicht)</span>}
+              </div>
+              {actief && (
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    disabled={positie === 0}
+                    onClick={() => verplaats(veld.id, -1)}
+                    className="p-1 rounded hover:bg-indigo-100 dark:hover:bg-indigo-800 disabled:opacity-30"
+                    title="Omhoog"
+                  >
+                    <ChevronUp className="h-4 w-4 text-gray-600 dark:text-gray-300" />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={positie === velden.length - 1}
+                    onClick={() => verplaats(veld.id, 1)}
+                    className="p-1 rounded hover:bg-indigo-100 dark:hover:bg-indigo-800 disabled:opacity-30"
+                    title="Omlaag"
+                  >
+                    <ChevronDown className="h-4 w-4 text-gray-600 dark:text-gray-300" />
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </CardContent>
+    </Card>
+  );
 }
 
 export default function InstellingenPagina() {
@@ -97,15 +273,30 @@ export default function InstellingenPagina() {
   const [instellingen, setInstellingen] = useState<Instellingen>({});
   const [laden, setLaden] = useState(true);
   const [opslaan, setOpslaan] = useState(false);
+  const [googleSecretInput, setGoogleSecretInput] = useState("");
   const [melding, setMelding] = useState<{ type: "succes" | "fout"; tekst: string } | null>(null);
   const [emailTestStatus, setEmailTestStatus] = useState<"idle" | "laden" | "succes" | "fout">("idle");
   const [googleLaden, setGoogleLaden] = useState(false);
   const [autoStart, setAutoStart] = useState(false);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [exportJaar, setExportJaar] = useState(new Date().getFullYear());
+  const [pdfArchiefLaden, setPdfArchiefLaden] = useState(false);
+  const [exportMelding, setExportMelding] = useState<string | null>(null);
+  const [wissenMelding, setWissenMelding] = useState<{ type: "succes" | "fout"; tekst: string } | null>(null);
+  const [nieuweSpaarrekening, setNieuweSpaarrekening] = useState("");
+  const [bankVeldenLijst, setBankVeldenLijst] = useState<string[]>(() => ALLE_BANK_VELDEN.map(v => v.id));
+  const [uitgavenVeldenLijst, setUitgavenVeldenLijst] = useState<string[]>(() => ALLE_UITGAVEN_VELDEN.map(v => v.id));
+  const isGeladen = useRef(false);
+  const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const previewContainerRef = useRef<HTMLDivElement>(null);
+  const [previewSchaal, setPreviewSchaal] = useState(0.65);
 
   const haalInstellingenOp = useCallback(async () => {
     try {
       const data = await window.api.instellingen.get();
       setInstellingen(data ?? {});
+      setBankVeldenLijst(parseVelden((data as any)?.bankWeergaveVelden, ALLE_BANK_VELDEN));
+      setUitgavenVeldenLijst(parseVelden((data as any)?.uitgavenWeergaveVelden, ALLE_UITGAVEN_VELDEN));
     } catch {
       toonMelding("fout", "Kon instellingen niet laden");
     } finally {
@@ -118,8 +309,44 @@ export default function InstellingenPagina() {
   }, [haalInstellingenOp]);
 
   useEffect(() => {
+    if (!laden) {
+      // Activeer auto-save na volledig laden om false-positive saves te voorkomen
+      const t = setTimeout(() => { isGeladen.current = true; }, 300);
+      return () => clearTimeout(t);
+    }
+  }, [laden]);
+
+  // Auto-save: sla instellingen 1.5s na elke wijziging op
+  useEffect(() => {
+    if (!isGeladen.current || Object.keys(instellingen).length === 0) return;
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current = setTimeout(() => {
+      window.api.instellingen.update(instellingen as Record<string, unknown>).catch(() => {});
+    }, 1500);
+    return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
+  }, [instellingen]);
+
+  useEffect(() => {
+    if (!isGeladen.current) return;
+    window.dispatchEvent(new CustomEvent('verborgenPaginasGewijzigd', { detail: instellingen.verborgenPaginas ?? '[]' }));
+  }, [instellingen.verborgenPaginas]);
+
+  useEffect(() => {
     window.api.app.getAutoStart().then(setAutoStart).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (actieveTab !== "layout") return;
+    const el = previewContainerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const { width } = entry.contentRect;
+      const scale = (width - 32) / 794;
+      setPreviewSchaal(Math.max(0.35, Math.min(1.2, scale)));
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [actieveTab]);
 
   const toonMelding = (type: "succes" | "fout", tekst: string) => {
     setMelding({ type, tekst });
@@ -129,8 +356,7 @@ export default function InstellingenPagina() {
   const slaOp = async (velden: Partial<Instellingen>) => {
     setOpslaan(true);
     try {
-      const data = await window.api.instellingen.update(velden);
-      setInstellingen((prev) => ({ ...prev, ...data }));
+      await window.api.instellingen.update(velden);
       toonMelding("succes", "Instellingen opgeslagen");
     } catch {
       toonMelding("fout", "Opslaan mislukt");
@@ -146,34 +372,34 @@ export default function InstellingenPagina() {
   const testEmail = async () => {
     setEmailTestStatus("laden");
     try {
-      await window.api.instellingen.update({
-        actie: "test-email",
-        smtpHost: instellingen.smtpHost,
-        smtpPort: instellingen.smtpPort,
-        smtpSecure: instellingen.smtpSecure,
-        smtpUser: instellingen.smtpUser,
-        smtpPass: instellingen.smtpPass,
-        email: instellingen.email,
-      } as any);
+      await window.api.instellingen.testEmail({
+        host: instellingen.emailSmtpHost ?? "",
+        port: instellingen.emailSmtpPort ?? 587,
+        secure: instellingen.emailSmtpSecure ?? false,
+        user: instellingen.emailSmtpUser ?? "",
+        pass: instellingen.emailSmtpPass ?? "",
+        naar: instellingen.email ?? "",
+      });
       setEmailTestStatus("succes");
       setTimeout(() => setEmailTestStatus("idle"), 4000);
-    } catch {
+    } catch (e: unknown) {
       setEmailTestStatus("fout");
+      const msg = e instanceof Error ? e.message : "Versturen mislukt";
+      toonMelding("fout", msg);
       setTimeout(() => setEmailTestStatus("idle"), 4000);
     }
   };
 
   const koppelGoogle = async () => {
     setGoogleLaden(true);
+    toonMelding("succes", "Browser wordt geopend. Geef toestemming in Google en wacht...");
     try {
-      const data = await window.api.instellingen.update({ actie: "google-koppelen" } as any);
-      if ((data as any).redirectUrl) {
-        window.api.shell.openExternal((data as any).redirectUrl);
-      } else {
-        toonMelding("fout", "Kon Google OAuth niet starten");
-      }
-    } catch {
-      toonMelding("fout", "Verbindingsfout");
+      await (window.api.instellingen as any).googleKoppelen();
+      setInstellingen((prev) => ({ ...prev, googleGekoppeld: true }));
+      toonMelding("succes", "Google Agenda succesvol gekoppeld!");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Koppelen mislukt";
+      toonMelding("fout", msg);
     } finally {
       setGoogleLaden(false);
     }
@@ -183,7 +409,7 @@ export default function InstellingenPagina() {
     if (!confirm("Weet je zeker dat je Google Agenda wilt ontkoppelen?")) return;
     setGoogleLaden(true);
     try {
-      await window.api.instellingen.update({ actie: "google-ontkoppelen" } as any);
+      await window.api.instellingen.googleOntkoppelen();
       setInstellingen((prev) => ({ ...prev, googleGekoppeld: false, googleEmail: undefined }));
       toonMelding("succes", "Google Agenda ontkoppeld");
     } catch {
@@ -321,6 +547,7 @@ export default function InstellingenPagina() {
                   onBlur={() => slaOp({ kvkNummer: instellingen.kvkNummer })}
                   placeholder="12345678"
                 />
+                {!instellingen.korActief && (
                 <Input
                   label="BTW-nummer"
                   value={instellingen.btwNummer ?? ""}
@@ -328,6 +555,7 @@ export default function InstellingenPagina() {
                   onBlur={() => slaOp({ btwNummer: instellingen.btwNummer })}
                   placeholder="NL123456789B01"
                 />
+                )}
                 <Input
                   label="IBAN"
                   value={instellingen.iban ?? ""}
@@ -399,6 +627,18 @@ export default function InstellingenPagina() {
                   onBlur={() => slaOp({ standaardBetaalTermijn: instellingen.standaardBetaalTermijn })}
                 />
               </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <Input
+                  label="Standaard geldigheidsduur offerte (dagen)"
+                  type="number"
+                  min="1"
+                  max="365"
+                  value={instellingen.offerteGeldigheidDagen ?? 30}
+                  onChange={(e) => updateVeld("offerteGeldigheidDagen", parseInt(e.target.value))}
+                  onBlur={() => slaOp({ offerteGeldigheidDagen: instellingen.offerteGeldigheidDagen })}
+                />
+              </div>
+              {!instellingen.korActief && (
               <div>
                 <Select
                   value={String(instellingen.standaardBtwTarief ?? 21)}
@@ -418,6 +658,7 @@ export default function InstellingenPagina() {
                   </SelectContent>
                 </Select>
               </div>
+              )}
 
               {/* Herinneringen toggle */}
               <div className="rounded-lg border border-gray-200 p-4 space-y-3">
@@ -466,6 +707,293 @@ export default function InstellingenPagina() {
           </Card>
         )}
 
+        {/* ── Factuurlayout ── */}
+        {actieveTab === "layout" && (() => {
+          const DEFAULT_SECTIES = ["koptekst", "bedrijf", "klant", "factuurInfo", "regels", "totalen", "betaling", "voettekst"];
+          const SECTIE_LABELS: Record<string, string> = {
+            koptekst: "Koptekst (vrije tekst)", bedrijf: "Bedrijfsgegevens", klant: "Klantgegevens",
+            factuurInfo: "Factuurnummer & datum", regels: "Regeloverzicht", totalen: "Totalen",
+            betaling: "Betalingsgegevens", voettekst: "Voettekst (vrije tekst)",
+          };
+          const SECTIE_VELDEN: Record<string, string> = {
+            bedrijf: "Naam, adres, BTW-nr, KvK-nr, e-mail",
+            klant: "Klantnaam, contactpersoon, adres, BTW-nr",
+            factuurInfo: "Factuurnummer, datum, vervaldatum, referentie",
+            regels: "Omschrijving, aantal, prijs, BTW, totaal",
+            totalen: "Subtotaal, BTW-bedrag, totaal te betalen",
+            betaling: "IBAN, tenaamstelling, kenmerk, QR-code",
+          };
+          const secties: string[] = (() => {
+            try { const p = JSON.parse(instellingen.layoutSectieVolgorde ?? "[]"); return Array.isArray(p) && p.length ? p : DEFAULT_SECTIES; }
+            catch { return DEFAULT_SECTIES; }
+          })();
+          const verplaatsSectie = (i: number, d: -1 | 1) => {
+            const nieuw = [...secties]; const doel = i + d;
+            if (doel < 0 || doel >= nieuw.length) return;
+            [nieuw[i], nieuw[doel]] = [nieuw[doel], nieuw[i]];
+            const json = JSON.stringify(nieuw);
+            updateVeld("layoutSectieVolgorde", json); slaOp({ layoutSectieVolgorde: json });
+          };
+          const Toggle = ({ veld, label }: { veld: string; label: string }) => {
+            const aan = (instellingen as Record<string, unknown>)[veld] !== false;
+            return (
+              <div className="flex items-center justify-between rounded-lg border border-gray-100 p-2.5">
+                <span className="text-sm text-gray-700">{label}</span>
+                <button type="button" onClick={() => { updateVeld(veld as keyof Instellingen, !aan as never); slaOp({ [veld]: !aan }); }} className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${aan ? "bg-indigo-600" : "bg-gray-200"}`}>
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${aan ? "translate-x-6" : "translate-x-1"}`} />
+                </button>
+              </div>
+            );
+          };
+
+          return (
+            <div className="flex gap-6" style={{ height: "calc(100vh - 210px)" }}>
+              {/* Links: scrollbaar instellingenpaneel */}
+              <div className="w-[300px] shrink-0 overflow-y-auto space-y-4 pr-1"
+                style={{ scrollbarWidth: "thin" }}
+              >
+
+                {/* Kleur & typografie */}
+                <Card>
+                  <CardHeader className="pb-3"><CardTitle className="text-base">Kleur &amp; typografie</CardTitle></CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="flex items-center gap-3">
+                      <input type="color" value={instellingen.layoutPrimairKleur ?? "#4f46e5"} onChange={(e) => updateVeld("layoutPrimairKleur", e.target.value)} onBlur={() => slaOp({ layoutPrimairKleur: instellingen.layoutPrimairKleur })} className="h-9 w-16 rounded border border-gray-300 cursor-pointer" />
+                      <span className="text-sm text-gray-500 flex-1">{instellingen.layoutPrimairKleur ?? "#4f46e5"}</span>
+                    </div>
+                    <select value={instellingen.layoutLettertype ?? "Arial, sans-serif"} onChange={(e) => { updateVeld("layoutLettertype", e.target.value); slaOp({ layoutLettertype: e.target.value }); }} className="w-full h-9 rounded-lg border border-gray-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                      <option value="Arial, sans-serif">Arial</option>
+                      <option value="'Times New Roman', serif">Times New Roman</option>
+                      <option value="'Georgia', serif">Georgia</option>
+                      <option value="'Helvetica Neue', Helvetica, sans-serif">Helvetica</option>
+                      <option value="'Calibri', sans-serif">Calibri</option>
+                    </select>
+                    <div className="flex items-center gap-3">
+                      <input type="range" min="11" max="16" step="1" value={parseInt(instellingen.layoutLetterGrootte ?? "14")} onChange={(e) => updateVeld("layoutLetterGrootte", e.target.value)} onMouseUp={() => slaOp({ layoutLetterGrootte: instellingen.layoutLetterGrootte })} className="flex-1" />
+                      <span className="text-sm text-gray-500 w-12">{instellingen.layoutLetterGrootte ?? "14"}px</span>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Indeling */}
+                <Card>
+                  <CardHeader className="pb-3"><CardTitle className="text-base">Indeling &amp; logo</CardTitle></CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="grid grid-cols-3 gap-2">
+                      {(["krap", "normaal", "ruim"] as const).map((v) => (
+                        <button key={v} type="button" onClick={() => { updateVeld("layoutMarges", v); slaOp({ layoutMarges: v }); }} className={`py-2 rounded-lg border text-sm capitalize transition-colors ${(instellingen.layoutMarges ?? "normaal") === v ? "border-indigo-500 bg-indigo-50 text-indigo-700 font-medium" : "border-gray-200 text-gray-600 hover:border-gray-300"}`}>{v}</button>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      {([["links", "Logo links"], ["midden", "Logo midden"], ["rechts", "Logo rechts"]] as const).map(([v, l]) => (
+                        <button key={v} type="button" onClick={() => { updateVeld("layoutLogoPositie", v); slaOp({ layoutLogoPositie: v }); }} className={`py-2 rounded-lg border text-xs transition-colors ${(instellingen.layoutLogoPositie ?? "links") === v ? "border-indigo-500 bg-indigo-50 text-indigo-700 font-medium" : "border-gray-200 text-gray-600 hover:border-gray-300"}`}>{l}</button>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      {([["small", "Klein"], ["medium", "Normaal"], ["large", "Groot"]] as const).map(([v, l]) => (
+                        <button key={v} type="button" onClick={() => { updateVeld("layoutLogoGrootte", v); slaOp({ layoutLogoGrootte: v }); }} className={`py-2 rounded-lg border text-xs transition-colors ${(instellingen.layoutLogoGrootte ?? "medium") === v ? "border-indigo-500 bg-indigo-50 text-indigo-700 font-medium" : "border-gray-200 text-gray-600 hover:border-gray-300"}`}>{l}</button>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Blokken & volgorde */}
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base">Blokken &amp; volgorde</CardTitle>
+                    <CardDescription className="text-xs">Sleep blokken om de volgorde te wijzigen, of gebruik de pijltjes. Koptekst en voettekst zijn vrij in te vullen.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-1">
+                    {secties.map((sectie, i) => {
+                      const isKop = sectie === "koptekst";
+                      const isVoet = sectie === "voettekst";
+                      const heeftTekst = isKop || isVoet;
+                      const veldInfo = SECTIE_VELDEN[sectie];
+                      const isDragging = dragIndex === i;
+                      const isDragTarget = dragIndex !== null && dragIndex !== i;
+                      return (
+                        <div
+                          key={sectie}
+                          draggable
+                          onDragStart={() => setDragIndex(i)}
+                          onDragOver={(e) => { e.preventDefault(); }}
+                          onDrop={() => {
+                            if (dragIndex === null || dragIndex === i) return;
+                            const nieuw = [...secties];
+                            const [verwijderd] = nieuw.splice(dragIndex, 1);
+                            nieuw.splice(i, 0, verwijderd);
+                            const json = JSON.stringify(nieuw);
+                            updateVeld("layoutSectieVolgorde", json);
+                            slaOp({ layoutSectieVolgorde: json });
+                            setDragIndex(null);
+                          }}
+                          onDragEnd={() => setDragIndex(null)}
+                          className={`rounded-lg border overflow-hidden transition-all ${
+                            isDragging
+                              ? "opacity-50 border-indigo-300 bg-indigo-50"
+                              : isDragTarget
+                              ? "border-indigo-200 bg-gray-50"
+                              : "border-gray-100 bg-gray-50"
+                          } cursor-grab active:cursor-grabbing`}
+                        >
+                          <div className="flex items-center gap-2 px-3 py-2">
+                            {/* Drag handle */}
+                            <span className="text-gray-300 select-none text-base leading-none" style={{ cursor: "grab" }}>⠿</span>
+                            <div className="flex-1 min-w-0">
+                              <span className="text-sm text-gray-700 font-medium">{SECTIE_LABELS[sectie] ?? sectie}</span>
+                              {veldInfo && (
+                                <p className="text-xs text-gray-400 mt-0.5 truncate">{veldInfo}</p>
+                              )}
+                            </div>
+                            <div className="flex gap-1 shrink-0">
+                              <button type="button" onClick={() => verplaatsSectie(i, -1)} disabled={i === 0} className="p-1 rounded hover:bg-white disabled:opacity-30 text-gray-400"><ChevronUp className="h-3.5 w-3.5" /></button>
+                              <button type="button" onClick={() => verplaatsSectie(i, 1)} disabled={i === secties.length - 1} className="p-1 rounded hover:bg-white disabled:opacity-30 text-gray-400"><ChevronDown className="h-3.5 w-3.5" /></button>
+                            </div>
+                          </div>
+                          {heeftTekst && (
+                            <div className="px-3 pb-3">
+                              <textarea rows={2} value={(isKop ? instellingen.layoutKoptekst : instellingen.layoutVoettekst) ?? ""} onChange={(e) => updateVeld(isKop ? "layoutKoptekst" : "layoutVoettekst", e.target.value)} onBlur={() => slaOp(isKop ? { layoutKoptekst: instellingen.layoutKoptekst } : { layoutVoettekst: instellingen.layoutVoettekst })} placeholder={isKop ? "Tekst bovenaan de factuur... (laat leeg om te verbergen)" : "Bijv. betalingsvoorwaarden, bedankt voor uw opdracht..."} className="w-full text-xs rounded-md border border-gray-200 bg-white px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </CardContent>
+                </Card>
+
+                {/* Velden tonen/verbergen */}
+                <Card>
+                  <CardHeader className="pb-3"><CardTitle className="text-base">Velden tonen / verbergen</CardTitle></CardHeader>
+                  <CardContent className="space-y-1">
+                    {!instellingen.korActief && <Toggle veld="layoutToonBtwNummer" label="BTW-nummer" />}
+                    <Toggle veld="layoutToonKvkNummer" label="KvK-nummer" />
+                    <Toggle veld="layoutToonIban" label="IBAN in betalingsblok" />
+                    <Toggle veld="layoutToonQrCode" label="SEPA betaal-QR-code" />
+                    <Toggle veld="onbetaaldeFactuurMelding" label="Popup bij vervallen facturen" />
+                  </CardContent>
+                </Card>
+
+                {/* Volledig maatwerk HTML-template */}
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base">Volledig maatwerk factuurtemplate (HTML/CSS)</CardTitle>
+                    <CardDescription className="text-xs">Gebruik eigen HTML/CSS in plaats van de standaard opmaak. Gebruik {"{{"}<span>variabele</span>{"}}"} placeholders.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <textarea
+                      rows={20}
+                      className="w-full font-mono text-xs rounded-md border border-gray-200 bg-white px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      placeholder="Laat leeg om de standaard opmaak te gebruiken..."
+                      value={instellingen.factuurHtmlTemplate ?? ""}
+                      onChange={(e) => updateVeld("factuurHtmlTemplate", e.target.value)}
+                      onBlur={() => slaOp({ factuurHtmlTemplate: instellingen.factuurHtmlTemplate })}
+                    />
+                    <details className="rounded-lg border border-gray-100 bg-gray-50">
+                      <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-gray-600 select-none">Beschikbare variabelen</summary>
+                      <div className="px-3 pb-3 pt-1 space-y-2 text-xs text-gray-600">
+                        <div>
+                          <p className="font-semibold text-gray-700 mb-1">Bedrijf</p>
+                          <ul className="space-y-0.5 font-mono text-gray-500">
+                            <li>{"{{bedrijfsnaam}}"}</li>
+                            <li>{"{{bedrijfAdres}}"}</li>
+                            <li>{"{{bedrijfPostcode}}"}</li>
+                            <li>{"{{bedrijfStad}}"}</li>
+                            <li>{"{{bedrijfEmail}}"}</li>
+                            <li>{"{{bedrijfTelefoon}}"}</li>
+                            <li>{"{{bedrijfWebsite}}"}</li>
+                            <li>{"{{kvkNummer}}"}</li>
+                            <li>{"{{btwNummer}}"}</li>
+                            <li>{"{{iban}}"}</li>
+                            <li>{"{{logo}}"}</li>
+                          </ul>
+                        </div>
+                        <div>
+                          <p className="font-semibold text-gray-700 mb-1">Factuur</p>
+                          <ul className="space-y-0.5 font-mono text-gray-500">
+                            <li>{"{{factuurNummer}}"}</li>
+                            <li>{"{{factuurDatum}}"}</li>
+                            <li>{"{{vervaldatum}}"}</li>
+                            <li>{"{{notities}}"}</li>
+                            <li>{"{{betalingsCondities}}"}</li>
+                          </ul>
+                        </div>
+                        <div>
+                          <p className="font-semibold text-gray-700 mb-1">Klant</p>
+                          <ul className="space-y-0.5 font-mono text-gray-500">
+                            <li>{"{{klantNaam}}"}</li>
+                            <li>{"{{klantBedrijf}}"}</li>
+                            <li>{"{{klantAdres}}"}</li>
+                            <li>{"{{klantPostcode}}"}</li>
+                            <li>{"{{klantStad}}"}</li>
+                            <li>{"{{klantBtwNummer}}"}</li>
+                          </ul>
+                        </div>
+                        <div>
+                          <p className="font-semibold text-gray-700 mb-1">Totalen</p>
+                          <ul className="space-y-0.5 font-mono text-gray-500">
+                            <li>{"{{subtotaal}}"}</li>
+                            <li>{"{{kortingBedrag}}"}</li>
+                            <li>{"{{btwBedrag}}"}</li>
+                            <li>{"{{totaalBedrag}}"}</li>
+                          </ul>
+                        </div>
+                        <div>
+                          <p className="font-semibold text-gray-700 mb-1">Regels &amp; logo</p>
+                          <ul className="space-y-0.5 font-mono text-gray-500">
+                            <li>{"{{regelsHtml}}"} <span className="font-sans text-gray-400">(pre-rendered HTML tabel)</span></li>
+                            <li>{"{{logo}}"} <span className="font-sans text-gray-400">({"<img src=\"...\">"}  of leeg)</span></li>
+                          </ul>
+                        </div>
+                      </div>
+                    </details>
+                    <div className="flex items-center gap-2 justify-end pt-1">
+                      <button
+                        type="button"
+                        className="text-xs text-gray-500 hover:text-gray-700 underline"
+                        onClick={() => updateVeld("factuurHtmlTemplate", "")}
+                      >
+                        Reset naar standaard
+                      </button>
+                      <Button onClick={() => slaOp({ factuurHtmlTemplate: instellingen.factuurHtmlTemplate })} loading={opslaan}>
+                        Opslaan
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+
+              </div>
+
+              {/* Rechts: groot paginavullend voorbeeld */}
+              <div className="flex-1 flex flex-col min-w-0">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3 shrink-0">
+                  Live voorbeeld — wijzigingen zie je direct
+                </p>
+                <div
+                  ref={previewContainerRef}
+                  className="flex-1 overflow-y-auto rounded-xl bg-gray-100 dark:bg-gray-800 px-4 py-6"
+                  style={{ boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.08)" }}
+                >
+                  <div
+                    style={{
+                      width: `${Math.round(794 * previewSchaal)}px`,
+                      height: `${Math.round(1123 * previewSchaal)}px`,
+                      overflow: "hidden",
+                      borderRadius: "4px",
+                      boxShadow: "0 8px 40px rgba(0,0,0,0.18)",
+                      margin: "0 auto",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <div style={{ width: "794px", transformOrigin: "top left", transform: `scale(${previewSchaal})` }}>
+                      <FactuurLayoutPreview inst={instellingen} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
         {/* ── Email / SMTP ── */}
         {actieveTab === "email" && (
           <div className="space-y-6">
@@ -488,18 +1016,18 @@ export default function InstellingenPagina() {
                   <div className="sm:col-span-2">
                     <Input
                       label="SMTP Host"
-                      value={instellingen.smtpHost ?? ""}
-                      onChange={(e) => updateVeld("smtpHost", e.target.value)}
-                      onBlur={() => slaOp({ smtpHost: instellingen.smtpHost })}
+                      value={instellingen.emailSmtpHost ?? ""}
+                      onChange={(e) => updateVeld("emailSmtpHost", e.target.value)}
+                      onBlur={() => slaOp({ emailSmtpHost: instellingen.emailSmtpHost })}
                       placeholder="smtp.gmail.com"
                     />
                   </div>
                   <Input
                     label="Poort"
                     type="number"
-                    value={instellingen.smtpPort ?? 587}
-                    onChange={(e) => updateVeld("smtpPort", parseInt(e.target.value))}
-                    onBlur={() => slaOp({ smtpPort: instellingen.smtpPort })}
+                    value={instellingen.emailSmtpPort ?? 587}
+                    onChange={(e) => updateVeld("emailSmtpPort", parseInt(e.target.value))}
+                    onBlur={() => slaOp({ emailSmtpPort: instellingen.emailSmtpPort })}
                     placeholder="587"
                   />
                 </div>
@@ -512,17 +1040,17 @@ export default function InstellingenPagina() {
                   <button
                     type="button"
                     onClick={() => {
-                      const nieuw = !instellingen.smtpSecure;
-                      updateVeld("smtpSecure", nieuw);
-                      slaOp({ smtpSecure: nieuw });
+                      const nieuw = !instellingen.emailSmtpSecure;
+                      updateVeld("emailSmtpSecure", nieuw);
+                      slaOp({ emailSmtpSecure: nieuw });
                     }}
                     className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                      instellingen.smtpSecure ? "bg-indigo-600" : "bg-gray-200"
+                      instellingen.emailSmtpSecure ? "bg-indigo-600" : "bg-gray-200"
                     }`}
                   >
                     <span
                       className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
-                        instellingen.smtpSecure ? "translate-x-6" : "translate-x-1"
+                        instellingen.emailSmtpSecure ? "translate-x-6" : "translate-x-1"
                       }`}
                     />
                   </button>
@@ -532,17 +1060,17 @@ export default function InstellingenPagina() {
                   <Input
                     label="Gebruikersnaam / E-mail"
                     type="email"
-                    value={instellingen.smtpUser ?? ""}
-                    onChange={(e) => updateVeld("smtpUser", e.target.value)}
-                    onBlur={() => slaOp({ smtpUser: instellingen.smtpUser })}
+                    value={instellingen.emailSmtpUser ?? ""}
+                    onChange={(e) => updateVeld("emailSmtpUser", e.target.value)}
+                    onBlur={() => slaOp({ emailSmtpUser: instellingen.emailSmtpUser })}
                     placeholder="jij@gmail.com"
                   />
                   <Input
                     label="Wachtwoord / App-wachtwoord"
                     type="password"
-                    value={instellingen.smtpPass ?? ""}
-                    onChange={(e) => updateVeld("smtpPass", e.target.value)}
-                    onBlur={() => slaOp({ smtpPass: instellingen.smtpPass })}
+                    value={instellingen.emailSmtpPass ?? ""}
+                    onChange={(e) => updateVeld("emailSmtpPass", e.target.value)}
+                    onBlur={() => slaOp({ emailSmtpPass: instellingen.emailSmtpPass })}
                     placeholder="••••••••••••"
                   />
                 </div>
@@ -551,7 +1079,7 @@ export default function InstellingenPagina() {
                   <Button
                     variant="outline"
                     onClick={testEmail}
-                    disabled={emailTestStatus === "laden" || !instellingen.smtpHost}
+                    disabled={emailTestStatus === "laden" || !instellingen.emailSmtpHost}
                   >
                     {emailTestStatus === "laden" ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
@@ -617,64 +1145,125 @@ export default function InstellingenPagina() {
 
         {/* ── Google Agenda ── */}
         {actieveTab === "google" && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Google Agenda</CardTitle>
-              <CardDescription>Synchroniseer je afspraken met Google Calendar</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {instellingen.googleGekoppeld ? (
-                /* Verbonden */
-                <div className="space-y-4">
-                  <div className="flex items-center gap-3 rounded-lg bg-green-50 border border-green-200 p-4">
-                    <CheckCircle className="h-6 w-6 text-green-600 shrink-0" />
-                    <div>
-                      <p className="font-semibold text-green-800">Verbonden met Google</p>
-                      {instellingen.googleEmail && (
-                        <p className="text-sm text-green-700">{instellingen.googleEmail}</p>
-                      )}
-                    </div>
-                  </div>
-                  <p className="text-sm text-gray-600">
-                    Je Google Agenda is gekoppeld. Afspraken worden automatisch gesynchroniseerd en
-                    zijn zichtbaar in het Agenda-overzicht.
-                  </p>
-                  <Button
-                    variant="destructive"
-                    onClick={ontkoppelGoogle}
-                    loading={googleLaden}
+          <div className="space-y-4">
+            {/* Stap 1: Credentials */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Google OAuth-gegevens</CardTitle>
+                <CardDescription>
+                  Vereist om Google Agenda te koppelen. Maak een OAuth 2.0 client aan via de{" "}
+                  <button
+                    className="text-indigo-600 underline"
+                    onClick={() => window.api.shell.openExternal("https://console.cloud.google.com/apis/credentials")}
                   >
-                    <Unlink className="h-4 w-4" />
-                    Google Agenda ontkoppelen
-                  </Button>
+                    Google Cloud Console
+                  </button>.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-sm text-blue-800 space-y-1">
+                  <p className="font-semibold">Instructies:</p>
+                  <ol className="list-decimal list-inside space-y-1 text-blue-700">
+                    <li>Ga naar Google Cloud Console → APIs & Services → Credentials</li>
+                    <li>Maak een "OAuth 2.0 Client ID" aan van type "Desktop application"</li>
+                    <li>Kopieer de Client ID en Client Secret hieronder</li>
+                    <li>Activeer de "Google Calendar API" in je project</li>
+                  </ol>
                 </div>
-              ) : (
-                /* Niet verbonden */
-                <div className="space-y-4">
-                  <div className="rounded-lg bg-gray-50 border border-gray-200 p-4 space-y-3">
-                    <h3 className="font-semibold text-gray-900">Koppel je Google Agenda</h3>
+                <div className="grid gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Google Client ID</label>
+                    <Input
+                      value={instellingen.googleClientId ?? ""}
+                      onChange={(e) => updateVeld("googleClientId", e.target.value)}
+                      placeholder="123456789-abc....apps.googleusercontent.com"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Google Client Secret</label>
+                    <Input
+                      type="password"
+                      value={googleSecretInput}
+                      onChange={(e) => setGoogleSecretInput(e.target.value)}
+                      onBlur={async () => {
+                        if (googleSecretInput.trim()) {
+                          try {
+                            await window.api.instellingen.update({ googleClientSecret: googleSecretInput.trim() } as Record<string, unknown>);
+                            setGoogleSecretInput("");
+                            toonMelding("succes", "Client secret opgeslagen");
+                          } catch (e: unknown) {
+                            toonMelding("fout", `Client secret opslaan mislukt: ${e instanceof Error ? e.message : "onbekend"}`);
+                          }
+                        }
+                      }}
+                      placeholder="Plak of typ het client secret (wordt opgeslagen bij verlaten veld)"
+                    />
+                    <p className="text-xs text-gray-400 mt-1">Het secret wordt veilig opgeslagen en nooit getoond. Verlaat het veld om op te slaan.</p>
+                  </div>
+                </div>
+                <Button
+                  onClick={() => slaOp({ googleClientId: instellingen.googleClientId } as any)}
+                  loading={opslaan}
+                >
+                  Gegevens opslaan
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* Stap 2: Koppelen */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Google Agenda</CardTitle>
+                <CardDescription>Synchroniseer je afspraken met Google Calendar</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {instellingen.googleGekoppeld ? (
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-3 rounded-lg bg-green-50 border border-green-200 p-4">
+                      <CheckCircle className="h-6 w-6 text-green-600 shrink-0" />
+                      <div>
+                        <p className="font-semibold text-green-800">Verbonden met Google</p>
+                        {instellingen.googleEmail && (
+                          <p className="text-sm text-green-700">{instellingen.googleEmail}</p>
+                        )}
+                      </div>
+                    </div>
                     <p className="text-sm text-gray-600">
-                      Door je Google Agenda te koppelen kun je al je afspraken bekijken in AdminPro
-                      en direct facturen aanmaken vanuit een afspraak.
+                      Je Google Agenda is gekoppeld. Afspraken zijn zichtbaar in het Agenda-overzicht.
                     </p>
+                    <Button variant="destructive" onClick={ontkoppelGoogle} loading={googleLaden}>
+                      <Unlink className="h-4 w-4" />
+                      Google Agenda ontkoppelen
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {!instellingen.googleClientId && (
+                      <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800">
+                        ⚠ Vul eerst de Google Client ID en Client Secret in (bovenstaande kaart) voordat je koppelt.
+                      </div>
+                    )}
+                    <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-sm text-blue-800">
+                      <p>Na het klikken op de knop opent een browservenster. Log in bij Google en geef toestemming. De koppeling voltooit automatisch — je hoeft geen code te kopiëren.</p>
+                    </div>
                     <ul className="text-sm text-gray-600 space-y-1 list-disc list-inside">
                       <li>Bekijk afspraken in het maandoverzicht</li>
                       <li>Maak facturen vanuit een afspraak</li>
                       <li>Zie reistijden en locaties</li>
                     </ul>
+                    <Button
+                      onClick={koppelGoogle}
+                      loading={googleLaden}
+                      disabled={!instellingen.googleClientId}
+                    >
+                      <Link className="h-4 w-4" />
+                      {googleLaden ? "Wachten op Google toestemming..." : "Koppel Google Agenda"}
+                    </Button>
                   </div>
-                  <Button onClick={koppelGoogle} loading={googleLaden} className="gap-2">
-                    <Link className="h-4 w-4" />
-                    Koppel Google Agenda
-                  </Button>
-                  <p className="text-xs text-gray-400">
-                    Je wordt doorgestuurd naar Google om toestemming te geven. AdminPro krijgt
-                    alleen leestoegang tot je agenda.
-                  </p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+                )}
+              </CardContent>
+            </Card>
+          </div>
         )}
 
         {/* ── KOR ── */}
@@ -728,6 +1317,15 @@ export default function InstellingenPagina() {
                 </button>
               </div>
 
+              <Input
+                label="KOR ingangsdatum"
+                type="date"
+                value={instellingen.korIngangsDatum ?? ""}
+                onChange={(e) => updateVeld("korIngangsDatum", e.target.value)}
+                onBlur={() => slaOp({ korIngangsDatum: instellingen.korIngangsDatum })}
+                helperText="Datum waarop de KOR is ingegaan. Rapportages na deze datum tonen geen BTW meer."
+              />
+
               <div>
                 <Input
                   label="KOR drempelwaarde (jaarlijkse omzet)"
@@ -765,92 +1363,163 @@ export default function InstellingenPagina() {
 
         {/* ── Overig ── */}
         {actieveTab === "overig" && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Car className="h-5 w-5" />
-                Kilometervergoeding
-              </CardTitle>
-              <CardDescription>Tarief voor zakelijke reiskosten per kilometer</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-sm text-blue-800">
-                <p>
-                  De Belastingdienst hanteert een standaard vergoeding van <strong>€ 0,23 per km</strong> (2024).
-                  Dit tarief wordt gebruikt bij de kilometerregistratie om de aftrekbare vergoeding te berekenen.
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Car className="h-5 w-5" />
+                  Kilometervergoeding
+                </CardTitle>
+                <CardDescription>Tarief voor zakelijke reiskosten per kilometer</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-sm text-blue-800">
+                  <p>
+                    De Belastingdienst hanteert een standaard vergoeding van <strong>€ 0,23 per km</strong> (2024).
+                    Dit tarief wordt gebruikt bij de kilometerregistratie om de aftrekbare vergoeding te berekenen.
+                  </p>
+                </div>
+                <Input
+                  label="Kilometervergoeding (€ per km)"
+                  type="number"
+                  step="0.001"
+                  min="0"
+                  max="1"
+                  prefix="€"
+                  value={instellingen.kmVergoeding ?? 0.23}
+                  onChange={(e) => updateVeld("kmVergoeding", parseFloat(e.target.value))}
+                  onBlur={() => slaOp({ kmVergoeding: instellingen.kmVergoeding })}
+                  placeholder="0.23"
+                />
+                <p className="text-xs text-gray-400">
+                  Pas dit aan als je een ander tarief wilt hanteren, bijv. het hogere belastingvrije tarief voor motorfietsen (€ 0,23).
                 </p>
-              </div>
-              <Input
-                label="Kilometervergoeding (€ per km)"
-                type="number"
-                step="0.001"
-                min="0"
-                max="1"
-                prefix="€"
-                value={instellingen.kmVergoeding ?? 0.23}
-                onChange={(e) => updateVeld("kmVergoeding", parseFloat(e.target.value))}
-                onBlur={() => slaOp({ kmVergoeding: instellingen.kmVergoeding })}
-                placeholder="0.23"
-              />
-              <p className="text-xs text-gray-400">
-                Pas dit aan als je een ander tarief wilt hanteren, bijv. het hogere belastingvrije tarief voor motorfietsen (€ 0,23).
-              </p>
-              <div className="flex justify-end pt-2">
-                <Button onClick={() => slaOp({ kmVergoeding: instellingen.kmVergoeding })} loading={opslaan}>
-                  Opslaan
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+                <div className="flex justify-end pt-2">
+                  <Button onClick={() => slaOp({ kmVergoeding: instellingen.kmVergoeding })} loading={opslaan}>
+                    Opslaan
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Bankfeed automatisering</CardTitle>
+                <CardDescription>Stel een map in die automatisch wordt bewaakt voor nieuwe bankafschriften (CSV). Bij een nieuw bestand verschijnt een melding.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Bewaking map</label>
+                  <div className="flex gap-2">
+                    <input
+                      value={instellingen.bankAfschriftenMap ?? ''}
+                      readOnly
+                      className="flex-1 h-9 rounded-lg border border-gray-300 bg-gray-50 px-3 text-sm text-gray-600"
+                      placeholder="Geen map gekozen"
+                    />
+                    <Button
+                      variant="outline"
+                      onClick={async () => {
+                        try {
+                          const result = await window.api.app.kiesPdfMap() as string | null;
+                          if (result) {
+                            updateVeld('bankAfschriftenMap', result);
+                          }
+                        } catch {
+                          toonMelding('fout', 'Kon map niet selecteren');
+                        }
+                      }}
+                    >
+                      Kiezen
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         )}
 
         {/* ── AI / OCR ── */}
         {actieveTab === "ai" && (
-          <Card>
-            <CardHeader>
-              <CardTitle>AI / OCR — Bon scannen</CardTitle>
-              <CardDescription>Gebruik Claude Vision om bonnen automatisch uit te lezen</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="rounded-lg bg-indigo-50 border border-indigo-200 p-4 text-sm text-indigo-900 space-y-2">
-                <p className="font-semibold">Hoe werkt het?</p>
-                <p>
-                  Na het uploaden van een bon kun je op "Scannen" klikken. AdminPro stuurt de
-                  afbeelding naar de Claude Vision API en leest automatisch het bedrag,
-                  de leverancier en de datum uit.
-                </p>
-                <p className="text-indigo-700">
-                  Vereist een Anthropic API-sleutel. Maak er een aan op{" "}
-                  <button
-                    type="button"
-                    className="underline"
-                    onClick={() => window.api.shell.openExternal("https://console.anthropic.com/")}
-                  >
-                    console.anthropic.com
-                  </button>
-                  .
-                </p>
-              </div>
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>AI / OCR — Bon scannen</CardTitle>
+                <CardDescription>Kies welk AI-model je gebruikt om bonnen automatisch uit te lezen</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="rounded-lg bg-indigo-50 border border-indigo-200 p-4 text-sm text-indigo-900 space-y-1">
+                  <p className="font-semibold">Hoe werkt het?</p>
+                  <p>Upload een foto van een bon. De app stuurt de afbeelding naar het gekozen AI-model en leest automatisch het bedrag, de leverancier en de datum uit. Ondersteunde formaten: JPG, PNG, WEBP.</p>
+                </div>
 
-              <Input
-                label="Anthropic API sleutel"
-                type="password"
-                value={instellingen.anthropicApiKey ?? ""}
-                onChange={(e) => updateVeld("anthropicApiKey", e.target.value)}
-                onBlur={() => slaOp({ anthropicApiKey: instellingen.anthropicApiKey })}
-                placeholder="sk-ant-api03-..."
-              />
-              <p className="text-xs text-gray-400">
-                De sleutel wordt veilig lokaal opgeslagen. Ondersteunde formaten: JPG, PNG, WEBP (geen PDF).
-              </p>
+                {/* Model keuze */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-3">AI-model voor bon scannen</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    {[
+                      { id: "claude", naam: "Claude (Anthropic)", omschrijving: "claude-haiku — snel en nauwkeurig", kleur: "indigo" },
+                      { id: "openai", naam: "ChatGPT (OpenAI)", omschrijving: "gpt-4o-mini — breed ondersteund", kleur: "green" },
+                    ].map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => updateVeld("aiModel", m.id)}
+                        className={`rounded-xl border-2 p-4 text-left transition-all ${
+                          (instellingen.aiModel ?? "claude") === m.id
+                            ? m.kleur === "indigo"
+                              ? "border-indigo-500 bg-indigo-50"
+                              : "border-green-500 bg-green-50"
+                            : "border-gray-200 bg-white hover:border-gray-300"
+                        }`}
+                      >
+                        <div className={`font-semibold text-sm ${(instellingen.aiModel ?? "claude") === m.id ? (m.kleur === "indigo" ? "text-indigo-700" : "text-green-700") : "text-gray-700"}`}>{m.naam}</div>
+                        <div className="text-xs text-gray-500 mt-1">{m.omschrijving}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
 
-              <div className="flex justify-end pt-2">
-                <Button onClick={() => slaOp({ anthropicApiKey: instellingen.anthropicApiKey })} loading={opslaan}>
-                  Opslaan
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+                {/* Claude API sleutel */}
+                <div className={`space-y-3 rounded-xl border p-4 transition-all ${(instellingen.aiModel ?? "claude") === "claude" ? "border-indigo-200 bg-indigo-50/40" : "border-gray-100 opacity-60"}`}>
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-semibold text-gray-700">Anthropic API sleutel</label>
+                    <button type="button" className="text-xs text-indigo-600 underline" onClick={() => window.api.shell.openExternal("https://console.anthropic.com/")}>
+                      Sleutel aanmaken ↗
+                    </button>
+                  </div>
+                  <Input
+                    type="password"
+                    value={instellingen.anthropicApiKey ?? ""}
+                    onChange={(e) => updateVeld("anthropicApiKey", e.target.value)}
+                    placeholder="sk-ant-api03-..."
+                  />
+                  {instellingen.anthropicApiKey && (
+                    <p className="text-xs text-indigo-600">✓ Sleutel ingesteld</p>
+                  )}
+                </div>
+
+                {/* OpenAI API sleutel */}
+                <div className={`space-y-3 rounded-xl border p-4 transition-all ${instellingen.aiModel === "openai" ? "border-green-200 bg-green-50/40" : "border-gray-100 opacity-60"}`}>
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-semibold text-gray-700">OpenAI API sleutel</label>
+                    <button type="button" className="text-xs text-green-600 underline" onClick={() => window.api.shell.openExternal("https://platform.openai.com/api-keys")}>
+                      Sleutel aanmaken ↗
+                    </button>
+                  </div>
+                  <Input
+                    type="password"
+                    value={instellingen.openaiApiKey ?? ""}
+                    onChange={(e) => updateVeld("openaiApiKey", e.target.value)}
+                    placeholder="sk-proj-..."
+                  />
+                  {instellingen.openaiApiKey && (
+                    <p className="text-xs text-green-600">✓ Sleutel ingesteld</p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         )}
 
         {/* ── Geavanceerd ── */}
@@ -1085,6 +1754,142 @@ export default function InstellingenPagina() {
               </CardContent>
             </Card>
 
+            {/* Jaarlijkse export */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Jaarlijkse export</CardTitle>
+                <CardDescription>Exporteer alle boekhouding van een jaar naar Excel of PDF-archief</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {exportMelding && (
+                  <div className="rounded-lg bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-800">
+                    {exportMelding}
+                  </div>
+                )}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Jaar selecteren</label>
+                  <select
+                    value={exportJaar}
+                    onChange={(e) => setExportJaar(parseInt(e.target.value))}
+                    className="h-9 rounded-lg border border-gray-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  >
+                    {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i).map((jaar) => (
+                      <option key={jaar} value={jaar}>{jaar}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <Button
+                    variant="outline"
+                    onClick={async () => {
+                      try {
+                        const result = await window.api.app.exporteerExcel(exportJaar) as { succes?: boolean; geannuleerd?: boolean; pad?: string; fout?: string };
+                        if (result.geannuleerd) return;
+                        if (result.succes) {
+                          toonMelding("succes", `Excel geëxporteerd naar: ${result.pad}`);
+                        } else {
+                          toonMelding("fout", result.fout ?? "Excel export mislukt");
+                        }
+                      } catch (e: unknown) {
+                        toonMelding("fout", e instanceof Error ? e.message : "Excel export mislukt");
+                      }
+                    }}
+                  >
+                    <Download className="h-4 w-4 mr-2" />
+                    Exporteer naar Excel (.xlsx)
+                  </Button>
+                  <Button
+                    variant="outline"
+                    loading={pdfArchiefLaden}
+                    onClick={async () => {
+                      setPdfArchiefLaden(true);
+                      setExportMelding(`Bezig met genereren van PDFs voor ${exportJaar}... Dit kan even duren.`);
+                      try {
+                        const result = await window.api.app.exportPdfArchief(exportJaar) as { succes?: boolean; geannuleerd?: boolean; pad?: string; aantalPdfs?: number; fout?: string };
+                        setExportMelding(null);
+                        if (result.geannuleerd) return;
+                        if (result.succes) {
+                          toonMelding("succes", `PDF-archief aangemaakt met ${result.aantalPdfs ?? ""} PDFs: ${result.pad}`);
+                        } else {
+                          toonMelding("fout", result.fout ?? "PDF-archief mislukt");
+                        }
+                      } catch (e: unknown) {
+                        setExportMelding(null);
+                        toonMelding("fout", e instanceof Error ? e.message : "PDF-archief mislukt");
+                      } finally {
+                        setPdfArchiefLaden(false);
+                      }
+                    }}
+                  >
+                    <Download className="h-4 w-4 mr-2" />
+                    PDF-archief aanmaken
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Testdata wissen */}
+            <Card className="border-red-200">
+              <CardHeader>
+                <CardTitle className="text-red-700">Testdata wissen</CardTitle>
+                <CardDescription>Verwijder alle geïmporteerde of aangemaakte gegevens. Alleen gebruiken tijdens het testen.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {wissenMelding && (
+                  <div className={`rounded-lg px-4 py-3 text-sm ${wissenMelding.type === "succes" ? "bg-green-50 border border-green-200 text-green-800" : "bg-red-50 border border-red-200 text-red-800"}`}>
+                    {wissenMelding.tekst}
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-3">
+                  <Button
+                    variant="outline"
+                    className="border-red-300 text-red-700 hover:bg-red-50"
+                    onClick={async () => {
+                      if (!confirm("Weet je zeker dat je ALLE inkomen-records wilt verwijderen? Dit kan niet ongedaan worden gemaakt.")) return;
+                      try {
+                        const result = await window.api.inkomen.deleteAll() as { succes: boolean; count: number };
+                        setWissenMelding({ type: "succes", tekst: `${result.count} inkomen-records verwijderd.` });
+                      } catch {
+                        setWissenMelding({ type: "fout", tekst: "Wissen van inkomen mislukt." });
+                      }
+                    }}
+                  >
+                    Alle inkomen wissen
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="border-red-300 text-red-700 hover:bg-red-50"
+                    onClick={async () => {
+                      if (!confirm("Weet je zeker dat je ALLE uitgaven wilt verwijderen? Dit kan niet ongedaan worden gemaakt.")) return;
+                      try {
+                        const result = await window.api.uitgaven.deleteAll() as { succes: boolean; count: number };
+                        setWissenMelding({ type: "succes", tekst: `${result.count} uitgaven verwijderd.` });
+                      } catch {
+                        setWissenMelding({ type: "fout", tekst: "Wissen van uitgaven mislukt." });
+                      }
+                    }}
+                  >
+                    Alle uitgaven wissen
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="border-red-300 text-red-700 hover:bg-red-50"
+                    onClick={async () => {
+                      if (!confirm("Weet je zeker dat je ALLE facturen wilt verwijderen? Dit kan niet ongedaan worden gemaakt.")) return;
+                      try {
+                        const result = await window.api.facturen.deleteAll() as { succes: boolean; count: number };
+                        setWissenMelding({ type: "succes", tekst: `${result.count} facturen verwijderd.` });
+                      } catch {
+                        setWissenMelding({ type: "fout", tekst: "Wissen van facturen mislukt." });
+                      }
+                    }}
+                  >
+                    Alle facturen wissen
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
             {/* Data & beveiliging */}
             <Card>
               <CardHeader>
@@ -1134,6 +1939,165 @@ export default function InstellingenPagina() {
                     Klanten, facturen, uren, km, inkomen, uitgaven — te openen in Excel
                   </p>
                 </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {actieveTab === "navigatie" && (() => {
+          const verborgen: string[] = JSON.parse(instellingen.verborgenPaginas ?? '[]');
+          const togglePagina = (href: string) => {
+            const nieuw = verborgen.includes(href)
+              ? verborgen.filter(h => h !== href)
+              : [...verborgen, href];
+            updateVeld('verborgenPaginas', JSON.stringify(nieuw));
+          };
+          return (
+            <div className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Navigatie verbergen</CardTitle>
+                  <CardDescription>
+                    Verborgen pagina's verdwijnen uit het hoofdmenu en zijn terug te vinden onder "Meer" onderaan de sidebar.
+                    Dashboard en Instellingen kunnen niet worden verborgen.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {ALLE_PAGINAS.map(pagina => {
+                    const isVerborgen = verborgen.includes(pagina.href);
+                    return (
+                      <div
+                        key={pagina.href}
+                        className="flex items-center justify-between py-2 border-b border-gray-100 dark:border-gray-800 last:border-0"
+                      >
+                        <span className="text-sm font-medium">{pagina.naam}</span>
+                        <button
+                          onClick={() => togglePagina(pagina.href)}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                            isVerborgen
+                              ? 'bg-gray-100 dark:bg-gray-800 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700'
+                              : 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/50'
+                          }`}
+                        >
+                          {isVerborgen
+                            ? <><EyeOff className="h-3.5 w-3.5" /> Verborgen</>
+                            : <><Eye className="h-3.5 w-3.5" /> Zichtbaar</>
+                          }
+                        </button>
+                      </div>
+                    );
+                  })}
+                </CardContent>
+              </Card>
+            </div>
+          );
+        })()}
+
+        {actieveTab === "bank" && (
+          <div className="space-y-4">
+            <KolomConfigurator
+              titel="Inkomsten kolomweergave"
+              omschrijving="Kies welke velden zichtbaar zijn in het inkomstenoverzicht na een bankimport, en bepaal de volgorde."
+              allVelden={ALLE_BANK_VELDEN}
+              velden={bankVeldenLijst}
+              setVelden={setBankVeldenLijst}
+            />
+            <KolomConfigurator
+              titel="Uitgaven kolomweergave"
+              omschrijving="Kies welke velden zichtbaar zijn in het uitgavenoverzicht, en bepaal de volgorde."
+              allVelden={ALLE_UITGAVEN_VELDEN}
+              velden={uitgavenVeldenLijst}
+              setVelden={setUitgavenVeldenLijst}
+            />
+            <div>
+              <Button
+                loading={opslaan}
+                onClick={async () => {
+                  await slaOp({
+                    bankWeergaveVelden: JSON.stringify(bankVeldenLijst),
+                    uitgavenWeergaveVelden: JSON.stringify(uitgavenVeldenLijst),
+                  });
+                  window.dispatchEvent(new CustomEvent('bankVeldenGewijzigd'));
+                }}
+              >
+                Toepassen
+              </Button>
+            </div>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Spaarrekeningen</CardTitle>
+                <CardDescription>
+                  Voeg IBAN-nummers of namen van tegenpartijen toe. Transacties waarbij de tegenrekening of naam overeenkomt worden als spaaroverschrijving herkend.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {(() => {
+                  const lijst: string[] = (() => { try { return JSON.parse(instellingen.spaarrekeningen ?? '[]') } catch { return [] } })();
+                  return (
+                    <>
+                      {lijst.length === 0 ? (
+                        <p className="text-sm text-gray-400">Geen spaarrekeningen toegevoegd.</p>
+                      ) : (
+                        <div className="space-y-1">
+                          {lijst.map((iban) => (
+                            <div key={iban} className="flex items-center justify-between py-2 px-3 rounded-lg border border-gray-200 bg-gray-50 dark:bg-gray-800 dark:border-gray-700">
+                              <span className="text-sm font-mono text-gray-700 dark:text-gray-300">{iban}
+                                <span className="ml-2 text-xs font-sans text-gray-400">{/^[A-Z]{2}\d{2}/.test(iban) ? "IBAN" : "naam tegenpartij"}</span>
+                              </span>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  const nieuw = lijst.filter(r => r !== iban);
+                                  updateVeld('spaarrekeningen', JSON.stringify(nieuw));
+                                  await slaOp({ spaarrekeningen: JSON.stringify(nieuw) });
+                                  window.dispatchEvent(new CustomEvent('bankVeldenGewijzigd'));
+                                }}
+                                className="text-gray-400 hover:text-red-500 transition-colors text-lg leading-none"
+                                title="Verwijderen"
+                              >×</button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="flex gap-2 pt-1">
+                        <input
+                          type="text"
+                          value={nieuweSpaarrekening}
+                          onChange={(e) => setNieuweSpaarrekening(e.target.value)}
+                          onKeyDown={async (e) => {
+                            if (e.key === 'Enter') {
+                              const iban = nieuweSpaarrekening.trim().toUpperCase();
+                              if (!iban) return;
+                              const nieuw = [...lijst, iban];
+                              updateVeld('spaarrekeningen', JSON.stringify(nieuw));
+                              await slaOp({ spaarrekeningen: JSON.stringify(nieuw) });
+                              setNieuweSpaarrekening("");
+                              window.dispatchEvent(new CustomEvent('bankVeldenGewijzigd'));
+                            }
+                          }}
+                          placeholder="NL00 BANK 0000 0000 00 of naam tegenpartij"
+                          className="flex-1 border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={async () => {
+                            const iban = nieuweSpaarrekening.trim().toUpperCase();
+                            if (!iban) return;
+                            const nieuw = [...lijst, iban];
+                            updateVeld('spaarrekeningen', JSON.stringify(nieuw));
+                            await slaOp({ spaarrekeningen: JSON.stringify(nieuw) });
+                            setNieuweSpaarrekening("");
+                            window.dispatchEvent(new CustomEvent('bankVeldenGewijzigd'));
+                          }}
+                        >
+                          Toevoegen
+                        </Button>
+                      </div>
+                    </>
+                  );
+                })()}
               </CardContent>
             </Card>
           </div>

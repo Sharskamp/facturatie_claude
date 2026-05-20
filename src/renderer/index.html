@@ -4,10 +4,130 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AdminPro</title>
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://www.googleapis.com https://oauth2.googleapis.com" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://www.googleapis.com https://oauth2.googleapis.com" />
+    <style>
+      @keyframes sf-pulse {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.6; transform: scale(0.97); }
+      }
+      @keyframes sf-bar {
+        0% { width: 0%; }
+        60% { width: 75%; }
+        100% { width: 90%; }
+      }
+      #splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(135deg, #1e1b4b 0%, #312e81 100%);
+        transition: opacity 0.4s ease, visibility 0.4s ease;
+      }
+      #splash.sf-fade-out {
+        opacity: 0;
+        visibility: hidden;
+      }
+      #sf-avatar {
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        background: #ffffff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 24px;
+        animation: sf-pulse 2s ease-in-out infinite;
+        overflow: hidden;
+      }
+      #sf-avatar img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        border-radius: 50%;
+      }
+      #sf-avatar-letters {
+        font-size: 28px;
+        font-weight: 700;
+        color: #312e81;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        letter-spacing: -1px;
+        user-select: none;
+      }
+      #sf-title {
+        color: #ffffff;
+        font-size: 28px;
+        font-weight: 700;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        letter-spacing: -0.5px;
+        margin-bottom: 32px;
+        text-align: center;
+      }
+      #sf-loader-track {
+        width: 200px;
+        height: 4px;
+        background: rgba(255,255,255,0.15);
+        border-radius: 9999px;
+        overflow: hidden;
+      }
+      #sf-loader-bar {
+        height: 100%;
+        background: rgba(255,255,255,0.8);
+        border-radius: 9999px;
+        animation: sf-bar 2.5s ease-out forwards;
+      }
+    </style>
   </head>
   <body>
+    <div id="splash">
+      <div id="sf-avatar">
+        <span id="sf-avatar-letters">SF</span>
+      </div>
+      <div id="sf-title">Streamline Facturatie</div>
+      <div id="sf-loader-track">
+        <div id="sf-loader-bar"></div>
+      </div>
+    </div>
+
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <script>
+      (function () {
+        var logo = localStorage.getItem('sf_logo');
+        if (logo) {
+          var letters = document.getElementById('sf-avatar-letters');
+          if (letters) {
+            var img = document.createElement('img');
+            img.src = logo;
+            img.alt = 'Logo';
+            letters.parentNode.replaceChild(img, letters);
+          }
+        }
+
+        var observer = new MutationObserver(function (mutations) {
+          for (var i = 0; i < mutations.length; i++) {
+            if (mutations[i].addedNodes.length > 0) {
+              var splash = document.getElementById('splash');
+              if (splash) {
+                splash.classList.add('sf-fade-out');
+                setTimeout(function () {
+                  var s = document.getElementById('splash');
+                  if (s && s.parentNode) s.parentNode.removeChild(s);
+                }, 500);
+              }
+              observer.disconnect();
+              break;
+            }
+          }
+        });
+
+        var root = document.getElementById('root');
+        if (root) {
+          observer.observe(root, { childList: true });
+        }
+      })();
+    </script>
   </body>
 </html>

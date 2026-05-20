@@ -302,6 +302,10 @@ export default function UrenPagina() {
     let duurMinuten = 0;
     if (startTijd && eindTijd) {
       duurMinuten = Math.round((eindTijd.getTime() - startTijd.getTime()) / 60000);
+      if (duurMinuten < 0) {
+        toonMelding("fout", "Eindtijd moet na starttijd liggen");
+        return;
+      }
     }
     const uurtarief = formulier.uurtarief ? parseFloat(formulier.uurtarief) : null;
     const bedrag = uurtarief && duurMinuten > 0 ? (duurMinuten / 60) * uurtarief : null;

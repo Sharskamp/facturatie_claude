@@ -9,6 +9,8 @@ import {
   Filter,
   Upload,
   ScanLine,
+  Cpu,
+  Settings2,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -63,6 +65,7 @@ interface Uitgave {
   zakelijkPercent: number;
   notities?: string | null;
   bonBestand?: string | null;
+  tegenrekening?: string | null;
 }
 
 const BTW_OPTIES = [
@@ -104,22 +107,42 @@ const LEEG_FORMULIER = {
   notities: "",
 };
 
+const ALLE_UITGAVEN_VELDEN = [
+  { id: 'datum', label: 'Datum', verplicht: true },
+  { id: 'omschrijving', label: 'Omschrijving', verplicht: true },
+  { id: 'bedrag', label: 'Excl. BTW', verplicht: true },
+  { id: 'totaal', label: 'Totaal', verplicht: true },
+  { id: 'leverancier', label: 'Leverancier' },
+  { id: 'categorie', label: 'Categorie' },
+  { id: 'btw', label: 'BTW' },
+];
+
 export default function UitgavenPagina() {
   const [uitgaven, setUitgaven] = useState<Uitgave[]>([]);
   const [categorieen, setCategorieen] = useState<Categorie[]>([]);
   const [laden, setLaden] = useState(true);
   const [maandFilter, setMaandFilter] = useState(huidigeMaand());
   const [categorieFilter, setCategorieFilter] = useState("alle");
+  const [kolomFilters, setKolomFilters] = useState<Record<string, string>>({});
   const [modalOpen, setModalOpen] = useState(false);
   const [bewerkenId, setBewerkenId] = useState<string | null>(null);
   const [melding, setMelding] = useState<{ type: "succes" | "fout"; tekst: string } | null>(null);
   const [opslaan, setOpslaan] = useState(false);
+  const [uitgavenVelden, setUitgavenVelden] = useState<string[]>(ALLE_UITGAVEN_VELDEN.map(v => v.id));
+  const [spaarIbans, setSpaarIbans] = useState<string[]>([]);
+  const [verbergSpaarrekeningen, setVerbergSpaarrekeningen] = useState(false);
+
+  const [categorieModalOpen, setCategorieModalOpen] = useState(false);
+  const [nieuwCategorie, setNieuwCategorie] = useState({ naam: '', kleur: '#6366f1' });
 
   const [formulier, setFormulier] = useState(LEEG_FORMULIER);
   const [huidigeBon, setHuidigeBon] = useState<string | null>(null);
+  const [pendingBonPad, setPendingBonPad] = useState<string | null>(null);
+  const [modalScanLaden, setModalScanLaden] = useState(false);
   // Scan-bon state: welke uitgave heeft net een bon gekregen en klaar is om te scannen
   const [bonScanInfo, setBonScanInfo] = useState<{ uitgaveId: string; bonPad: string } | null>(null);
   const [scanLaden, setScanLaden] = useState(false);
+  const [scanEngine, setScanEngine] = useState<"lokaal" | "ai">("lokaal");
 
   const haalUitgavenOp = useCallback(async () => {
     try {
@@ -151,6 +174,28 @@ export default function UitgavenPagina() {
     haalCategorieenOp();
   }, [haalCategorieenOp]);
 
+  useEffect(() => {
+    const laadVelden = () => {
+      window.api.instellingen.get().then((inst: any) => {
+        if (inst?.uitgavenWeergaveVelden) {
+          try {
+            const velden = JSON.parse(inst.uitgavenWeergaveVelden);
+            if (Array.isArray(velden) && velden.length > 0) setUitgavenVelden(velden);
+          } catch {}
+        }
+        if (inst?.spaarrekeningen) {
+          try {
+            const ibans = JSON.parse(inst.spaarrekeningen);
+            if (Array.isArray(ibans)) setSpaarIbans(ibans);
+          } catch {}
+        }
+      }).catch(() => {});
+    };
+    laadVelden();
+    window.addEventListener('bankVeldenGewijzigd', laadVelden);
+    return () => window.removeEventListener('bankVeldenGewijzigd', laadVelden);
+  }, []);
+
   const toonMelding = (type: "succes" | "fout", tekst: string) => {
     setMelding({ type, tekst });
     setTimeout(() => setMelding(null), 4000);
@@ -160,6 +205,7 @@ export default function UitgavenPagina() {
     setFormulier(LEEG_FORMULIER);
     setBewerkenId(null);
     setHuidigeBon(null);
+    setPendingBonPad(null);
   };
 
   const openBewerken = (uitgave: Uitgave) => {
@@ -205,7 +251,10 @@ export default function UitgavenPagina() {
       if (bewerkenId) {
         await window.api.uitgaven.update(bewerkenId, payload);
       } else {
-        await window.api.uitgaven.create(payload);
+        const nieuw = await window.api.uitgaven.create(payload) as { id: string };
+        if (pendingBonPad && nieuw.id) {
+          await window.api.uitgaven.update(nieuw.id, { bonBestand: pendingBonPad });
+        }
       }
       toonMelding("succes", bewerkenId ? "Uitgave bijgewerkt" : "Uitgave toegevoegd");
       setModalOpen(false);
@@ -229,11 +278,65 @@ export default function UitgavenPagina() {
     }
   };
 
-  const totaalUitgaven = uitgaven.reduce((s, u) => s + u.bedrag, 0);
-  const totaalBtw = uitgaven.reduce((s, u) => s + u.btw, 0);
+  const kiesBonHandler = async () => {
+    if (bewerkenId) {
+      const res = await window.api.uitgaven.uploadBon({ uitgaveId: bewerkenId }) as { succes: boolean; pad?: string };
+      if (res.succes && res.pad) {
+        setHuidigeBon(res.pad);
+        haalUitgavenOp();
+      }
+    } else {
+      const res = await window.api.uitgaven.kiesBon();
+      if (res.succes && res.pad) {
+        setPendingBonPad(res.pad);
+      }
+    }
+  };
+
+  const scanBonInModal = async () => {
+    const bonPad = huidigeBon || pendingBonPad;
+    if (!bonPad) return;
+    setModalScanLaden(true);
+    try {
+      const res = await window.api.uitgaven.scanBon({ bonPad, lokaal: scanEngine === "lokaal" });
+      if (res.error) {
+        toonMelding("fout", res.error);
+      } else {
+        setFormulier((prev) => ({
+          ...prev,
+          ...(res.bedrag != null ? { bedrag: String(res.bedrag) } : {}),
+          ...(res.leverancier ? { leverancier: res.leverancier } : {}),
+          ...(res.datum ? { datum: res.datum } : {}),
+          ...(res.omschrijving && !prev.omschrijving ? { omschrijving: res.omschrijving } : {}),
+        }));
+        toonMelding("succes", "Gegevens uitgelezen en ingevuld");
+      }
+    } catch {
+      toonMelding("fout", "Scannen mislukt");
+    } finally {
+      setModalScanLaden(false);
+    }
+  };
+
+  const isSpaarUitgave = (u: Uitgave) => spaarIbans.some(s =>
+    u.tegenrekening?.toUpperCase() === s.toUpperCase() ||
+    (u.leverancier?.toLowerCase() === s.toLowerCase() && s.length > 0)
+  );
+  const bevat = (val: string | null | undefined, f: string) => !f || (val ?? "").toLowerCase().includes(f.toLowerCase());
+  const zichtbareUitgaven = (verbergSpaarrekeningen ? uitgaven.filter(u => !isSpaarUitgave(u)) : uitgaven).filter(u =>
+    bevat(u.datum, kolomFilters.datum ?? "") &&
+    bevat(u.omschrijving, kolomFilters.omschrijving ?? "") &&
+    bevat(u.leverancier, kolomFilters.leverancier ?? "") &&
+    bevat(u.categorie?.naam, kolomFilters.categorie ?? "") &&
+    bevat(String(u.bedrag), kolomFilters.bedrag ?? "") &&
+    bevat(String(u.btw), kolomFilters.btw ?? "") &&
+    bevat(String(u.totaal), kolomFilters.totaal ?? "")
+  );
+  const totaalUitgaven = zichtbareUitgaven.reduce((s, u) => s + u.bedrag, 0);
+  const totaalBtw = zichtbareUitgaven.reduce((s, u) => s + u.btw, 0);
 
   // Top 3 categorieën
-  const perCategorie = uitgaven.reduce<Record<string, { naam: string; totaal: number; kleur?: string | null }>>((acc, u) => {
+  const perCategorie = zichtbareUitgaven.reduce<Record<string, { naam: string; totaal: number; kleur?: string | null }>>((acc, u) => {
     const key = u.categorieId ?? "overig";
     const naam = u.categorie?.naam ?? "Overig";
     if (!acc[key]) acc[key] = { naam, totaal: 0, kleur: u.categorie?.kleur };
@@ -287,60 +390,77 @@ export default function UitgavenPagina() {
 
         {/* Bon scan notificatie */}
         {bonScanInfo && (
-          <div className="rounded-lg bg-indigo-50 border border-indigo-200 px-4 py-3 flex items-center justify-between gap-4">
-            <div className="flex items-center gap-2">
-              <ScanLine className="h-4 w-4 text-indigo-600 shrink-0" />
-              <span className="text-sm text-indigo-800 font-medium">
-                Bon opgeslagen. Wil je de gegevens automatisch uitlezen?
-              </span>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <Button
-                size="sm"
-                variant="outline"
-                loading={scanLaden}
-                onClick={async () => {
-                  setScanLaden(true);
-                  try {
-                    const res = await window.api.uitgaven.scanBon({ bonPad: bonScanInfo.bonPad }) as {
-                      bedrag?: number | null;
-                      leverancier?: string | null;
-                      datum?: string | null;
-                      error?: string;
-                    };
-                    if (res.error) {
-                      toonMelding("fout", res.error);
-                    } else {
-                      const updateData: Record<string, unknown> = {};
-                      if (res.bedrag != null) updateData.bedrag = res.bedrag;
-                      if (res.leverancier) updateData.leverancier = res.leverancier;
-                      if (res.datum) updateData.datum = res.datum;
-                      if (Object.keys(updateData).length > 0) {
-                        await window.api.uitgaven.update(bonScanInfo.uitgaveId, updateData);
-                        await haalUitgavenOp();
-                        toonMelding("succes",
-                          `Ingevuld: ${res.bedrag != null ? `€${res.bedrag}` : ""}${res.leverancier ? ` bij ${res.leverancier}` : ""}${res.datum ? ` op ${res.datum}` : ""}`
-                        );
+          <div className="rounded-lg bg-indigo-50 border border-indigo-200 px-4 py-3 space-y-2">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <ScanLine className="h-4 w-4 text-indigo-600 shrink-0" />
+                <span className="text-sm text-indigo-800 font-medium">
+                  Bon opgeslagen. Wil je de gegevens automatisch uitlezen?
+                </span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  loading={scanLaden}
+                  onClick={async () => {
+                    setScanLaden(true);
+                    try {
+                      const res = await window.api.uitgaven.scanBon({ bonPad: bonScanInfo.bonPad, lokaal: scanEngine === "lokaal" });
+                      if (res.error) {
+                        toonMelding("fout", res.error);
                       } else {
-                        toonMelding("fout", "Geen gegevens herkend op de bon");
+                        const updateData: Record<string, unknown> = {};
+                        if (res.bedrag != null) updateData.bedrag = res.bedrag;
+                        if (res.leverancier) updateData.leverancier = res.leverancier;
+                        if (res.datum) updateData.datum = res.datum;
+                        if (res.omschrijving) updateData.omschrijving = res.omschrijving;
+                        if (Object.keys(updateData).length > 0) {
+                          await window.api.uitgaven.update(bonScanInfo.uitgaveId, updateData);
+                          await haalUitgavenOp();
+                          toonMelding("succes",
+                            `Ingevuld: ${res.bedrag != null ? `€${res.bedrag}` : ""}${res.leverancier ? ` bij ${res.leverancier}` : ""}${res.datum ? ` op ${res.datum}` : ""}`
+                          );
+                        } else {
+                          toonMelding("fout", "Geen gegevens herkend op de bon");
+                        }
                       }
+                    } catch {
+                      toonMelding("fout", "Scannen mislukt");
+                    } finally {
+                      setScanLaden(false);
+                      setBonScanInfo(null);
                     }
-                  } catch {
-                    toonMelding("fout", "Scannen mislukt");
-                  } finally {
-                    setScanLaden(false);
-                    setBonScanInfo(null);
-                  }
-                }}
-              >
-                <ScanLine className="h-4 w-4" />
-                Scannen
-              </Button>
+                  }}
+                >
+                  {scanEngine === "lokaal" ? <Cpu className="h-4 w-4" /> : <ScanLine className="h-4 w-4" />}
+                  Scannen
+                </Button>
+                <button
+                  className="text-sm text-indigo-400 hover:text-indigo-600"
+                  onClick={() => setBonScanInfo(null)}
+                >
+                  Overslaan
+                </button>
+              </div>
+            </div>
+            {/* Scan engine kiezer */}
+            <div className="flex gap-2">
               <button
-                className="text-sm text-indigo-400 hover:text-indigo-600"
-                onClick={() => setBonScanInfo(null)}
+                onClick={() => setScanEngine("lokaal")}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
+                  scanEngine === "lokaal" ? "bg-white shadow text-gray-800 border border-gray-200" : "text-indigo-500 hover:text-indigo-700"
+                }`}
               >
-                Overslaan
+                <Cpu className="h-3 w-3" />Lokaal
+              </button>
+              <button
+                onClick={() => setScanEngine("ai")}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
+                  scanEngine === "ai" ? "bg-white shadow text-gray-800 border border-gray-200" : "text-indigo-500 hover:text-indigo-700"
+                }`}
+              >
+                <ScanLine className="h-3 w-3" />Claude AI
               </button>
             </div>
           </div>
@@ -422,6 +542,26 @@ export default function UitgavenPagina() {
               ))}
             </SelectContent>
           </Select>
+          <Button variant="outline" size="sm" onClick={() => setCategorieModalOpen(true)}>
+            <Settings2 className="h-4 w-4 mr-1" />
+            Categorieën beheren
+          </Button>
+          {spaarIbans.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setVerbergSpaarrekeningen(v => !v)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors ${
+                verbergSpaarrekeningen
+                  ? 'bg-purple-600 border-purple-600 text-white'
+                  : 'bg-white border-gray-300 text-gray-600 hover:border-purple-400 hover:text-purple-600 dark:bg-gray-800 dark:border-gray-600'
+              }`}
+            >
+              <span className={`inline-block w-8 h-4 rounded-full relative transition-colors ${verbergSpaarrekeningen ? 'bg-white/30' : 'bg-gray-200'}`}>
+                <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform ${verbergSpaarrekeningen ? 'translate-x-4' : 'translate-x-0.5'}`} />
+              </span>
+              Spaarrekeningen verbergen
+            </button>
+          )}
         </div>
 
         {/* Tabel */}
@@ -429,60 +569,84 @@ export default function UitgavenPagina() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Datum</TableHead>
-                <TableHead>Omschrijving</TableHead>
-                <TableHead>Leverancier</TableHead>
-                <TableHead>Categorie</TableHead>
-                <TableHead className="text-right">Excl. BTW</TableHead>
-                <TableHead className="text-right">BTW</TableHead>
-                <TableHead className="text-right">Totaal</TableHead>
+                {uitgavenVelden.includes('datum') && <TableHead>Datum</TableHead>}
+                {uitgavenVelden.includes('omschrijving') && <TableHead>Omschrijving</TableHead>}
+                {uitgavenVelden.includes('leverancier') && <TableHead>Leverancier</TableHead>}
+                {uitgavenVelden.includes('categorie') && <TableHead>Categorie</TableHead>}
+                {uitgavenVelden.includes('bedrag') && <TableHead className="text-right">Excl. BTW</TableHead>}
+                {uitgavenVelden.includes('btw') && <TableHead className="text-right">BTW</TableHead>}
+                {uitgavenVelden.includes('totaal') && <TableHead className="text-right">Totaal</TableHead>}
                 <TableHead className="text-right">Acties</TableHead>
+              </TableRow>
+              <TableRow className="bg-gray-50 dark:bg-gray-800/50">
+                {uitgavenVelden.includes('datum') && <TableHead className="py-1"><input value={kolomFilters.datum ?? ""} onChange={e => setKolomFilters(p => ({ ...p, datum: e.target.value }))} placeholder="Bevat..." className="w-full h-6 text-xs rounded border border-gray-200 px-1.5 font-normal focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white dark:bg-gray-700" /></TableHead>}
+                {uitgavenVelden.includes('omschrijving') && <TableHead className="py-1"><input value={kolomFilters.omschrijving ?? ""} onChange={e => setKolomFilters(p => ({ ...p, omschrijving: e.target.value }))} placeholder="Bevat..." className="w-full h-6 text-xs rounded border border-gray-200 px-1.5 font-normal focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white dark:bg-gray-700" /></TableHead>}
+                {uitgavenVelden.includes('leverancier') && <TableHead className="py-1"><input value={kolomFilters.leverancier ?? ""} onChange={e => setKolomFilters(p => ({ ...p, leverancier: e.target.value }))} placeholder="Bevat..." className="w-full h-6 text-xs rounded border border-gray-200 px-1.5 font-normal focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white dark:bg-gray-700" /></TableHead>}
+                {uitgavenVelden.includes('categorie') && <TableHead className="py-1"><input value={kolomFilters.categorie ?? ""} onChange={e => setKolomFilters(p => ({ ...p, categorie: e.target.value }))} placeholder="Bevat..." className="w-full h-6 text-xs rounded border border-gray-200 px-1.5 font-normal focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white dark:bg-gray-700" /></TableHead>}
+                {uitgavenVelden.includes('bedrag') && <TableHead className="py-1"><input value={kolomFilters.bedrag ?? ""} onChange={e => setKolomFilters(p => ({ ...p, bedrag: e.target.value }))} placeholder="Bevat..." className="w-full h-6 text-xs rounded border border-gray-200 px-1.5 font-normal text-right focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white dark:bg-gray-700" /></TableHead>}
+                {uitgavenVelden.includes('btw') && <TableHead className="py-1"><input value={kolomFilters.btw ?? ""} onChange={e => setKolomFilters(p => ({ ...p, btw: e.target.value }))} placeholder="Bevat..." className="w-full h-6 text-xs rounded border border-gray-200 px-1.5 font-normal text-right focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white dark:bg-gray-700" /></TableHead>}
+                {uitgavenVelden.includes('totaal') && <TableHead className="py-1"><input value={kolomFilters.totaal ?? ""} onChange={e => setKolomFilters(p => ({ ...p, totaal: e.target.value }))} placeholder="Bevat..." className="w-full h-6 text-xs rounded border border-gray-200 px-1.5 font-normal text-right focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white dark:bg-gray-700" /></TableHead>}
+                <TableHead />
               </TableRow>
             </TableHeader>
             <TableBody>
               {laden ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center py-8">
+                  <TableCell colSpan={uitgavenVelden.length + 1} className="text-center py-8">
                     <Loader2 className="h-6 w-6 animate-spin text-indigo-400 mx-auto" />
                   </TableCell>
                 </TableRow>
-              ) : uitgaven.length === 0 ? (
+              ) : zichtbareUitgaven.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center py-8 text-gray-400">
+                  <TableCell colSpan={uitgavenVelden.length + 1} className="text-center py-8 text-gray-400">
                     Geen uitgaven gevonden voor deze periode
                   </TableCell>
                 </TableRow>
               ) : (
-                uitgaven.map((uitgave) => (
+                zichtbareUitgaven.map((uitgave) => (
                   <TableRow key={uitgave.id}>
-                    <TableCell className="text-gray-500 whitespace-nowrap">
-                      {formatDatum(uitgave.datum)}
-                    </TableCell>
-                    <TableCell className="font-medium max-w-[180px] truncate">
-                      {uitgave.omschrijving}
-                    </TableCell>
-                    <TableCell className="text-gray-500">
-                      {uitgave.leverancier ?? <span className="text-gray-300">—</span>}
-                    </TableCell>
-                    <TableCell>
-                      {uitgave.categorie ? (
-                        <Badge variant={categorieBadgeVariant(uitgave.categorie.kleur)}>
-                          {uitgave.categorie.naam}
-                        </Badge>
-                      ) : (
-                        <span className="text-gray-300 text-xs">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right font-medium">
-                      {formatBedrag(uitgave.bedrag)}
-                    </TableCell>
-                    <TableCell className="text-right text-blue-600">
-                      {formatBedrag(uitgave.btw)}
-                      <span className="text-xs text-gray-400 ml-1">({uitgave.btwPercentage}%)</span>
-                    </TableCell>
-                    <TableCell className="text-right font-semibold text-red-700">
-                      {formatBedrag(uitgave.totaal)}
-                    </TableCell>
+                    {uitgavenVelden.includes('datum') && (
+                      <TableCell className="text-gray-500 whitespace-nowrap">
+                        {formatDatum(uitgave.datum)}
+                      </TableCell>
+                    )}
+                    {uitgavenVelden.includes('omschrijving') && (
+                      <TableCell className="font-medium max-w-[180px] truncate">
+                        {uitgave.omschrijving}
+                      </TableCell>
+                    )}
+                    {uitgavenVelden.includes('leverancier') && (
+                      <TableCell className="text-gray-500">
+                        {uitgave.leverancier ?? <span className="text-gray-300">—</span>}
+                      </TableCell>
+                    )}
+                    {uitgavenVelden.includes('categorie') && (
+                      <TableCell>
+                        {uitgave.categorie ? (
+                          <Badge variant={categorieBadgeVariant(uitgave.categorie.kleur)}>
+                            {uitgave.categorie.naam}
+                          </Badge>
+                        ) : (
+                          <span className="text-gray-300 text-xs">—</span>
+                        )}
+                      </TableCell>
+                    )}
+                    {uitgavenVelden.includes('bedrag') && (
+                      <TableCell className="text-right font-medium">
+                        {formatBedrag(uitgave.bedrag)}
+                      </TableCell>
+                    )}
+                    {uitgavenVelden.includes('btw') && (
+                      <TableCell className="text-right text-blue-600">
+                        {formatBedrag(uitgave.btw)}
+                        <span className="text-xs text-gray-400 ml-1">({uitgave.btwPercentage}%)</span>
+                      </TableCell>
+                    )}
+                    {uitgavenVelden.includes('totaal') && (
+                      <TableCell className="text-right font-semibold text-red-700">
+                        {formatBedrag(uitgave.totaal)}
+                      </TableCell>
+                    )}
                     <TableCell>
                       <div className="flex items-center justify-end gap-1">
                         <Button
@@ -680,74 +844,85 @@ export default function UitgavenPagina() {
               rows={2}
             />
 
-            {/* Bon uploaden */}
-            {bewerkenId && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Bon</label>
-                {huidigeBon ? (
+            {/* Bon uploaden (werkt voor zowel nieuwe als bestaande uitgaven) */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Bon / factuur</label>
+              {(huidigeBon || pendingBonPad) ? (
+                <div className="space-y-2">
                   <div className="flex items-center justify-between rounded-lg border border-green-200 bg-green-50 px-3 py-2">
                     <div className="flex items-center gap-2 min-w-0">
                       <Upload className="h-4 w-4 text-green-600 shrink-0" />
                       <span className="text-sm text-green-800 truncate">
-                        {huidigeBon.split(/[/\\]/).pop()}
+                        {(huidigeBon || pendingBonPad)!.split(/[/\\]/).pop()}
                       </span>
                     </div>
                     <div className="flex items-center gap-2 shrink-0 ml-2">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        type="button"
-                        onClick={() => window.api.uitgaven.openBon({ pad: huidigeBon })}
-                      >
-                        Openen
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        type="button"
-                        onClick={async () => {
-                          const res = await window.api.uitgaven.uploadBon({ uitgaveId: bewerkenId }) as { succes: boolean; pad?: string };
-                          if (res.succes && res.pad) {
-                            setHuidigeBon(res.pad);
-                            setBonScanInfo({ uitgaveId: bewerkenId, bonPad: res.pad });
-                            haalUitgavenOp();
-                          }
-                        }}
-                      >
+                      {huidigeBon && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          type="button"
+                          onClick={() => window.api.uitgaven.openBon({ pad: huidigeBon })}
+                        >
+                          Openen
+                        </Button>
+                      )}
+                      <Button variant="outline" size="sm" type="button" onClick={kiesBonHandler}>
                         Vervangen
                       </Button>
                     </div>
                   </div>
-                ) : (
-                  <div className="border-2 border-dashed border-gray-200 rounded-lg p-4 text-center">
-                    <Upload className="h-6 w-6 text-gray-300 mx-auto mb-2" />
-                    <p className="text-sm text-gray-400">Nog geen bon gekoppeld</p>
-                    <p className="text-xs text-gray-300 mt-1">PDF, JPG, PNG, WEBP</p>
+                  <div className="space-y-1.5">
+                    <div className="flex gap-1 p-0.5 bg-gray-100 rounded-lg">
+                      <button
+                        type="button"
+                        onClick={() => setScanEngine("lokaal")}
+                        className={`flex-1 flex items-center justify-center gap-1.5 py-1 rounded text-xs font-medium transition-colors ${
+                          scanEngine === "lokaal" ? "bg-white shadow text-gray-800" : "text-gray-500"
+                        }`}
+                      >
+                        <Cpu className="h-3 w-3" />Lokaal
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setScanEngine("ai")}
+                        className={`flex-1 flex items-center justify-center gap-1.5 py-1 rounded text-xs font-medium transition-colors ${
+                          scanEngine === "ai" ? "bg-white shadow text-gray-800" : "text-gray-500"
+                        }`}
+                      >
+                        <ScanLine className="h-3 w-3" />Claude AI
+                      </button>
+                    </div>
                     <Button
                       variant="outline"
                       size="sm"
-                      className="mt-2"
+                      className="w-full"
                       type="button"
-                      onClick={async () => {
-                        if (!bewerkenId) return;
-                        try {
-                          const res = await window.api.uitgaven.uploadBon({ uitgaveId: bewerkenId }) as { succes: boolean; pad?: string };
-                          if (res.succes && res.pad) {
-                            setHuidigeBon(res.pad);
-                            setBonScanInfo({ uitgaveId: bewerkenId, bonPad: res.pad });
-                            haalUitgavenOp();
-                          }
-                        } catch {
-                          toonMelding("fout", "Uploaden mislukt");
-                        }
-                      }}
+                      loading={modalScanLaden}
+                      onClick={scanBonInModal}
                     >
-                      Bestand kiezen
+                      {scanEngine === "lokaal" ? <Cpu className="h-4 w-4 mr-1" /> : <ScanLine className="h-4 w-4 mr-1" />}
+                      {scanEngine === "lokaal" ? "Uitlezen (lokaal)" : "Uitlezen met AI"}
                     </Button>
                   </div>
-                )}
-              </div>
-            )}
+                </div>
+              ) : (
+                <div className="border-2 border-dashed border-gray-200 rounded-lg p-4 text-center">
+                  <Upload className="h-6 w-6 text-gray-300 mx-auto mb-2" />
+                  <p className="text-sm text-gray-400">Bon of factuur bijvoegen</p>
+                  <p className="text-xs text-gray-300 mt-1">PDF, JPG, PNG, WEBP</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-2"
+                    type="button"
+                    onClick={kiesBonHandler}
+                  >
+                    Bestand kiezen
+                  </Button>
+                </div>
+              )}
+            </div>
           </div>
           <ModalFooter className="mt-2">
             <ModalClose asChild>
@@ -756,6 +931,89 @@ export default function UitgavenPagina() {
             <Button onClick={slaOp} loading={opslaan}>
               {bewerkenId ? "Opslaan" : "Toevoegen"}
             </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* Categorieën beheren Modal */}
+      <Modal open={categorieModalOpen} onOpenChange={setCategorieModalOpen}>
+        <ModalContent className="max-w-md">
+          <ModalHeader>
+            <ModalTitle>Categorieën beheren</ModalTitle>
+          </ModalHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              {categorieen.map((cat) => (
+                <div key={cat.id} className="flex items-center justify-between gap-2 py-1.5">
+                  <div className="flex items-center gap-2">
+                    <div
+                      className="h-3 w-3 rounded-full shrink-0"
+                      style={{ backgroundColor: cat.kleur ?? '#6366f1' }}
+                    />
+                    <span className="text-sm text-gray-800">{cat.naam}</span>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    title="Verwijderen"
+                    onClick={async () => {
+                      try {
+                        await window.api.categorien.delete(cat.id);
+                        await haalCategorieenOp();
+                      } catch {
+                        toonMelding("fout", "Kan categorie niet verwijderen (heeft nog gekoppelde uitgaven)");
+                      }
+                    }}
+                  >
+                    <Trash2 className="h-4 w-4 text-red-400" />
+                  </Button>
+                </div>
+              ))}
+              {categorieen.length === 0 && (
+                <p className="text-sm text-gray-400">Geen categorieën aangemaakt.</p>
+              )}
+            </div>
+            <div className="border-t border-gray-100 pt-4">
+              <p className="text-xs font-medium text-gray-500 mb-2 uppercase tracking-wide">Nieuwe categorie</p>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={nieuwCategorie.kleur}
+                  onChange={(e) => setNieuwCategorie((prev) => ({ ...prev, kleur: e.target.value }))}
+                  className="h-8 w-8 rounded border border-gray-200 cursor-pointer p-0.5"
+                  title="Kies kleur"
+                />
+                <Input
+                  placeholder="Naam categorie"
+                  value={nieuwCategorie.naam}
+                  onChange={(e) => setNieuwCategorie((prev) => ({ ...prev, naam: e.target.value }))}
+                  onKeyDown={async (e) => {
+                    if (e.key === 'Enter' && nieuwCategorie.naam.trim()) {
+                      await window.api.categorien.create({ naam: nieuwCategorie.naam.trim(), kleur: nieuwCategorie.kleur });
+                      setNieuwCategorie({ naam: '', kleur: '#6366f1' });
+                      await haalCategorieenOp();
+                    }
+                  }}
+                  className="flex-1"
+                />
+                <Button
+                  variant="outline"
+                  onClick={async () => {
+                    if (!nieuwCategorie.naam.trim()) return;
+                    await window.api.categorien.create({ naam: nieuwCategorie.naam.trim(), kleur: nieuwCategorie.kleur });
+                    setNieuwCategorie({ naam: '', kleur: '#6366f1' });
+                    await haalCategorieenOp();
+                  }}
+                >
+                  Toevoegen
+                </Button>
+              </div>
+            </div>
+          </div>
+          <ModalFooter className="mt-2">
+            <ModalClose asChild>
+              <Button variant="outline">Sluiten</Button>
+            </ModalClose>
           </ModalFooter>
         </ModalContent>
       </Modal>

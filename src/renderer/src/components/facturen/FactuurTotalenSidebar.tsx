@@ -35,6 +35,7 @@ export interface FactuurTotalenSidebarProps {
 export function FactuurTotalenSidebar({
   totalen,
   btwVerlegd,
+  korActief,
   totaalKortingActief,
   totaalKortingType,
   totaalKortingPercentage,
@@ -61,7 +62,7 @@ export function FactuurTotalenSidebar({
             <div>
               <p className="text-sm font-medium text-gray-700">Totaalkorting toepassen</p>
               <p className="text-xs text-gray-400">
-                Korting op het totaalbedrag (BTW wordt berekend over het bedrag na korting)
+                {korActief ? "Korting op het totaalbedrag" : "Korting op het totaalbedrag (BTW wordt berekend over het bedrag na korting)"}
               </p>
             </div>
             <button
@@ -183,19 +184,18 @@ export function FactuurTotalenSidebar({
             </div>
           )}
 
-          {btwVerlegd ? (
+          {!korActief && btwVerlegd && (
             <div className="flex justify-between text-sm">
               <span className="text-gray-500">BTW (verlegd)</span>
               <span className="text-gray-400">€ 0,00</span>
             </div>
-          ) : (
-            Object.entries(totalen.btwPerTarief).map(([tarief, bedrag]) => (
-              <div key={tarief} className="flex justify-between text-sm">
-                <span className="text-gray-500">BTW {tarief}</span>
-                <span className="text-gray-900">{formatBedrag(bedrag)}</span>
-              </div>
-            ))
           )}
+          {!korActief && !btwVerlegd && Object.entries(totalen.btwPerTarief).map(([tarief, bedrag]) => (
+            <div key={tarief} className="flex justify-between text-sm">
+              <span className="text-gray-500">BTW {tarief}</span>
+              <span className="text-gray-900">{formatBedrag(bedrag)}</span>
+            </div>
+          ))}
 
           <div className="flex justify-between items-center pt-3 mt-1 border-t-2 border-gray-900">
             <span className="font-bold text-gray-900">Totaal</span>

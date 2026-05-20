@@ -6,6 +6,17 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
+    build: {
+      rollupOptions: {
+        input: {
+          index: resolve('src/main/index.ts'),
+          'paddle-ocr-worker': resolve('src/lib/paddle-ocr-worker.ts'),
+        },
+        output: {
+          entryFileNames: '[name].js',
+        },
+      },
+    },
     resolve: {
       alias: {
         '@lib': resolve('src/lib'),

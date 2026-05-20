@@ -30,6 +30,12 @@ export function maakTransporter(config: EmailConfig) {
       user: config.user,
       pass: config.pass,
     },
+    connectionTimeout: 15000,
+    greetingTimeout: 10000,
+    socketTimeout: 30000,
+    tls: {
+      rejectUnauthorized: false,
+    },
   });
 }
 

@@ -14,6 +14,8 @@ import {
   FileDown,
   FileMinus,
   Bell,
+  FolderOpen,
+  Archive,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -59,6 +61,8 @@ interface Factuur {
   totaalKorting?: number;
   totaalKortingBedrag?: number;
   mollieBetaalLink?: string | null;
+  bronBestandPad?: string | null;
+  historisch?: boolean;
   regels: FactuurRegel[];
   klant: {
     id: string;
@@ -86,6 +90,7 @@ interface Instellingen {
   kvkNummer?: string;
   btwNummer?: string;
   iban?: string;
+  korActief?: boolean;
 }
 
 type VerstuurTab = "email" | "whatsapp";
@@ -110,6 +115,7 @@ export default function FactuurDetailPage() {
   const [creditnotaLaden, setCreditnotaLaden] = useState(false);
   const [herinneringLaden, setHerinneringLaden] = useState(false);
   const [mollieLaden, setMollieLaden] = useState(false);
+  const [checkLaden, setCheckLaden] = useState(false);
   const [melding, setMelding] = useState<{ type: "succes" | "fout"; tekst: string } | null>(null);
   const [auditLogs, setAuditLogs] = useState<Array<{id: string; actie: string; details?: string; aangemaakt: string}>>([]);
 
@@ -233,10 +239,12 @@ export default function FactuurDetailPage() {
     }
   }
 
+  const korActief = instellingen?.korActief ?? false;
+
   // Bereken BTW per tarief
   const btwGroepen = factuur?.regels.reduce(
     (acc, regel) => {
-      if (factuur.btwVerlegd) return acc;
+      if (factuur.btwVerlegd || korActief) return acc;
       const bruto = regel.prijs * regel.aantal;
       const korting = (bruto * regel.kortingPercentage) / 100;
       const netto = bruto - korting;
@@ -294,30 +302,48 @@ export default function FactuurDetailPage() {
                 Bewerken
               </Button>
             )}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => window.print()}
-            >
-              <Printer className="h-4 w-4" />
-              Afdrukken
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={async () => {
-                const res = await window.api.facturen.downloadPdf(id!) as { succes: boolean; fout?: string }
-                if (!res.succes && res.fout) {
-                  alert(`PDF mislukt: ${res.fout}`)
-                } else {
-                  window.api.audit.create({ factuurId: id!, actie: "PDF_GEDOWNLOAD" }).catch(() => {});
-                  window.api.audit.list(id!).then(setAuditLogs).catch(() => {});
-                }
-              }}
-            >
-              <FileDown className="h-4 w-4" />
-              PDF downloaden
-            </Button>
+            {!factuur.historisch && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => window.print()}
+              >
+                <Printer className="h-4 w-4" />
+                Afdrukken
+              </Button>
+            )}
+            {!factuur.historisch && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  const res = await window.api.facturen.downloadPdf(id!) as { succes: boolean; fout?: string }
+                  if (!res.succes && res.fout) {
+                    alert(`PDF mislukt: ${res.fout}`)
+                  } else {
+                    window.api.audit.create({ factuurId: id!, actie: "PDF_GEDOWNLOAD" }).catch(() => {});
+                    window.api.audit.list(id!).then(setAuditLogs).catch(() => {});
+                    laadFactuur();
+                  }
+                }}
+              >
+                <FileDown className="h-4 w-4" />
+                PDF downloaden
+              </Button>
+            )}
+            {factuur.bronBestandPad && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  const res = await window.api.facturen.openBronBestand(id!)
+                  if (!res.succes) toonMelding("fout", res.fout ?? "Bestand kon niet worden geopend")
+                }}
+              >
+                <FolderOpen className="h-4 w-4" />
+                Bekijk bestand
+              </Button>
+            )}
             {factuur.mollieBetaalLink ? (
               <Button
                 variant="outline"
@@ -352,6 +378,34 @@ export default function FactuurDetailPage() {
               >
                 <ExternalLink className="h-4 w-4" />
                 iDEAL betaallink
+              </Button>
+            )}
+            {factuur.mollieBetaalLink && factuur.status !== "BETAALD" && (
+              <Button
+                variant="outline"
+                size="sm"
+                loading={checkLaden}
+                onClick={async () => {
+                  setCheckLaden(true);
+                  try {
+                    const result = await window.api.mollie.checkBetalingStatus(id!);
+                    if (result.betaald === true) {
+                      toonMelding("succes", "Betaling ontvangen! Factuur gemarkeerd als betaald.");
+                      laadFactuur();
+                    } else if (result.fout) {
+                      toonMelding("fout", result.fout);
+                    } else {
+                      toonMelding("fout", "Nog geen betaling gevonden bij Mollie.");
+                    }
+                  } catch (e: unknown) {
+                    toonMelding("fout", e instanceof Error ? e.message : "Statuscontrole mislukt");
+                  } finally {
+                    setCheckLaden(false);
+                  }
+                }}
+              >
+                <CheckCircle2 className="h-4 w-4" />
+                Controleer betaalstatus
               </Button>
             )}
             {(factuur.status === "VERZONDEN" || factuur.status === "BETAALD") && (
@@ -422,6 +476,31 @@ export default function FactuurDetailPage() {
           </div>
         )}
 
+        {/* Historisch import banner */}
+        {factuur.historisch && (
+          <div className="max-w-4xl mx-auto mb-4 rounded-lg px-4 py-3 flex items-center justify-between gap-4 bg-amber-50 border border-amber-200 text-amber-800 text-sm">
+            <div className="flex items-center gap-2">
+              <Archive className="h-4 w-4 shrink-0" />
+              <span>
+                <span className="font-semibold">Historisch geïmporteerde factuur</span> — deze factuur is ingeladen vanuit een eerder opgemaakt document en is niet via de app aangemaakt.
+                {factuur.bronBestandPad && " Het originele bestand is bewaard en kan hieronder worden geopend."}
+              </span>
+            </div>
+            {factuur.bronBestandPad && (
+              <button
+                className="shrink-0 inline-flex items-center gap-1.5 font-medium underline underline-offset-2 hover:text-amber-900"
+                onClick={async () => {
+                  const res = await window.api.facturen.openBronBestand(id!)
+                  if (!res.succes) toonMelding("fout", res.fout ?? "Bestand kon niet worden geopend")
+                }}
+              >
+                <FolderOpen className="h-4 w-4" />
+                Origineel openen
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Factuur preview */}
         <Card className="max-w-4xl mx-auto print:shadow-none print:border-0">
           <CardContent className="p-8 sm:p-12">
@@ -450,12 +529,18 @@ export default function FactuurDetailPage() {
 
               {/* Factuurinfo rechts */}
               <div className="sm:text-right">
-                <div className="flex sm:justify-end mb-3">
+                <div className="flex sm:justify-end items-center gap-2 mb-3">
                   <span
                     className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-semibold ${statusKleur(effectiefStatus)}`}
                   >
                     {statusLabel(effectiefStatus)}
                   </span>
+                  {factuur.historisch && (
+                    <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium bg-amber-100 text-amber-700 border border-amber-200">
+                      <Archive className="h-3 w-3" />
+                      Historisch
+                    </span>
+                  )}
                 </div>
                 <h1 className="text-3xl font-bold text-gray-900 mb-3">
                   FACTUUR
@@ -518,8 +603,14 @@ export default function FactuurDetailPage() {
               )}
             </div>
 
+            {/* KOR melding */}
+            {korActief && (
+              <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+                KOR actief — deze factuur is verstuurd zonder BTW
+              </div>
+            )}
             {/* BTW verlegd melding */}
-            {factuur.btwVerlegd && (
+            {!korActief && factuur.btwVerlegd && (
               <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
                 BTW verlegd — de BTW wordt aangegeven door de afnemer
               </div>
@@ -542,9 +633,11 @@ export default function FactuurDetailPage() {
                     <th className="text-right py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
                       Prijs
                     </th>
-                    <th className="text-right py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                      BTW%
-                    </th>
+                    {!korActief && (
+                      <th className="text-right py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                        BTW%
+                      </th>
+                    )}
                     {factuur.regels.some((r) => r.kortingPercentage > 0) && (
                       <th className="text-right py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
                         Korting%
@@ -578,9 +671,11 @@ export default function FactuurDetailPage() {
                         <td className="py-3 text-sm text-gray-600 text-right">
                           {formatBedrag(regel.prijs)}
                         </td>
-                        <td className="py-3 text-sm text-gray-600 text-right">
-                          {factuur.btwVerlegd ? "Verlegd" : `${regel.btwPercentage}%`}
-                        </td>
+                        {!korActief && (
+                          <td className="py-3 text-sm text-gray-600 text-right">
+                            {factuur.btwVerlegd ? "Verlegd" : `${regel.btwPercentage}%`}
+                          </td>
+                        )}
                         {factuur.regels.some(
                           (r) => r.kortingPercentage > 0
                         ) && (
@@ -628,21 +723,20 @@ export default function FactuurDetailPage() {
                     {formatBedrag(factuur.subtotaal)}
                   </span>
                 </div>
-                {factuur.btwVerlegd ? (
+                {!korActief && factuur.btwVerlegd && (
                   <div className="flex justify-between text-sm">
                     <span className="text-gray-500">BTW (verlegd)</span>
                     <span className="text-gray-400">€ 0,00</span>
                   </div>
-                ) : (
-                  Object.entries(btwGroepen).map(([tarief, bedrag]) => (
-                    <div key={tarief} className="flex justify-between text-sm">
-                      <span className="text-gray-500">BTW {tarief}</span>
-                      <span className="text-gray-900">
-                        {formatBedrag(bedrag)}
-                      </span>
-                    </div>
-                  ))
                 )}
+                {!korActief && !factuur.btwVerlegd && Object.entries(btwGroepen).map(([tarief, bedrag]) => (
+                  <div key={tarief} className="flex justify-between text-sm">
+                    <span className="text-gray-500">BTW {tarief}</span>
+                    <span className="text-gray-900">
+                      {formatBedrag(bedrag)}
+                    </span>
+                  </div>
+                ))}
                 <div className="flex justify-between pt-3 border-t-2 border-gray-900">
                   <span className="font-bold text-gray-900 text-base">
                     Totaal

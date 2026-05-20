@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Link } from "react-router-dom";
 import {
@@ -9,6 +9,10 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  Legend,
 } from "recharts";
 import { TrendingUp, AlertCircle, TrendingDown, Activity, ArrowRight, Loader2, TriangleAlert, Building2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -37,10 +41,18 @@ interface Inkomen {
   datum: string;
 }
 
+interface Categorie {
+  id: string;
+  naam: string;
+  kleur?: string | null;
+}
+
 interface Uitgave {
   id: string;
   bedrag: number;
   datum: string;
+  categorieId?: string | null;
+  categorie?: Categorie | null;
 }
 
 interface MaandData {
@@ -54,6 +66,29 @@ interface Instellingen {
   korDrempel?: number;
 }
 
+function TrendBadge({ trend }: { trend: number }) {
+  const afgerond = Math.round(trend * 10) / 10;
+  if (afgerond === 0) {
+    return (
+      <span className="inline-flex items-center gap-0.5 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500">
+        = 0%
+      </span>
+    );
+  }
+  if (afgerond > 0) {
+    return (
+      <span className="inline-flex items-center gap-0.5 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
+        ▲ {afgerond.toFixed(1)}%
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-0.5 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
+      ▼ {Math.abs(afgerond).toFixed(1)}%
+    </span>
+  );
+}
+
 function StatCard({
   titel,
   waarde,
@@ -61,6 +96,7 @@ function StatCard({
   kleur,
   sub,
   laden,
+  trend,
 }: {
   titel: string;
   waarde: string;
@@ -68,6 +104,7 @@ function StatCard({
   kleur: string;
   sub?: string;
   laden: boolean;
+  trend?: number;
 }) {
   return (
     <Card>
@@ -83,7 +120,10 @@ function StatCard({
             ) : (
               <p className="text-2xl font-bold text-gray-900 mt-1">{waarde}</p>
             )}
-            {sub && !laden && <p className="text-xs text-gray-400 mt-1">{sub}</p>}
+            <div className="flex items-center gap-2 mt-1">
+              {sub && !laden && <p className="text-xs text-gray-400">{sub}</p>}
+              {trend !== undefined && !laden && <TrendBadge trend={trend} />}
+            </div>
           </div>
           <div className={`flex items-center justify-center h-11 w-11 rounded-xl ${kleur}`}>
             <Icon className="h-5 w-5" />
@@ -93,6 +133,17 @@ function StatCard({
     </Card>
   );
 }
+
+// Stable date constants computed once per module load (refresh resets them, which is fine)
+const nu = new Date();
+const beginMaand = startOfMonth(nu);
+const eindeMaand = endOfMonth(nu);
+const beginVorigeMaand = startOfMonth(subMonths(nu, 1));
+const eindeVorigeMaand = endOfMonth(subMonths(nu, 1));
+const jaarBegin = new Date(nu.getFullYear(), 0, 1);
+const jaarEinde = new Date(nu.getFullYear(), 11, 31, 23, 59, 59);
+
+const PIE_KLEUREN = ["#6366f1", "#f59e0b", "#10b981", "#ef4444", "#3b82f6", "#8b5cf6", "#ec4899", "#14b8a6"];
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -124,74 +175,161 @@ export default function Dashboard() {
     laadData();
   }, []);
 
-  const nu = new Date();
-  const beginMaand = startOfMonth(nu);
-  const eindeMaand = endOfMonth(nu);
+  const omzetDezeMaand = useMemo(
+    () =>
+      facturen
+        .filter((f) => {
+          const d = new Date(f.datum);
+          return (
+            (f.status === "BETAALD" || f.status === "VERZONDEN") &&
+            d >= beginMaand &&
+            d <= eindeMaand
+          );
+        })
+        .reduce((s, f) => s + f.totaal, 0),
+    [facturen]
+  );
 
-  const omzetDezeMaand = facturen
-    .filter((f) => {
-      const d = new Date(f.datum);
-      return (
-        (f.status === "BETAALD" || f.status === "VERZONDEN") &&
-        d >= beginMaand &&
-        d <= eindeMaand
-      );
-    })
-    .reduce((s, f) => s + f.totaal, 0);
+  const omzetVorigeMaand = useMemo(
+    () =>
+      facturen
+        .filter((f) => {
+          const d = new Date(f.datum);
+          return (
+            (f.status === "BETAALD" || f.status === "VERZONDEN") &&
+            d >= beginVorigeMaand &&
+            d <= eindeVorigeMaand
+          );
+        })
+        .reduce((s, f) => s + f.totaal, 0),
+    [facturen]
+  );
 
-  const openstaand = facturen
-    .filter((f) => f.status === "VERZONDEN" || f.status === "VERLOPEN")
-    .reduce((s, f) => s + f.totaal, 0);
+  const trendOmzet = useMemo(
+    () => ((omzetDezeMaand - omzetVorigeMaand) / (omzetVorigeMaand || 1)) * 100,
+    [omzetDezeMaand, omzetVorigeMaand]
+  );
 
-  const uitgavenDezeMaand = uitgaven
-    .filter((u) => {
-      const d = new Date(u.datum);
-      return d >= beginMaand && d <= eindeMaand;
-    })
-    .reduce((s, u) => s + u.bedrag, 0);
+  const openstaand = useMemo(
+    () =>
+      facturen
+        .filter((f) => f.status === "VERZONDEN" || f.status === "VERLOPEN")
+        .reduce((s, f) => s + f.totaal, 0),
+    [facturen]
+  );
 
-  const nettoResultaat = omzetDezeMaand - uitgavenDezeMaand;
+  const uitgavenDezeMaand = useMemo(
+    () =>
+      uitgaven
+        .filter((u) => {
+          const d = new Date(u.datum);
+          return d >= beginMaand && d <= eindeMaand;
+        })
+        .reduce((s, u) => s + u.bedrag, 0),
+    [uitgaven]
+  );
 
-  const maandGrafiek: MaandData[] = Array.from({ length: 6 }, (_, i) => {
-    const maand = subMonths(nu, 5 - i);
-    const begin = startOfMonth(maand);
-    const einde = endOfMonth(maand);
-    const omzet = facturen
-      .filter((f) => {
-        const d = new Date(f.datum);
-        return f.status === "BETAALD" && d >= begin && d <= einde;
+  const uitgavenVorigeMaand = useMemo(
+    () =>
+      uitgaven
+        .filter((u) => {
+          const d = new Date(u.datum);
+          return d >= beginVorigeMaand && d <= eindeVorigeMaand;
+        })
+        .reduce((s, u) => s + u.bedrag, 0),
+    [uitgaven]
+  );
+
+  const trendUitgaven = useMemo(
+    () => ((uitgavenDezeMaand - uitgavenVorigeMaand) / (uitgavenVorigeMaand || 1)) * 100,
+    [uitgavenDezeMaand, uitgavenVorigeMaand]
+  );
+
+  const nettoResultaat = useMemo(
+    () => omzetDezeMaand - uitgavenDezeMaand,
+    [omzetDezeMaand, uitgavenDezeMaand]
+  );
+
+  // Uitgaven per categorie (deze maand)
+  const categorieData = useMemo(() => {
+    const groepen = uitgaven
+      .filter((u) => {
+        const d = new Date(u.datum);
+        return d >= beginMaand && d <= eindeMaand;
       })
-      .reduce((s, f) => s + f.totaal, 0);
-    return {
-      maand: format(maand, "MMM", { locale: nl }),
-      omzet,
-    };
-  });
+      .reduce<Record<string, { naam: string; bedrag: number; kleur?: string | null }>>((acc, u) => {
+        const catId = u.categorieId ?? "__geen__";
+        const naam = u.categorie?.naam ?? "Zonder categorie";
+        const kleur = u.categorie?.kleur ?? null;
+        if (!acc[catId]) {
+          acc[catId] = { naam, bedrag: 0, kleur };
+        }
+        acc[catId].bedrag += u.bedrag;
+        return acc;
+      }, {});
+    return Object.values(groepen).filter((g) => g.bedrag > 0);
+  }, [uitgaven]);
+
+  const maandGrafiek = useMemo<MaandData[]>(
+    () =>
+      Array.from({ length: 6 }, (_, i) => {
+        const maand = subMonths(nu, 5 - i);
+        const begin = startOfMonth(maand);
+        const einde = endOfMonth(maand);
+        const omzet = facturen
+          .filter((f) => {
+            const d = new Date(f.datum);
+            return f.status === "BETAALD" && d >= begin && d <= einde;
+          })
+          .reduce((s, f) => s + f.totaal, 0);
+        return {
+          maand: format(maand, "MMM", { locale: nl }),
+          omzet,
+        };
+      }),
+    [facturen]
+  );
 
   // KOR drempel berekening
   const korDrempel = instellingen.korDrempel ?? 20000;
-  const jaarBegin = new Date(nu.getFullYear(), 0, 1);
-  const jaarEinde = new Date(nu.getFullYear(), 11, 31, 23, 59, 59);
-  const jaaromzet = facturen
-    .filter((f) => {
-      const d = new Date(f.datum);
-      return (f.status === "BETAALD" || f.status === "VERZONDEN") && d >= jaarBegin && d <= jaarEinde;
-    })
-    .reduce((s, f) => s + f.subtotaal, 0);
-  const korPercentage = korDrempel > 0 ? (jaaromzet / korDrempel) * 100 : 0;
+
+  const jaaromzet = useMemo(
+    () =>
+      facturen
+        .filter((f) => {
+          const d = new Date(f.datum);
+          return (f.status === "BETAALD" || f.status === "VERZONDEN") && d >= jaarBegin && d <= jaarEinde;
+        })
+        .reduce((s, f) => s + f.subtotaal, 0),
+    [facturen]
+  );
+
+  const korPercentage = useMemo(
+    () => (korDrempel > 0 ? (jaaromzet / korDrempel) * 100 : 0),
+    [jaaromzet, korDrempel]
+  );
+
   const toonKorWaarschuwing = instellingen.korActief && instellingen.korWaarschuwing && korPercentage >= 80;
 
-  const recenteFacturen = [...facturen]
-    .sort((a, b) => new Date(b.datum).getTime() - new Date(a.datum).getTime())
-    .slice(0, 5);
+  const recenteFacturen = useMemo(
+    () =>
+      [...facturen]
+        .sort((a, b) => new Date(b.datum).getTime() - new Date(a.datum).getTime())
+        .slice(0, 5),
+    [facturen]
+  );
 
-  const aankomendBetalingen = facturen
-    .filter((f) => f.status === "VERZONDEN")
-    .sort(
-      (a, b) =>
-        new Date(a.vervaldatum).getTime() - new Date(b.vervaldatum).getTime()
-    )
-    .slice(0, 5);
+  const aankomendBetalingen = useMemo(
+    () =>
+      facturen
+        .filter((f) => f.status === "VERZONDEN")
+        .sort(
+          (a, b) =>
+            new Date(a.vervaldatum).getTime() - new Date(b.vervaldatum).getTime()
+        )
+        .slice(0, 5),
+    [facturen]
+  );
 
   return (
     <div>
@@ -255,13 +393,14 @@ export default function Dashboard() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard
             titel="Omzet deze maand"
             waarde={formatBedrag(omzetDezeMaand)}
             icon={TrendingUp}
             kleur="bg-indigo-100 text-indigo-700"
             laden={laden}
+            trend={trendOmzet}
           />
           <StatCard
             titel="Openstaand"
@@ -277,6 +416,7 @@ export default function Dashboard() {
             icon={TrendingDown}
             kleur="bg-red-100 text-red-700"
             laden={laden}
+            trend={trendUitgaven}
           />
           <StatCard
             titel="Netto resultaat"
@@ -287,7 +427,7 @@ export default function Dashboard() {
           />
         </div>
 
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <Card className="xl:col-span-2">
             <CardHeader>
               <CardTitle>Omzet per maand</CardTitle>
@@ -381,6 +521,53 @@ export default function Dashboard() {
             </CardContent>
           </Card>
         </div>
+
+        {categorieData.length > 0 && !laden && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Uitgaven per categorie</CardTitle>
+              <CardDescription>Verdeling uitgaven deze maand</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={260}>
+                <PieChart>
+                  <Pie
+                    data={categorieData}
+                    dataKey="bedrag"
+                    nameKey="naam"
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={90}
+                    label={({ naam, percent }) =>
+                      `${naam} (${(percent * 100).toFixed(0)}%)`
+                    }
+                    labelLine={false}
+                  >
+                    {categorieData.map((entry, index) => (
+                      <Cell
+                        key={`cell-${index}`}
+                        fill={entry.kleur ?? PIE_KLEUREN[index % PIE_KLEUREN.length]}
+                      />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    formatter={(value) => [formatBedrag(Number(value)), "Bedrag"]}
+                    contentStyle={{
+                      borderRadius: "8px",
+                      border: "1px solid #e2e8f0",
+                      fontSize: "13px",
+                    }}
+                  />
+                  <Legend
+                    formatter={(value) => (
+                      <span style={{ fontSize: "13px", color: "#475569" }}>{value}</span>
+                    )}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        )}
 
         <Card>
           <CardHeader>

@@ -31,6 +31,7 @@ export default function OffertesPage() {
 
   async function laadOffertes() {
     setLoading(true);
+    await window.api.offertes_extra.checkVerlopen();
     const params = actieveFilter !== "Alles" ? { status: actieveFilter } : undefined;
     const data = await window.api.offertes.list(params);
     setOffertes(data);
@@ -64,6 +65,27 @@ export default function OffertesPage() {
       />
 
       <div className="p-6 space-y-4">
+        {/* Waarschuwingsbanner: binnenkort verlopen offertes */}
+        {(() => {
+          const nu = new Date();
+          const over7Dagen = new Date(nu.getTime() + 7 * 24 * 60 * 60 * 1000);
+          const aantalBinnenkortVerlopen = offertes.filter(
+            (o) =>
+              o.status === "VERZONDEN" &&
+              new Date(o.geldigTot) > nu &&
+              new Date(o.geldigTot) <= over7Dagen
+          ).length;
+          return aantalBinnenkortVerlopen > 0 ? (
+            <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm font-medium">
+              <span>⚠️</span>
+              <span>
+                {aantalBinnenkortVerlopen}{" "}
+                {aantalBinnenkortVerlopen === 1 ? "offerte verloopt" : "offertes verlopen"} binnenkort
+              </span>
+            </div>
+          ) : null;
+        })()}
+
         {/* Status filters */}
         <div className="flex gap-2 flex-wrap">
           {statusFilters.map((filter) => (

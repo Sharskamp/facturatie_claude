@@ -75,6 +75,7 @@ interface Factuur {
   verzondDatum?: string;
   datum?: string;
   aangemaakt?: string;
+  creditNotaVoorId?: string | null;
   klant?: { naam: string; bedrijf?: string | null } | null;
   regels?: FactuurRegel[];
 }
@@ -84,6 +85,8 @@ interface InkomenRecord {
   datum: string;
   bedrag: number;
   omschrijving: string;
+  factuurId?: string | null;
+  geboektAlsOmzet?: boolean;
 }
 
 interface UitgaveRecord {
@@ -271,6 +274,8 @@ export default function RapportenPagina() {
   const [inkomens, setInkomens] = useState<InkomenRecord[]>([]);
   const [uitgaven, setUitgaven] = useState<UitgaveRecord[]>([]);
   const [laden, setLaden] = useState(true);
+  const [korActief, setKorActief] = useState(false);
+  const [korIngangsDatum, setKorIngangsDatum] = useState<string | null>(null);
 
   // BTW selectors
   const [btwKwartaal, setBtwKwartaal] = useState(huidigKwartaal());
@@ -282,18 +287,23 @@ export default function RapportenPagina() {
 
   // BTW-aangifte selectors
   const [aangiftePeriode, setAangiftePeriode] = useState<string>(`${huidigKwartaal()}_${new Date().getFullYear()}`);
+  const [btwExportMelding, setBtwExportMelding] = useState<{ type: "succes" | "fout"; tekst: string } | null>(null);
 
   const haalDataOp = useCallback(async () => {
     setLaden(true);
     try {
-      const [fData, iData, uData] = await Promise.all([
+      const [fData, iData, uData, inst] = await Promise.all([
         window.api.facturen.list(),
         window.api.inkomen.list(),
         window.api.uitgaven.list(),
+        window.api.instellingen.get(),
       ]);
       setFacturen(Array.isArray(fData) ? fData : (fData as any).facturen ?? []);
       setInkomens(Array.isArray(iData) ? iData : (iData as any).inkomens ?? []);
       setUitgaven(Array.isArray(uData) ? uData : (uData as any).uitgaven ?? []);
+      const i = inst as Record<string, unknown>;
+      setKorActief(!!i.korActief);
+      setKorIngangsDatum((i.korIngangsDatum as string | null) ?? null);
     } catch {
       // stil falen
     } finally {
@@ -304,6 +314,13 @@ export default function RapportenPagina() {
   useEffect(() => {
     haalDataOp();
   }, [haalDataOp]);
+
+  // ─── KOR helper: bepaal of een periode volledig/gedeeltelijk na ingangsdatum valt ──
+  // periodeEindDatum: laatste dag van de geselecteerde periode (YYYY-MM-DD string)
+  function korBlokkeertPeriode(periodeBeginDatum: string): boolean {
+    if (!korActief || !korIngangsDatum) return false;
+    return periodeBeginDatum >= korIngangsDatum;
+  }
 
   // ─── BTW berekeningen ───────────────────────────────────────────────────────
   const kwartaalMaanden: Record<string, number[]> = {
@@ -340,15 +357,38 @@ export default function RapportenPagina() {
   ];
 
   // ─── Winst & Verlies berekeningen ──────────────────────────────────────────
+  // Omzet = factuurbasis (excl. BTW) + losse zakelijke inkomsten
+  // Bankimports tellen NIET mee als omzet, alleen ter bevestiging van betaling.
   const wvJaarNum = parseInt(wvJaar);
 
-  const wvData = MAANDEN.map((naam, idx) => {
-    const omzet = inkomens
+  function berekenOmzetVoorMaand(jaar: number, maand: number): number {
+    // 1. Facturen excl. BTW (niet-concept, niet-geannuleerd) op factuurdatum
+    const factuurOmzet = facturen
+      .filter((f) => {
+        const d = new Date(f.datum ?? f.aangemaakt ?? '');
+        return d.getFullYear() === jaar && d.getMonth() === maand
+          && f.status !== 'CONCEPT' && f.status !== 'GEANNULEERD';
+      })
+      .reduce((s, f) => {
+        // Creditnota's tellen negatief
+        const bedrag = f.creditNotaVoorId ? -f.subtotaal : f.subtotaal;
+        return s + bedrag;
+      }, 0);
+
+    // 2. Losse zakelijke inkomsten (expliciet geboekt, niet gekoppeld aan factuur)
+    const losseOmzet = inkomens
       .filter((i) => {
         const d = new Date(i.datum);
-        return d.getFullYear() === wvJaarNum && d.getMonth() === idx;
+        return d.getFullYear() === jaar && d.getMonth() === maand
+          && i.geboektAlsOmzet === true && !i.factuurId;
       })
       .reduce((s, i) => s + i.bedrag, 0);
+
+    return factuurOmzet + losseOmzet;
+  }
+
+  const wvData = MAANDEN.map((naam, idx) => {
+    const omzet = berekenOmzetVoorMaand(wvJaarNum, idx);
     const kosten = uitgaven
       .filter((u) => {
         const d = new Date(u.datum);
@@ -673,8 +713,32 @@ export default function RapportenPagina() {
         {!laden && (
           <>
             {/* ── BTW Overzicht ── */}
-            {actieveTab === "btw" && (
+            {actieveTab === "btw" && (() => {
+              const btwMaandNr = (kwartaalMaanden[btwKwartaal] ?? [0])[0];
+              const btwBeginStr = `${btwJaar}-${String(btwMaandNr + 1).padStart(2, "0")}-01`;
+              const korBlokkeert = korBlokkeertPeriode(btwBeginStr);
+              return (
               <div className="space-y-6">
+                {korBlokkeert && (
+                  <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-5 flex gap-3 items-start">
+                    <span className="text-2xl">🚫</span>
+                    <div>
+                      <p className="font-semibold text-indigo-900">KOR actief — geen BTW-rapportage</p>
+                      <p className="text-sm text-indigo-700 mt-1">
+                        Uw Kleineondernemersregeling is ingegaan op <strong>{korIngangsDatum}</strong>.
+                        Vanaf die datum bent u vrijgesteld van BTW-aangifte en hoeft u geen BTW te berekenen of af te dragen.
+                        BTW-rapportage is daarom niet van toepassing voor de geselecteerde periode.
+                      </p>
+                      {!korIngangsDatum && (
+                        <p className="text-xs text-indigo-600 mt-2">
+                          Stel de KOR ingangsdatum in via Instellingen → KOR voor correcte rapportages.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {!korBlokkeert && (
+                <div className="contents">
                 {/* Selectors */}
                 <div className="flex flex-wrap gap-3 items-center justify-between">
                   <div className="flex flex-wrap gap-3 items-center">
@@ -801,12 +865,18 @@ export default function RapportenPagina() {
                     </Table>
                   </CardContent>
                 </Card>
+                </div>
+                )}
               </div>
-            )}
+              );
+            })()}
 
             {/* ── Winst & Verlies ── */}
             {actieveTab === "winstverlies" && (
               <div className="space-y-6">
+                <div className="rounded-lg bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-800">
+                  <span className="font-semibold">Omzet op factuurbasis</span> — omzet telt mee op het moment dat de factuur wordt verzonden (excl. BTW). Bankimports tellen <em>niet</em> automatisch als omzet; alleen facturen en expliciet geboekte losse inkomsten worden meegenomen.
+                </div>
                 {/* Selectors */}
                 <div className="flex flex-wrap gap-3 items-center justify-between">
                   <div className="flex flex-wrap gap-3 items-center">
@@ -1158,8 +1228,70 @@ export default function RapportenPagina() {
             )}
 
             {/* ── BTW-aangifte ── */}
-            {actieveTab === "btwAangifte" && (
+            {actieveTab === "btwAangifte" && (() => {
+              const aanvangMaand = aangifteMaanden[0] ?? 0;
+              const aanvangStr = `${aangifteJaar}-${String(aanvangMaand + 1).padStart(2, "0")}-01`;
+              const korBlokkeertAangifte = korBlokkeertPeriode(aanvangStr);
+              return (
               <div className="space-y-6">
+                {korBlokkeertAangifte && (
+                  <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-5 flex gap-3 items-start">
+                    <span className="text-2xl">🚫</span>
+                    <div>
+                      <p className="font-semibold text-indigo-900">KOR actief — geen BTW-aangifte</p>
+                      <p className="text-sm text-indigo-700 mt-1">
+                        Uw Kleineondernemersregeling is ingegaan op <strong>{korIngangsDatum}</strong>.
+                        U hoeft geen BTW-aangifte te doen voor periodes na de ingangsdatum.
+                      </p>
+                    </div>
+                  </div>
+                )}
+                {!korBlokkeertAangifte && (
+                <div className="contents">
+                {/* Export BTW CSV knop + melding */}
+                <div className="flex flex-wrap gap-3 items-center">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={async () => {
+                      setBtwExportMelding(null);
+                      try {
+                        // Bereken van/tot op basis van geselecteerde periode
+                        const vanMaand = aangifteMaanden[0] ?? 0;
+                        const totMaand = aangifteMaanden[aangifteMaanden.length - 1] ?? 11;
+                        const periodeVan = `${aangifteJaar}-${String(vanMaand + 1).padStart(2, "0")}-01`;
+                        const lastDay = new Date(aangifteJaar, totMaand + 1, 0).getDate();
+                        const periodeTot = `${aangifteJaar}-${String(totMaand + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+                        const gekozenKwartaal = aangifteKwartaal ?? null;
+                        const resultaat = await window.api.rapport.exportBtw({ van: periodeVan, tot: periodeTot, kwartaal: gekozenKwartaal });
+                        if (resultaat.geannuleerd) return;
+                        if (resultaat.succes) {
+                          setBtwExportMelding({ type: "succes", tekst: "Bestand opgeslagen" });
+                          setTimeout(() => setBtwExportMelding(null), 4000);
+                        } else {
+                          setBtwExportMelding({ type: "fout", tekst: "Exporteren mislukt" });
+                          setTimeout(() => setBtwExportMelding(null), 5000);
+                        }
+                      } catch (e: unknown) {
+                        setBtwExportMelding({ type: "fout", tekst: `Exporteren mislukt: ${e instanceof Error ? e.message : "onbekende fout"}` });
+                        setTimeout(() => setBtwExportMelding(null), 5000);
+                      }
+                    }}
+                  >
+                    <FileDown className="h-4 w-4" />
+                    Exporteer BTW CSV
+                  </Button>
+                  {btwExportMelding && (
+                    <span className={`text-sm font-medium px-3 py-1 rounded-lg border ${
+                      btwExportMelding.type === "succes"
+                        ? "bg-green-50 text-green-800 border-green-200"
+                        : "bg-red-50 text-red-800 border-red-200"
+                    }`}>
+                      {btwExportMelding.tekst}
+                    </span>
+                  )}
+                </div>
+
                 {/* Period selector */}
                 <div className="flex flex-wrap gap-3 items-center justify-between">
                   <div className="flex flex-wrap gap-3 items-center">
@@ -1258,8 +1390,11 @@ export default function RapportenPagina() {
                 <p className="text-sm text-gray-500 italic">
                   Dit overzicht is ter voorbereiding op uw BTW-aangifte via het Mijn Belastingdienst Zakelijk portaal.
                 </p>
+                </div>
+                )}
               </div>
-            )}
+              );
+            })()}
 
             {/* ── Balans ── */}
             {actieveTab === "balans" && (

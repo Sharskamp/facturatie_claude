@@ -54,7 +54,7 @@ export function FactuurRegelTabel({
   return (
     <div className="space-y-3">
       {/* Tabelhoofden (verborgen op mobiel) */}
-      <div className="hidden lg:grid lg:grid-cols-[1fr_80px_100px_110px_80px_80px_32px] gap-2 px-1">
+      <div className={`hidden lg:grid gap-2 px-1 ${korActief ? "lg:grid-cols-[1fr_80px_100px_110px_80px_32px]" : "lg:grid-cols-[1fr_80px_100px_110px_80px_80px_32px]"}`}>
         <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
           Omschrijving
         </span>
@@ -67,9 +67,11 @@ export function FactuurRegelTabel({
         <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide text-right">
           Prijs (€)
         </span>
-        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide text-right">
-          BTW%
-        </span>
+        {!korActief && (
+          <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide text-right">
+            BTW%
+          </span>
+        )}
         <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide text-right">
           Korting%
         </span>
@@ -81,7 +83,7 @@ export function FactuurRegelTabel({
         return (
           <div
             key={regel.id}
-            className="grid grid-cols-1 lg:grid-cols-[1fr_80px_100px_110px_80px_80px_32px] gap-2 p-3 rounded-lg border border-gray-100 bg-gray-50/50 hover:bg-gray-50 transition-colors"
+            className={`grid grid-cols-1 gap-2 p-3 rounded-lg border border-gray-100 bg-gray-50/50 hover:bg-gray-50 transition-colors ${korActief ? "lg:grid-cols-[1fr_80px_100px_110px_80px_32px]" : "lg:grid-cols-[1fr_80px_100px_110px_80px_80px_32px]"}`}
           >
             {/* Omschrijving */}
             <div>
@@ -191,30 +193,28 @@ export function FactuurRegelTabel({
               </div>
             </div>
 
-            {/* BTW% */}
-            <div>
-              <label className="lg:hidden text-xs font-medium text-gray-500 mb-1 block">
-                BTW%
-              </label>
-              <select
-                value={regel.btwPercentage}
-                onChange={(e) =>
-                  onRegelUpdate(regel.id, "btwPercentage", parseInt(e.target.value))
-                }
-                disabled={btwVerlegd || korActief}
-                className="flex h-9 w-full rounded-lg border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {korActief ? (
-                  <option value={0}>0% (KOR)</option>
-                ) : (
-                  BTW_TARIEVEN.map((t) => (
+            {/* BTW% — verborgen bij KOR */}
+            {!korActief && (
+              <div>
+                <label className="lg:hidden text-xs font-medium text-gray-500 mb-1 block">
+                  BTW%
+                </label>
+                <select
+                  value={regel.btwPercentage}
+                  onChange={(e) =>
+                    onRegelUpdate(regel.id, "btwPercentage", parseInt(e.target.value))
+                  }
+                  disabled={btwVerlegd}
+                  className="flex h-9 w-full rounded-lg border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {BTW_TARIEVEN.map((t) => (
                     <option key={t} value={t}>
                       {t}%
                     </option>
-                  ))
-                )}
-              </select>
-            </div>
+                  ))}
+                </select>
+              </div>
+            )}
 
             {/* Korting% */}
             <div>
