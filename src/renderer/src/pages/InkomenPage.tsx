@@ -467,7 +467,10 @@ export default function InkomenPagina() {
     }
   };
 
-  const isSpaar = (i: Inkomen) => !!(i.tegenrekening && spaarVelden.includes(i.tegenrekening));
+  const isSpaar = (i: Inkomen) => spaarVelden.some(s =>
+    i.tegenrekening?.toUpperCase() === s.toUpperCase() ||
+    (i.tegenrekeningNaam?.toLowerCase() === s.toLowerCase() && s.length > 0)
+  );
   const bevat = (val: string | null | undefined, f: string) => !f || (val ?? "").toLowerCase().includes(f.toLowerCase());
   const zichtbareInkomens = (verbergSpaarrekeningen ? inkomens.filter(i => !isSpaar(i)) : inkomens).filter(i =>
     bevat(i.datum, kolomFilters.datum ?? "") &&
@@ -690,7 +693,7 @@ export default function InkomenPagina() {
                     )}
                     {bankVelden.includes('bron') && (
                       <TableCell>
-                        {inkomen.tegenrekening && spaarVelden.includes(inkomen.tegenrekening) ? (
+                        {isSpaar(inkomen) ? (
                           <Badge className="text-purple-600 border-purple-300 bg-purple-50">Spaarrekening</Badge>
                         ) : inkomen.bron === "Bankimport" && !inkomen.factuurId && !inkomen.geboektAlsOmzet ? (
                           <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50">Wacht op koppeling</Badge>
@@ -714,7 +717,7 @@ export default function InkomenPagina() {
                     )}
                     <TableCell>
                       <div className="flex items-center justify-end gap-1">
-                        {inkomen.tegenrekening && spaarVelden.includes(inkomen.tegenrekening) ? null : (
+                        {isSpaar(inkomen) ? null : (
                           <>
                             {inkomen.factuurId ? (
                               <Button variant="ghost" size="icon-sm" title="Ontkoppelen" onClick={() => ontkoppel(inkomen.id)}>

@@ -318,7 +318,10 @@ export default function UitgavenPagina() {
     }
   };
 
-  const isSpaarUitgave = (u: Uitgave) => !!(u.tegenrekening && spaarIbans.includes(u.tegenrekening));
+  const isSpaarUitgave = (u: Uitgave) => spaarIbans.some(s =>
+    u.tegenrekening?.toUpperCase() === s.toUpperCase() ||
+    (u.leverancier?.toLowerCase() === s.toLowerCase() && s.length > 0)
+  );
   const bevat = (val: string | null | undefined, f: string) => !f || (val ?? "").toLowerCase().includes(f.toLowerCase());
   const zichtbareUitgaven = (verbergSpaarrekeningen ? uitgaven.filter(u => !isSpaarUitgave(u)) : uitgaven).filter(u =>
     bevat(u.datum, kolomFilters.datum ?? "") &&

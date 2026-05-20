@@ -2028,7 +2028,7 @@ export default function InstellingenPagina() {
               <CardHeader>
                 <CardTitle>Spaarrekeningen</CardTitle>
                 <CardDescription>
-                  Voeg je eigen spaarrekening-IBANs toe. Transacties van/naar deze rekeningen worden automatisch herkend.
+                  Voeg IBAN-nummers of namen van tegenpartijen toe. Transacties waarbij de tegenrekening of naam overeenkomt worden als spaaroverschrijving herkend.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
@@ -2042,7 +2042,9 @@ export default function InstellingenPagina() {
                         <div className="space-y-1">
                           {lijst.map((iban) => (
                             <div key={iban} className="flex items-center justify-between py-2 px-3 rounded-lg border border-gray-200 bg-gray-50 dark:bg-gray-800 dark:border-gray-700">
-                              <span className="text-sm font-mono text-gray-700 dark:text-gray-300">{iban}</span>
+                              <span className="text-sm font-mono text-gray-700 dark:text-gray-300">{iban}
+                                <span className="ml-2 text-xs font-sans text-gray-400">{/^[A-Z]{2}\d{2}/.test(iban) ? "IBAN" : "naam tegenpartij"}</span>
+                              </span>
                               <button
                                 type="button"
                                 onClick={async () => {
@@ -2074,7 +2076,7 @@ export default function InstellingenPagina() {
                               window.dispatchEvent(new CustomEvent('bankVeldenGewijzigd'));
                             }
                           }}
-                          placeholder="NL00 BANK 0000 0000 00"
+                          placeholder="NL00 BANK 0000 0000 00 of naam tegenpartij"
                           className="flex-1 border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                         />
                         <Button
