@@ -822,6 +822,11 @@ function setupIpcHandlers() {
     return { succes: true }
   })
 
+  ipcMain.handle('facturen:deleteAll', async () => {
+    const { count } = await prisma.factuur.deleteMany()
+    return { succes: true, count }
+  })
+
   ipcMain.handle('facturen:duplicate', async (_, id: string) => {
     const user = await prisma.user.findFirst()
     if (!user) throw new Error('Geen gebruiker')
@@ -1159,6 +1164,11 @@ function setupIpcHandlers() {
     return { succes: true }
   })
 
+  ipcMain.handle('inkomen:deleteAll', async () => {
+    const { count } = await prisma.inkomen.deleteMany()
+    return { succes: true, count }
+  })
+
   // Uitgaven
   ipcMain.handle('uitgaven:list', async (_, params?: { van?: string; tot?: string; categorieId?: string }) => {
     return prisma.uitgave.findMany({
@@ -1190,6 +1200,11 @@ function setupIpcHandlers() {
   ipcMain.handle('uitgaven:delete', async (_, id: string) => {
     await prisma.uitgave.delete({ where: { id } })
     return { succes: true }
+  })
+
+  ipcMain.handle('uitgaven:deleteAll', async () => {
+    const { count } = await prisma.uitgave.deleteMany()
+    return { succes: true, count }
   })
 
   // Categorieën

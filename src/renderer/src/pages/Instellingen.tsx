@@ -282,6 +282,7 @@ export default function InstellingenPagina() {
   const [exportJaar, setExportJaar] = useState(new Date().getFullYear());
   const [pdfArchiefLaden, setPdfArchiefLaden] = useState(false);
   const [exportMelding, setExportMelding] = useState<string | null>(null);
+  const [wissenMelding, setWissenMelding] = useState<{ type: "succes" | "fout"; tekst: string } | null>(null);
   const [nieuweSpaarrekening, setNieuweSpaarrekening] = useState("");
   const [bankVeldenLijst, setBankVeldenLijst] = useState<string[]>(() => ALLE_BANK_VELDEN.map(v => v.id));
   const [uitgavenVeldenLijst, setUitgavenVeldenLijst] = useState<string[]>(() => ALLE_UITGAVEN_VELDEN.map(v => v.id));
@@ -1822,6 +1823,68 @@ export default function InstellingenPagina() {
                   >
                     <Download className="h-4 w-4 mr-2" />
                     PDF-archief aanmaken
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Testdata wissen */}
+            <Card className="border-red-200">
+              <CardHeader>
+                <CardTitle className="text-red-700">Testdata wissen</CardTitle>
+                <CardDescription>Verwijder alle geïmporteerde of aangemaakte gegevens. Alleen gebruiken tijdens het testen.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {wissenMelding && (
+                  <div className={`rounded-lg px-4 py-3 text-sm ${wissenMelding.type === "succes" ? "bg-green-50 border border-green-200 text-green-800" : "bg-red-50 border border-red-200 text-red-800"}`}>
+                    {wissenMelding.tekst}
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-3">
+                  <Button
+                    variant="outline"
+                    className="border-red-300 text-red-700 hover:bg-red-50"
+                    onClick={async () => {
+                      if (!confirm("Weet je zeker dat je ALLE inkomen-records wilt verwijderen? Dit kan niet ongedaan worden gemaakt.")) return;
+                      try {
+                        const result = await window.api.inkomen.deleteAll() as { succes: boolean; count: number };
+                        setWissenMelding({ type: "succes", tekst: `${result.count} inkomen-records verwijderd.` });
+                      } catch {
+                        setWissenMelding({ type: "fout", tekst: "Wissen van inkomen mislukt." });
+                      }
+                    }}
+                  >
+                    Alle inkomen wissen
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="border-red-300 text-red-700 hover:bg-red-50"
+                    onClick={async () => {
+                      if (!confirm("Weet je zeker dat je ALLE uitgaven wilt verwijderen? Dit kan niet ongedaan worden gemaakt.")) return;
+                      try {
+                        const result = await window.api.uitgaven.deleteAll() as { succes: boolean; count: number };
+                        setWissenMelding({ type: "succes", tekst: `${result.count} uitgaven verwijderd.` });
+                      } catch {
+                        setWissenMelding({ type: "fout", tekst: "Wissen van uitgaven mislukt." });
+                      }
+                    }}
+                  >
+                    Alle uitgaven wissen
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="border-red-300 text-red-700 hover:bg-red-50"
+                    onClick={async () => {
+                      if (!confirm("Weet je zeker dat je ALLE facturen wilt verwijderen? Dit kan niet ongedaan worden gemaakt.")) return;
+                      try {
+                        const result = await window.api.facturen.deleteAll() as { succes: boolean; count: number };
+                        setWissenMelding({ type: "succes", tekst: `${result.count} facturen verwijderd.` });
+                      } catch {
+                        setWissenMelding({ type: "fout", tekst: "Wissen van facturen mislukt." });
+                      }
+                    }}
+                  >
+                    Alle facturen wissen
                   </Button>
                 </div>
               </CardContent>
