@@ -792,29 +792,64 @@ function setupIpcHandlers() {
         ...(params?.van ? { datum: { gte: new Date(params.van) } } : {}),
         ...(params?.tot ? { datum: { lte: new Date(params.tot) } } : {}),
       },
-      include: { factuur: { include: { klant: true } } },
+      include: { factuur: { include: { klant: true } }, factuurLinks: { include: { factuur: { include: { klant: true } } } } },
       orderBy: { datum: 'desc' }
     })
   })
 
   ipcMain.handle('inkomen:create', async (_, data: Record<string, unknown>) => {
+    const factuurId = typeof data.factuurId === 'string' && data.factuurId.length > 0 ? data.factuurId : null
+    const createData = { ...data, datum: new Date(data.datum as string), factuurId: null } as Record<string, unknown>
+    delete createData.factuurLinks
+
     const inkomen = await prisma.inkomen.create({
-      data: { ...data, datum: new Date(data.datum as string) } as Parameters<typeof prisma.inkomen.create>[0]['data'],
-      include: { factuur: { include: { klant: true } } }
+      data: createData as Parameters<typeof prisma.inkomen.create>[0]['data'],
+      include: { factuur: { include: { klant: true } }, factuurLinks: { include: { factuur: { include: { klant: true } } } } }
     })
 
-    if (data.factuurId) {
-      await prisma.factuur.update({ where: { id: data.factuurId as string }, data: { status: 'BETAALD' } })
+    if (factuurId) {
+      await prisma.inkomenFactuurLink.create({ data: { inkomenId: inkomen.id, factuurId } })
+      await prisma.factuur.update({ where: { id: factuurId }, data: { status: 'BETAALD' } })
+      return prisma.inkomen.findUnique({
+        where: { id: inkomen.id },
+        include: { factuur: { include: { klant: true } }, factuurLinks: { include: { factuur: { include: { klant: true } } } } }
+      })
     }
 
     return inkomen
   })
 
   ipcMain.handle('inkomen:update', async (_, id: string, data: Record<string, unknown>) => {
+    if (data.actie === 'ontkoppel-facturen') {
+      await prisma.inkomenFactuurLink.deleteMany({ where: { inkomenId: id } })
+      return prisma.inkomen.update({
+        where: { id },
+        data: { factuurId: null },
+        include: { factuur: { include: { klant: true } }, factuurLinks: { include: { factuur: { include: { klant: true } } } } }
+      })
+    }
+
+    if (data.actie === 'koppel-factuur' && typeof data.factuurId === 'string') {
+      await prisma.inkomenFactuurLink.upsert({
+        where: { inkomenId_factuurId: { inkomenId: id, factuurId: data.factuurId } },
+        create: { inkomenId: id, factuurId: data.factuurId },
+        update: {}
+      })
+      await prisma.factuur.update({ where: { id: data.factuurId }, data: { status: 'BETAALD' } })
+      return prisma.inkomen.findUnique({
+        where: { id },
+        include: { factuur: { include: { klant: true } }, factuurLinks: { include: { factuur: { include: { klant: true } } } } }
+      })
+    }
+
     return prisma.inkomen.update({
       where: { id },
-      data: { ...data, datum: data.datum ? new Date(data.datum as string) : undefined } as Parameters<typeof prisma.inkomen.update>[0]['data'],
-      include: { factuur: { include: { klant: true } } }
+      data: {
+        ...data,
+        factuurId: data.factuurId === null ? null : undefined,
+        datum: data.datum ? new Date(data.datum as string) : undefined
+      } as Parameters<typeof prisma.inkomen.update>[0]['data'],
+      include: { factuur: { include: { klant: true } }, factuurLinks: { include: { factuur: { include: { klant: true } } } } }
     })
   })
 
