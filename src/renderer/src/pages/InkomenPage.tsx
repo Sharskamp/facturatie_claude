@@ -39,6 +39,7 @@ interface Inkomen {
   bedrag: number;
   factuurId?: string | null;
   factuur?: { factuurNummer: string } | null;
+  factuurLinks?: Array<{ factuur: { factuurNummer: string } }>
   notities?: string | null;
 }
 
@@ -178,7 +179,7 @@ export default function InkomenPagina() {
   const slaKoppelOp = async () => {
     if (!koppelInkomenId || !koppelFactuurId) return;
     try {
-      await window.api.inkomen.update(koppelInkomenId, { factuurId: koppelFactuurId });
+      await window.api.inkomen.update(koppelInkomenId, { actie: 'koppel-factuur', factuurId: koppelFactuurId });
       toonMelding("succes", "Gekoppeld aan factuur");
       setKoppelModalOpen(false);
       haalInkomensOp();
@@ -189,7 +190,7 @@ export default function InkomenPagina() {
 
   const ontkoppel = async (id: string) => {
     try {
-      await window.api.inkomen.update(id, { factuurId: null });
+      await window.api.inkomen.update(id, { actie: "ontkoppel-facturen" });
       toonMelding("succes", "Ontkoppeld van factuur");
       haalInkomensOp();
     } catch {
@@ -198,7 +199,7 @@ export default function InkomenPagina() {
   };
 
   const totaalInkomen = inkomens.reduce((s, i) => s + i.bedrag, 0);
-  const gekoppeld = inkomens.filter((i) => i.factuurId);
+  const gekoppeld = inkomens.filter((i) => i.factuurId || (i.factuurLinks?.length ?? 0) > 0);
   const totaalGekoppeld = gekoppeld.reduce((s, i) => s + i.bedrag, 0);
   const totaalNietGekoppeld = totaalInkomen - totaalGekoppeld;
 
@@ -332,17 +333,26 @@ export default function InkomenPagina() {
                       {formatBedrag(inkomen.bedrag)}
                     </TableCell>
                     <TableCell>
-                      {inkomen.factuur ? (
-                        <span className="text-indigo-600 text-sm font-medium">
-                          {inkomen.factuur.factuurNummer}
-                        </span>
+                      {((inkomen.factuurLinks?.length ?? 0) > 0 || inkomen.factuur) ? (
+                        <div className="flex flex-col gap-1">
+                          {inkomen.factuurLinks?.map((link) => (
+                            <span key={link.factuur.factuurNummer} className="text-indigo-600 text-sm font-medium">
+                              {link.factuur.factuurNummer}
+                            </span>
+                          ))}
+                          {(!inkomen.factuurLinks || inkomen.factuurLinks.length === 0) && inkomen.factuur && (
+                            <span className="text-indigo-600 text-sm font-medium">
+                              {inkomen.factuur.factuurNummer}
+                            </span>
+                          )}
+                        </div>
                       ) : (
                         <span className="text-gray-400 text-xs">Niet gekoppeld</span>
                       )}
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center justify-end gap-1">
-                        {inkomen.factuurId ? (
+                        {(inkomen.factuurId || (inkomen.factuurLinks?.length ?? 0) > 0) ? (
                           <Button
                             variant="ghost"
                             size="icon-sm"

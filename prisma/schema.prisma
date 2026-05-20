@@ -115,6 +115,7 @@ model Factuur {
   terugkerendInterval String?
   agendaAfspraakId  String?
   inkomsten         Inkomen[]
+  inkomenLinks       InkomenFactuurLink[]
   offerteId         String?
   offerte           Offerte?       @relation(fields: [offerteId], references: [id])
   verzondenOp       DateTime?
@@ -187,10 +188,23 @@ model Inkomen {
   bedrag       Float
   factuurId    String?
   factuur      Factuur? @relation(fields: [factuurId], references: [id])
+  factuurLinks InkomenFactuurLink[]
   bron         String?
   notities     String?
   aangemaakt   DateTime @default(now())
   bijgewerkt   DateTime @updatedAt
+}
+
+
+model InkomenFactuurLink {
+  id        String   @id @default(cuid())
+  inkomenId String
+  factuurId String
+  inkomen   Inkomen  @relation(fields: [inkomenId], references: [id], onDelete: Cascade)
+  factuur   Factuur  @relation(fields: [factuurId], references: [id], onDelete: Cascade)
+  aangemaakt DateTime @default(now())
+
+  @@unique([inkomenId, factuurId])
 }
 
 model Uitgave {
