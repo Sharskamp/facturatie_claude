@@ -64,7 +64,7 @@ export default function BankImportPagina() {
   const [importLaden, setImportLaden] = useState(false);
   const [melding, setMelding] = useState<{ type: "succes" | "fout"; tekst: string } | null>(null);
   const [bestandPad, setBestandPad] = useState<string | null>(null);
-  const [importResultaat, setImportResultaat] = useState<{ aangemaakt: number } | null>(null);
+  const [importResultaat, setImportResultaat] = useState<{ aangemaakt: number; autoGekoppeld: number } | null>(null);
   const [latesteDatum, setLatesteDatum] = useState<string | null>(null);
   const [oudeTransactiesAantal, setOudeTransactiesAantal] = useState<number>(0);
 
@@ -211,10 +211,11 @@ export default function BankImportPagina() {
 
     setImportLaden(true);
     let aangemaakt = 0;
+    let autoGekoppeld = 0;
     try {
       for (const t of geselecteerd) {
         if (t.type === "inkomen") {
-          await window.api.inkomen.create({
+          const nieuw = await window.api.inkomen.create({
             datum: t.datum,
             omschrijving: t.omschrijving,
             bedrag: Math.abs(t.bedrag),
@@ -226,7 +227,22 @@ export default function BankImportPagina() {
             mededelingen: (t as any).mededelingen || undefined,
             betalingskenmerk: (t as any).betalingskenmerk || undefined,
             saldoNaBoeking: (t as any).saldoNaBoeking || undefined,
-          });
+          }) as { id: string };
+          try {
+            const match = await window.api.bank.zoekFactuurMatch({
+              bedrag: Math.abs(t.bedrag),
+              datum: t.datum,
+              omschrijving: t.omschrijving,
+              mededelingen: (t as any).mededelingen,
+              betalingskenmerk: (t as any).betalingskenmerk,
+            }) as { matchType: string; volledigeMatches: { id: string }[] };
+            if (match.matchType === "volledig" && match.volledigeMatches.length === 1) {
+              await window.api.bank.koppelAanFactuur({ inkomstenId: nieuw.id, factuurId: match.volledigeMatches[0].id });
+              autoGekoppeld++;
+            }
+          } catch {
+            // koppeling mislukt, geen probleem — inkomen is wel aangemaakt
+          }
         } else {
           await window.api.uitgaven.create({
             datum: t.datum,
@@ -241,7 +257,7 @@ export default function BankImportPagina() {
         }
         aangemaakt++;
       }
-      setImportResultaat({ aangemaakt });
+      setImportResultaat({ aangemaakt, autoGekoppeld });
       setStap(4);
     } catch (e: unknown) {
       toonMelding("fout", `Importeren mislukt: ${e instanceof Error ? e.message : "onbekend"}`);
@@ -604,6 +620,11 @@ export default function BankImportPagina() {
                 <p className="text-gray-600 mt-2">
                   <span className="font-semibold text-indigo-600">{importResultaat.aangemaakt}</span> transacties zijn succesvol geïmporteerd.
                 </p>
+                {importResultaat.autoGekoppeld > 0 && (
+                  <p className="text-green-700 mt-1 text-sm">
+                    <span className="font-semibold">{importResultaat.autoGekoppeld}</span> {importResultaat.autoGekoppeld === 1 ? "betaling is" : "betalingen zijn"} automatisch gekoppeld aan een openstaande factuur.
+                  </p>
+                )}
               </div>
               <div className="flex flex-wrap justify-center gap-3 pt-4">
                 <Button variant="outline" onClick={opnieuw}>Nieuw importeren</Button>
