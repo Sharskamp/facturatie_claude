@@ -123,6 +123,7 @@ export default function UitgavenPagina() {
   const [laden, setLaden] = useState(true);
   const [maandFilter, setMaandFilter] = useState(huidigeMaand());
   const [categorieFilter, setCategorieFilter] = useState("alle");
+  const [kolomFilters, setKolomFilters] = useState<Record<string, string>>({});
   const [modalOpen, setModalOpen] = useState(false);
   const [bewerkenId, setBewerkenId] = useState<string | null>(null);
   const [melding, setMelding] = useState<{ type: "succes" | "fout"; tekst: string } | null>(null);
@@ -318,7 +319,16 @@ export default function UitgavenPagina() {
   };
 
   const isSpaarUitgave = (u: Uitgave) => !!(u.tegenrekening && spaarIbans.includes(u.tegenrekening));
-  const zichtbareUitgaven = verbergSpaarrekeningen ? uitgaven.filter(u => !isSpaarUitgave(u)) : uitgaven;
+  const bevat = (val: string | null | undefined, f: string) => !f || (val ?? "").toLowerCase().includes(f.toLowerCase());
+  const zichtbareUitgaven = (verbergSpaarrekeningen ? uitgaven.filter(u => !isSpaarUitgave(u)) : uitgaven).filter(u =>
+    bevat(u.datum, kolomFilters.datum ?? "") &&
+    bevat(u.omschrijving, kolomFilters.omschrijving ?? "") &&
+    bevat(u.leverancier, kolomFilters.leverancier ?? "") &&
+    bevat(u.categorie?.naam, kolomFilters.categorie ?? "") &&
+    bevat(String(u.bedrag), kolomFilters.bedrag ?? "") &&
+    bevat(String(u.btw), kolomFilters.btw ?? "") &&
+    bevat(String(u.totaal), kolomFilters.totaal ?? "")
+  );
   const totaalUitgaven = zichtbareUitgaven.reduce((s, u) => s + u.bedrag, 0);
   const totaalBtw = zichtbareUitgaven.reduce((s, u) => s + u.btw, 0);
 
@@ -564,6 +574,16 @@ export default function UitgavenPagina() {
                 {uitgavenVelden.includes('btw') && <TableHead className="text-right">BTW</TableHead>}
                 {uitgavenVelden.includes('totaal') && <TableHead className="text-right">Totaal</TableHead>}
                 <TableHead className="text-right">Acties</TableHead>
+              </TableRow>
+              <TableRow className="bg-gray-50 dark:bg-gray-800/50">
+                {uitgavenVelden.includes('datum') && <TableHead className="py-1"><input value={kolomFilters.datum ?? ""} onChange={e => setKolomFilters(p => ({ ...p, datum: e.target.value }))} placeholder="Bevat..." className="w-full h-6 text-xs rounded border border-gray-200 px-1.5 font-normal focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white dark:bg-gray-700" /></TableHead>}
+                {uitgavenVelden.includes('omschrijving') && <TableHead className="py-1"><input value={kolomFilters.omschrijving ?? ""} onChange={e => setKolomFilters(p => ({ ...p, omschrijving: e.target.value }))} placeholder="Bevat..." className="w-full h-6 text-xs rounded border border-gray-200 px-1.5 font-normal focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white dark:bg-gray-700" /></TableHead>}
+                {uitgavenVelden.includes('leverancier') && <TableHead className="py-1"><input value={kolomFilters.leverancier ?? ""} onChange={e => setKolomFilters(p => ({ ...p, leverancier: e.target.value }))} placeholder="Bevat..." className="w-full h-6 text-xs rounded border border-gray-200 px-1.5 font-normal focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white dark:bg-gray-700" /></TableHead>}
+                {uitgavenVelden.includes('categorie') && <TableHead className="py-1"><input value={kolomFilters.categorie ?? ""} onChange={e => setKolomFilters(p => ({ ...p, categorie: e.target.value }))} placeholder="Bevat..." className="w-full h-6 text-xs rounded border border-gray-200 px-1.5 font-normal focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white dark:bg-gray-700" /></TableHead>}
+                {uitgavenVelden.includes('bedrag') && <TableHead className="py-1"><input value={kolomFilters.bedrag ?? ""} onChange={e => setKolomFilters(p => ({ ...p, bedrag: e.target.value }))} placeholder="Bevat..." className="w-full h-6 text-xs rounded border border-gray-200 px-1.5 font-normal text-right focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white dark:bg-gray-700" /></TableHead>}
+                {uitgavenVelden.includes('btw') && <TableHead className="py-1"><input value={kolomFilters.btw ?? ""} onChange={e => setKolomFilters(p => ({ ...p, btw: e.target.value }))} placeholder="Bevat..." className="w-full h-6 text-xs rounded border border-gray-200 px-1.5 font-normal text-right focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white dark:bg-gray-700" /></TableHead>}
+                {uitgavenVelden.includes('totaal') && <TableHead className="py-1"><input value={kolomFilters.totaal ?? ""} onChange={e => setKolomFilters(p => ({ ...p, totaal: e.target.value }))} placeholder="Bevat..." className="w-full h-6 text-xs rounded border border-gray-200 px-1.5 font-normal text-right focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white dark:bg-gray-700" /></TableHead>}
+                <TableHead />
               </TableRow>
             </TableHeader>
             <TableBody>
