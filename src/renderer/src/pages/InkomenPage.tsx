@@ -448,10 +448,14 @@ export default function InkomenPagina() {
           : `Betaling gedeeltelijk geboekt op factuur ${nummer}`
         );
       } else {
-        const koppelingen = geselecteerdeFacturen.map(f => ({
-          factuurId: f.id,
-          bedrag: f.openstaand,
-        }));
+        const koppelingen: { factuurId: string; bedrag: number }[] = [];
+        let resterend = matchInkomen.bedrag;
+        for (const f of geselecteerdeFacturen) {
+          if (resterend <= 0.005) break;
+          const toe = Math.min(resterend, f.openstaand);
+          koppelingen.push({ factuurId: f.id, bedrag: Math.round(toe * 100) / 100 });
+          resterend -= toe;
+        }
         const res = await window.api.bank.koppelAanMeerdereFacturen({
           inkomstenId: matchInkomen.id,
           koppelingen,
