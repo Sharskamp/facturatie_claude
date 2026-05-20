@@ -352,23 +352,22 @@ export default function InkomenPagina() {
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center justify-end gap-1">
-                        {(inkomen.factuurId || (inkomen.factuurLinks?.length ?? 0) > 0) ? (
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          title="Koppel extra factuur"
+                          onClick={() => openKoppel(inkomen.id)}
+                        >
+                          <Link className="h-4 w-4 text-indigo-500" />
+                        </Button>
+                        {(inkomen.factuurId || (inkomen.factuurLinks?.length ?? 0) > 0) && (
                           <Button
                             variant="ghost"
                             size="icon-sm"
-                            title="Ontkoppelen"
+                            title="Ontkoppel alle facturen"
                             onClick={() => ontkoppel(inkomen.id)}
                           >
                             <Unlink className="h-4 w-4 text-gray-400" />
-                          </Button>
-                        ) : (
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            title="Koppel aan factuur"
-                            onClick={() => openKoppel(inkomen.id)}
-                          >
-                            <Link className="h-4 w-4 text-indigo-500" />
                           </Button>
                         )}
                         <Button
