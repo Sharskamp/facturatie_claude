@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Plus, Pencil, Trash2, Link, TrendingUp, Unlink, Search, Loader2, BookOpen } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -227,6 +227,42 @@ export default function InkomenPagina() {
     window.addEventListener('bankVeldenGewijzigd', handler);
     return () => window.removeEventListener('bankVeldenGewijzigd', handler);
   }, [haalInstellingenOp]);
+
+  const autoKoppelBezig = useRef(false);
+  useEffect(() => {
+    if (laden || autoKoppelBezig.current) return;
+    const ongekoppeld = inkomens.filter(i => !i.factuurId && !i.geboektAlsOmzet && i.bron === "Bankimport");
+    if (ongekoppeld.length === 0) return;
+    autoKoppelBezig.current = true;
+    (async () => {
+      let gekoppeld = 0;
+      for (const inkomen of ongekoppeld) {
+        try {
+          const match = await window.api.bank.zoekFactuurMatch({
+            bedrag: inkomen.bedrag,
+            datum: inkomen.datum,
+            omschrijving: inkomen.omschrijving ?? undefined,
+            mededelingen: inkomen.mededelingen ?? undefined,
+            betalingskenmerk: inkomen.betalingskenmerk ?? undefined,
+          }) as { matchType: string; volledigeMatches: { id: string; nummer: string }[]; alleenNummerMatches: { id: string; nummer: string }[] };
+          const kandidaat =
+            match.matchType === "volledig" && match.volledigeMatches.length === 1 ? match.volledigeMatches[0]
+            : match.matchType === "alleenNummer" && match.alleenNummerMatches.length === 1 ? match.alleenNummerMatches[0]
+            : null;
+          if (kandidaat) {
+            await window.api.bank.koppelAanFactuur({ inkomstenId: inkomen.id, factuurId: kandidaat.id });
+            gekoppeld++;
+          }
+        } catch { /* stil falen per betaling */ }
+      }
+      if (gekoppeld > 0) {
+        toonMelding("succes", `${gekoppeld} betaling${gekoppeld !== 1 ? "en" : ""} automatisch gekoppeld aan een factuur`);
+        haalInkomensOp();
+        haalFacturenOp();
+      }
+      autoKoppelBezig.current = false;
+    })();
+  }, [laden, inkomens, haalInkomensOp, haalFacturenOp]);
 
   const toonMelding = (type: "succes" | "fout", tekst: string) => {
     setMelding({ type, tekst });
