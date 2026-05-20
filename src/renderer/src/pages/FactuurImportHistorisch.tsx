@@ -189,6 +189,7 @@ export default function FactuurImportHistorischPage() {
   const [csvFout, setCsvFout] = useState<string | null>(null);
   const [bulkLaden, setBulkLaden] = useState(false);
   const [bulkResultaat, setBulkResultaat] = useState<{ succes: number; fouten: string[] } | null>(null);
+  const [bulkStatusKiezer, setBulkStatusKiezer] = useState("BETAALD");
 
   function verwerkCsvBestand(bestand: File) {
     setCsvFout(null); setBulkResultaat(null);
@@ -755,12 +756,28 @@ export default function FactuurImportHistorischPage() {
 
             {csvRijen.length > 0 && (
               <div className="space-y-4">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <h3 className="font-semibold text-gray-900">{csvRijen.length} facturen gevonden</h3>
                     <p className="text-sm text-gray-500">Controleer de gegevens en koppel de klant aan elke factuur.</p>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2 items-center">
+                    <div className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-gray-50 px-2 py-1">
+                      <span className="text-xs text-gray-500 whitespace-nowrap">Alles op:</span>
+                      <select
+                        value={bulkStatusKiezer}
+                        onChange={e => setBulkStatusKiezer(e.target.value)}
+                        className="h-7 rounded border-0 bg-transparent text-sm focus:outline-none focus:ring-0"
+                      >
+                        <option value="BETAALD">Betaald</option>
+                        <option value="VERZONDEN">Verzonden</option>
+                        <option value="VERLOPEN">Verlopen</option>
+                        <option value="CONCEPT">Concept</option>
+                      </select>
+                      <Button size="sm" variant="outline" onClick={() => setCsvRijen(prev => prev.map(r => ({ ...r, status: bulkStatusKiezer })))}>
+                        Toepassen
+                      </Button>
+                    </div>
                     <Button variant="outline" size="sm" onClick={() => { setCsvRijen([]); setBulkResultaat(null); }}>
                       Ander bestand
                     </Button>
@@ -951,7 +968,7 @@ export default function FactuurImportHistorischPage() {
             {/* Scan wachtrij + review */}
             {pdfRijen.length > 0 && (
               <div className="space-y-4">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <h3 className="font-semibold text-gray-900 dark:text-white">
                       {pdfRijen.length} bestand{pdfRijen.length !== 1 ? "en" : ""}
@@ -963,7 +980,25 @@ export default function FactuurImportHistorischPage() {
                       {pdfRijen.filter(r => r.scanStatus === "fout").length} fout
                     </p>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2 items-center">
+                    {pdfRijen.some(r => r.scanStatus === "klaar") && (
+                      <div className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-gray-50 px-2 py-1">
+                        <span className="text-xs text-gray-500 whitespace-nowrap">Alles op:</span>
+                        <select
+                          value={bulkStatusKiezer}
+                          onChange={e => setBulkStatusKiezer(e.target.value)}
+                          className="h-7 rounded border-0 bg-transparent text-sm focus:outline-none focus:ring-0"
+                        >
+                          <option value="BETAALD">Betaald</option>
+                          <option value="VERZONDEN">Verzonden</option>
+                          <option value="VERLOPEN">Verlopen</option>
+                          <option value="CONCEPT">Concept</option>
+                        </select>
+                        <Button size="sm" variant="outline" onClick={() => setPdfRijen(prev => prev.map(r => r.scanStatus === "klaar" ? { ...r, status: bulkStatusKiezer } : r))}>
+                          Toepassen
+                        </Button>
+                      </div>
+                    )}
                     <Button variant="outline" size="sm" onClick={() => { setPdfRijen([]); setPdfImportResultaat(null); setPdfFout(null); }}>
                       <X className="h-4 w-4" />Wissen
                     </Button>
