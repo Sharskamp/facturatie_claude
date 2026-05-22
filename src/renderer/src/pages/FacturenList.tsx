@@ -393,8 +393,8 @@ export default function FacturenPage() {
                     <TableHead>Klant</TableHead>
                     <TableHead>Datum</TableHead>
                     <TableHead>Vervaldatum</TableHead>
-                    <TableHead className="text-right">Totaal</TableHead>
                     <TableHead className="text-right">Betaald</TableHead>
+                    <TableHead className="text-right">Saldo</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Acties</TableHead>
                   </TableRow>
@@ -451,12 +451,12 @@ export default function FacturenPage() {
                           {formatBedrag(f.totaal)}
                         </TableCell>
                         <TableCell className="text-right">
-                          {(f.openstaand ?? 0) > 0.01 && f.status !== "CONCEPT" ? (
-                            <span className="font-semibold text-red-600">
+                          {(f.reedsBetaald ?? 0) > 0.01 && (f.openstaand ?? 0) > 0.01 ? (
+                            <span className="font-semibold text-red-600" title="Te weinig betaald">
                               -{formatBedrag(f.openstaand ?? 0)}
                             </span>
                           ) : (f.teveel ?? 0) > 0.01 ? (
-                            <span className="font-semibold text-blue-600">
+                            <span className="font-semibold text-blue-600" title="Te veel betaald">
                               +{formatBedrag(f.teveel ?? 0)}
                             </span>
                           ) : null}
