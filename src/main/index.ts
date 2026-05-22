@@ -1175,7 +1175,7 @@ function setupIpcHandlers() {
       if (params?.van) vanDatum = new Date(params.van)
       if (params?.tot) totDatum = new Date(params.tot)
     }
-    return prisma.inkomen.findMany({
+    const inkomenList = await prisma.inkomen.findMany({
       where: {
         ...(vanDatum ? { datum: { gte: vanDatum } } : {}),
         ...(totDatum ? { datum: { lte: totDatum } } : {}),
@@ -1183,12 +1183,39 @@ function setupIpcHandlers() {
       include: {
         factuur: { include: { klant: true } },
         koppelingen: {
-          include: { factuur: { select: { id: true, nummer: true, totaal: true, status: true } } },
+          include: {
+            factuur: {
+              select: {
+                id: true, nummer: true, totaal: true, status: true,
+                betalingen: { select: { bedrag: true } },
+              },
+            },
+          },
           orderBy: { aangemaakt: 'asc' },
         },
       },
       orderBy: { datum: 'desc' }
     })
+
+    // Verrijk elke koppeling met reedsBetaald/openstaand/teveel berekend over ALLE betalingen op die factuur
+    return inkomenList.map(inkomen => ({
+      ...inkomen,
+      koppelingen: inkomen.koppelingen.map(k => {
+        const reedsBetaald = k.factuur?.betalingen?.reduce((s: number, b: { bedrag: number }) => s + b.bedrag, 0) ?? 0
+        return {
+          ...k,
+          factuur: k.factuur ? {
+            id: k.factuur.id,
+            nummer: k.factuur.nummer,
+            totaal: k.factuur.totaal,
+            status: k.factuur.status,
+            reedsBetaald,
+            openstaand: Math.max(0, k.factuur.totaal - reedsBetaald),
+            teveel: Math.max(0, reedsBetaald - k.factuur.totaal),
+          } : null,
+        }
+      }),
+    }))
   })
 
   ipcMain.handle('inkomen:create', async (_, data: Record<string, unknown>) => {

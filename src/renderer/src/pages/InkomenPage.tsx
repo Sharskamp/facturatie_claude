@@ -34,7 +34,15 @@ import { formatBedrag, formatDatum } from "@/lib/utils";
 interface InkomenKoppeling {
   id: string;
   bedrag: number;
-  factuur: { id: string; nummer: string; totaal: number; status: string } | null;
+  factuur: {
+    id: string;
+    nummer: string;
+    totaal: number;
+    status: string;
+    reedsBetaald?: number;
+    openstaand?: number;
+    teveel?: number;
+  } | null;
 }
 
 interface Inkomen {
@@ -745,35 +753,25 @@ export default function InkomenPagina() {
                             return (
                               <div className="space-y-1">
                                 {koppelingen.map(k => {
-                                  const reedsBetaald = koppelingen
-                                    .filter(x => x.factuur?.id === k.factuur?.id)
-                                    .reduce((s, x) => s + x.bedrag, 0);
-                                  const openstaand = k.factuur ? Math.max(0, k.factuur.totaal - reedsBetaald) : 0;
-                                  const teveel = k.factuur ? Math.max(0, reedsBetaald - k.factuur.totaal) : 0;
+                                  const openstaand = k.factuur?.openstaand ?? 0;
+                                  const teveel = k.factuur?.teveel ?? 0;
                                   return (
                                     <div key={k.id} className="flex items-center gap-1.5 flex-wrap">
                                       <span className="text-indigo-600 text-sm font-medium">{k.factuur?.nummer ?? "?"}</span>
                                       <span className="text-xs text-gray-500">{formatBedrag(k.bedrag)}</span>
                                       {openstaand > 0.01 && (
-                                        <span className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded px-1">
-                                          nog {formatBedrag(openstaand)}
+                                        <span className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-1">
+                                          -{formatBedrag(openstaand)} open
                                         </span>
                                       )}
                                       {teveel > 0.01 && (
-                                        <span className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-1">
+                                        <span className="text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded px-1">
                                           +{formatBedrag(teveel)} teveel
                                         </span>
                                       )}
                                     </div>
                                   );
                                 })}
-                                {koppelingen.length > 1 && (() => {
-                                  const totaalGekoppeld = koppelingen.reduce((s, k) => s + k.bedrag, 0);
-                                  const resterend = inkomen.bedrag - totaalGekoppeld;
-                                  return resterend > 0.01 ? (
-                                    <span className="text-xs text-orange-600">Resterend: {formatBedrag(resterend)}</span>
-                                  ) : null;
-                                })()}
                               </div>
                             );
                           }
