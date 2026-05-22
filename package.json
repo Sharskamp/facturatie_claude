@@ -10,7 +10,7 @@
     "package": "npm run build && electron-builder --win",
     "package:win": "npm run build && electron-builder --win --publish never",
     "package:mac": "npm run build && electron-builder --mac --publish never",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate && electron-rebuild -f -w better-sqlite3"
   },
   "dependencies": {
     "@electron-toolkit/utils": "^4.0.0",
@@ -65,6 +65,7 @@
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^4.4.1",
     "electron-builder": "^25.1.8",
+    "electron-rebuild": "^3.2.9",
     "electron-vite": "^3.1.0",
     "tailwindcss": "^4",
     "typescript": "^5"
