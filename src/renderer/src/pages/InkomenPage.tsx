@@ -186,6 +186,9 @@ export default function InkomenPagina() {
   const [matchGeselecteerdeIds, setMatchGeselecteerdeIds] = useState<string[]>([]);
   const [toontAlleFacturen, setToontAlleFacturen] = useState(false);
 
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailItem, setDetailItem] = useState<Inkomen | null>(null);
+
   const [formulier, setFormulier] = useState({
     datum: new Date().toISOString().split("T")[0],
     omschrijving: "",
@@ -386,6 +389,11 @@ export default function InkomenPagina() {
     } catch {
       toonMelding("fout", "Bijwerken mislukt");
     }
+  };
+
+  const openDetail = (item: Inkomen) => {
+    setDetailItem(item);
+    setDetailOpen(true);
   };
 
   const openSmartKoppel = async (inkomen: Inkomen) => {
@@ -702,7 +710,7 @@ export default function InkomenPagina() {
                 </TableRow>
               ) : (
                 zichtbareInkomens.map((inkomen) => (
-                  <TableRow key={inkomen.id}>
+                  <TableRow key={inkomen.id} className="cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/40" onClick={() => openDetail(inkomen)}>
                     {bankVelden.includes('datum') && (
                       <TableCell className="text-gray-500 whitespace-nowrap">{formatDatum(inkomen.datum)}</TableCell>
                     )}
@@ -786,7 +794,7 @@ export default function InkomenPagina() {
                       </TableCell>
                     )}
                     <TableCell>
-                      <div className="flex items-center justify-end gap-1">
+                      <div className="flex items-center justify-end gap-1" onClick={e => e.stopPropagation()}>
                         {isSpaar(inkomen) ? null : (
                           <>
                             {heeftKoppeling(inkomen) ? (
@@ -932,6 +940,201 @@ export default function InkomenPagina() {
               Koppelen
             </Button>
           </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* Detail Modal */}
+      <Modal open={detailOpen} onOpenChange={(o) => { setDetailOpen(o); if (!o) setDetailItem(null); }}>
+        <ModalContent className="max-w-xl max-h-[90vh] overflow-y-auto">
+          {detailItem && (() => {
+            const bronBadge = isSpaar(detailItem) ? (
+              <Badge className="text-purple-600 border-purple-300 bg-purple-50">Spaarrekening</Badge>
+            ) : detailItem.bron === "Bankimport" && !heeftKoppeling(detailItem) && !detailItem.geboektAlsOmzet ? (
+              <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50">Wacht op koppeling</Badge>
+            ) : detailItem.bron === "Bankimport" && detailItem.geboektAlsOmzet ? (
+              <Badge variant="outline" className="text-green-600 border-green-300 bg-green-50">Losse omzet</Badge>
+            ) : (
+              <Badge variant="default">{detailItem.bron}</Badge>
+            );
+            const heeftBank = !!(detailItem.tegenrekeningNaam || detailItem.tegenrekening || detailItem.mutatiesoort || detailItem.mededelingen || detailItem.betalingskenmerk || detailItem.saldoNaBoeking);
+            const koppelingen = detailItem.koppelingen ?? [];
+            const _heeftKoppeling = heeftKoppeling(detailItem);
+            const _isSpaar = isSpaar(detailItem);
+            const _geboektAlsOmzet = detailItem.geboektAlsOmzet;
+            return (
+              <>
+                <ModalHeader>
+                  <ModalTitle>{detailItem.omschrijving}</ModalTitle>
+                  <p className="text-sm text-gray-500 mt-0.5">{formatDatum(detailItem.datum)}</p>
+                </ModalHeader>
+                <div className="space-y-4">
+                  {/* Bedrag + status */}
+                  <div className="flex items-center justify-between gap-4 flex-wrap">
+                    <p className={`text-3xl font-bold ${detailItem.bedrag >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                      {formatBedrag(detailItem.bedrag)}
+                    </p>
+                    {bronBadge}
+                  </div>
+
+                  {/* Bankgegevens */}
+                  {heeftBank && (
+                    <div className="rounded-lg bg-gray-50 border border-gray-200 px-4 py-3 space-y-2">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1">Bankgegevens</p>
+                      {detailItem.tegenrekeningNaam && (
+                        <div className="flex justify-between gap-2 text-sm">
+                          <span className="text-gray-500">Naam tegenpartij</span>
+                          <span className="text-gray-900 font-medium text-right">{detailItem.tegenrekeningNaam}</span>
+                        </div>
+                      )}
+                      {detailItem.tegenrekening && (
+                        <div className="flex justify-between gap-2 text-sm">
+                          <span className="text-gray-500">Tegenrekening</span>
+                          <span className="font-mono text-gray-900 text-right">{detailItem.tegenrekening}</span>
+                        </div>
+                      )}
+                      {detailItem.mutatiesoort && (
+                        <div className="flex justify-between gap-2 text-sm">
+                          <span className="text-gray-500">Mutatiesoort</span>
+                          <span className="text-gray-900 text-right">{detailItem.mutatiesoort}</span>
+                        </div>
+                      )}
+                      {detailItem.mededelingen && (
+                        <div className="flex justify-between gap-2 text-sm">
+                          <span className="text-gray-500 shrink-0">Mededelingen</span>
+                          <span className="text-gray-900 text-right break-all">{detailItem.mededelingen}</span>
+                        </div>
+                      )}
+                      {detailItem.betalingskenmerk && (
+                        <div className="flex justify-between gap-2 text-sm">
+                          <span className="text-gray-500 shrink-0">Betalingskenmerk</span>
+                          <span className="font-mono text-gray-900 text-right break-all">{detailItem.betalingskenmerk}</span>
+                        </div>
+                      )}
+                      {detailItem.saldoNaBoeking && (
+                        <div className="flex justify-between gap-2 text-sm">
+                          <span className="text-gray-500">Saldo na boeking</span>
+                          <span className="text-gray-900 text-right">{detailItem.saldoNaBoeking}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Gekoppelde facturen */}
+                  {_heeftKoppeling && koppelingen.length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Gekoppelde facturen</p>
+                      <div className="space-y-2">
+                        {koppelingen.map(k => {
+                          const openstaand = k.factuur?.openstaand ?? 0;
+                          const teveel = k.factuur?.teveel ?? 0;
+                          const volledigBetaald = openstaand <= 0.01 && teveel <= 0.01;
+                          return (
+                            <div key={k.id} className="flex items-center justify-between gap-2 flex-wrap rounded-lg border border-gray-200 px-3 py-2">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-indigo-600 font-semibold">{k.factuur?.nummer ?? "?"}</span>
+                                <span className="text-sm text-gray-500">{formatBedrag(k.bedrag)}</span>
+                              </div>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                {volledigBetaald && (
+                                  <span className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-full px-2 py-0.5">✓ Betaald</span>
+                                )}
+                                {openstaand > 0.01 && (
+                                  <span className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-1">
+                                    -{formatBedrag(openstaand)} open
+                                  </span>
+                                )}
+                                {teveel > 0.01 && (
+                                  <span className="text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded px-1">
+                                    +{formatBedrag(teveel)} teveel
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Notities */}
+                  {detailItem.notities && (
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1">Notities</p>
+                      <p className="text-sm text-gray-700 whitespace-pre-wrap">{detailItem.notities}</p>
+                    </div>
+                  )}
+                </div>
+                <ModalFooter className="flex-wrap gap-2">
+                  {_heeftKoppeling && (
+                    <Button
+                      variant="outline"
+                      className="text-red-600 border-red-300 hover:bg-red-50"
+                      onClick={async () => {
+                        setDetailOpen(false);
+                        setDetailItem(null);
+                        await ontkoppel(detailItem.id);
+                      }}
+                    >
+                      Ontkoppelen
+                    </Button>
+                  )}
+                  {!_heeftKoppeling && !_isSpaar && detailItem.bron === "Bankimport" && !_geboektAlsOmzet && (
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        const item = detailItem;
+                        setDetailOpen(false);
+                        setDetailItem(null);
+                        openSmartKoppel(item);
+                      }}
+                    >
+                      Koppelen
+                    </Button>
+                  )}
+                  {!_heeftKoppeling && !_isSpaar && detailItem.bron === "Bankimport" && !_geboektAlsOmzet && (
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        const item = detailItem;
+                        setDetailOpen(false);
+                        setDetailItem(null);
+                        boekAlsOmzet(item.id);
+                      }}
+                    >
+                      Boek als omzet
+                    </Button>
+                  )}
+                  <div className="flex-1" />
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      const item = detailItem;
+                      setDetailOpen(false);
+                      setDetailItem(null);
+                      openBewerken(item);
+                    }}
+                  >
+                    Bewerken
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    className="text-red-600 hover:bg-red-50"
+                    onClick={() => {
+                      const item = detailItem;
+                      setDetailOpen(false);
+                      setDetailItem(null);
+                      verwijder(item.id);
+                    }}
+                  >
+                    Verwijderen
+                  </Button>
+                  <ModalClose asChild>
+                    <Button variant="outline">Sluiten</Button>
+                  </ModalClose>
+                </ModalFooter>
+              </>
+            );
+          })()}
         </ModalContent>
       </Modal>
 

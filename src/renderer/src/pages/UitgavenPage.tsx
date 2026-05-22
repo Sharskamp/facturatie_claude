@@ -144,6 +144,9 @@ export default function UitgavenPagina() {
   const [scanLaden, setScanLaden] = useState(false);
   const [scanEngine, setScanEngine] = useState<"lokaal" | "ai">("lokaal");
 
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailItem, setDetailItem] = useState<Uitgave | null>(null);
+
   const haalUitgavenOp = useCallback(async () => {
     try {
       const params: Record<string, string> = { maand: maandFilter };
@@ -206,6 +209,11 @@ export default function UitgavenPagina() {
     setBewerkenId(null);
     setHuidigeBon(null);
     setPendingBonPad(null);
+  };
+
+  const openDetail = (item: Uitgave) => {
+    setDetailItem(item);
+    setDetailOpen(true);
   };
 
   const openBewerken = (uitgave: Uitgave) => {
@@ -604,7 +612,7 @@ export default function UitgavenPagina() {
                 </TableRow>
               ) : (
                 zichtbareUitgaven.map((uitgave) => (
-                  <TableRow key={uitgave.id}>
+                  <TableRow key={uitgave.id} className="cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/40" onClick={() => openDetail(uitgave)}>
                     {uitgavenVelden.includes('datum') && (
                       <TableCell className="text-gray-500 whitespace-nowrap">
                         {formatDatum(uitgave.datum)}
@@ -648,7 +656,7 @@ export default function UitgavenPagina() {
                       </TableCell>
                     )}
                     <TableCell>
-                      <div className="flex items-center justify-end gap-1">
+                      <div className="flex items-center justify-end gap-1" onClick={e => e.stopPropagation()}>
                         <Button
                           variant="ghost"
                           size="icon-sm"
@@ -932,6 +940,145 @@ export default function UitgavenPagina() {
               {bewerkenId ? "Opslaan" : "Toevoegen"}
             </Button>
           </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* Detail Modal */}
+      <Modal open={detailOpen} onOpenChange={(o) => { setDetailOpen(o); if (!o) setDetailItem(null); }}>
+        <ModalContent className="max-w-xl max-h-[90vh] overflow-y-auto">
+          {detailItem && (() => {
+            return (
+              <>
+                <ModalHeader>
+                  <ModalTitle>{detailItem.omschrijving}</ModalTitle>
+                  <p className="text-sm text-gray-500 mt-0.5">{formatDatum(detailItem.datum)}</p>
+                </ModalHeader>
+                <div className="space-y-4">
+                  {/* Bedragen */}
+                  <div className="rounded-lg bg-gray-50 border border-gray-200 px-4 py-3 space-y-2">
+                    <div className="flex justify-between text-sm text-gray-600">
+                      <span>Excl. BTW</span>
+                      <span>{formatBedrag(detailItem.bedrag)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm text-blue-600">
+                      <span>BTW ({detailItem.btwPercentage}%)</span>
+                      <span>{formatBedrag(detailItem.btw)}</span>
+                    </div>
+                    <div className="flex justify-between text-base font-bold text-red-700 border-t border-gray-200 pt-2 mt-1">
+                      <span>Totaal</span>
+                      <span>{formatBedrag(detailItem.totaal)}</span>
+                    </div>
+                  </div>
+
+                  {/* Meta info */}
+                  <div className="rounded-lg bg-gray-50 border border-gray-200 px-4 py-3 space-y-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1">Informatie</p>
+                    {detailItem.leverancier && (
+                      <div className="flex justify-between gap-2 text-sm">
+                        <span className="text-gray-500">Leverancier</span>
+                        <span className="text-gray-900 font-medium text-right">{detailItem.leverancier}</span>
+                      </div>
+                    )}
+                    {detailItem.categorie && (
+                      <div className="flex justify-between gap-2 text-sm items-center">
+                        <span className="text-gray-500">Categorie</span>
+                        <Badge variant={categorieBadgeVariant(detailItem.categorie.kleur)}>
+                          {detailItem.categorie.naam}
+                        </Badge>
+                      </div>
+                    )}
+                    <div className="flex justify-between gap-2 text-sm">
+                      <span className="text-gray-500">Zakelijk</span>
+                      <span className="text-gray-900 text-right">
+                        {detailItem.zakelijk ? `Ja — ${detailItem.zakelijkPercent}%` : "Nee"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Notities */}
+                  {detailItem.notities && (
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1">Notities</p>
+                      <p className="text-sm text-gray-700 whitespace-pre-wrap">{detailItem.notities}</p>
+                    </div>
+                  )}
+
+                  {/* Bon */}
+                  {detailItem.bonBestand && (
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1">Bon</p>
+                      <div className="flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2">
+                        <span className="text-sm text-gray-700 truncate">
+                          {detailItem.bonBestand.split(/[/\\]/).pop()}
+                        </span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => window.api.uitgaven.openBon({ pad: detailItem.bonBestand! })}
+                        >
+                          Openen
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <ModalFooter className="flex-wrap gap-2">
+                  {!detailItem.bonBestand && (
+                    <Button
+                      variant="outline"
+                      onClick={async () => {
+                        const item = detailItem;
+                        setDetailOpen(false);
+                        setDetailItem(null);
+                        const res = await window.api.uitgaven.uploadBon({ uitgaveId: item.id }) as { succes: boolean; pad?: string };
+                        if (res.succes && res.pad) {
+                          setBonScanInfo({ uitgaveId: item.id, bonPad: res.pad });
+                          haalUitgavenOp();
+                        }
+                      }}
+                    >
+                      Bon uploaden
+                    </Button>
+                  )}
+                  {detailItem.bonBestand && (
+                    <Button
+                      variant="outline"
+                      onClick={() => window.api.uitgaven.openBon({ pad: detailItem.bonBestand! })}
+                    >
+                      Bon bekijken
+                    </Button>
+                  )}
+                  <div className="flex-1" />
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      const item = detailItem;
+                      setDetailOpen(false);
+                      setDetailItem(null);
+                      openBewerken(item);
+                    }}
+                  >
+                    Bewerken
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    className="text-red-600 hover:bg-red-50"
+                    onClick={() => {
+                      const item = detailItem;
+                      setDetailOpen(false);
+                      setDetailItem(null);
+                      verwijder(item.id);
+                    }}
+                  >
+                    Verwijderen
+                  </Button>
+                  <ModalClose asChild>
+                    <Button variant="outline">Sluiten</Button>
+                  </ModalClose>
+                </ModalFooter>
+              </>
+            );
+          })()}
         </ModalContent>
       </Modal>
 
