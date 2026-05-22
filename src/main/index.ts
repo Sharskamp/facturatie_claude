@@ -254,6 +254,28 @@ function runMigratie(dbPath: string): void {
 
   kolomToevoegen('User', 'bankAfschriftenMap', 'TEXT')
 
+  // InkomenFactuur — junction tabel voor M:M koppeling betaling ↔ factuur
+  db.exec(`CREATE TABLE IF NOT EXISTS "InkomenFactuur" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "inkomstenId" TEXT NOT NULL,
+    "factuurId" TEXT NOT NULL,
+    "bedrag" REAL NOT NULL,
+    "aangemaakt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "InkomenFactuur_inkomstenId_fkey" FOREIGN KEY ("inkomstenId") REFERENCES "Inkomen" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "InkomenFactuur_factuurId_fkey" FOREIGN KEY ("factuurId") REFERENCES "Factuur" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+  )`)
+  try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS "InkomenFactuur_inkomstenId_factuurId_key" ON "InkomenFactuur"("inkomstenId", "factuurId")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "InkomenFactuur_inkomstenId_idx" ON "InkomenFactuur"("inkomstenId")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "InkomenFactuur_factuurId_idx" ON "InkomenFactuur"("factuurId")') } catch {}
+  // Migreer bestaande Inkomen.factuurId koppelingen naar InkomenFactuur
+  try {
+    db.exec(`
+      INSERT OR IGNORE INTO "InkomenFactuur" ("id", "inkomstenId", "factuurId", "bedrag", "aangemaakt")
+      SELECT lower(hex(randomblob(16))), "id", "factuurId", "bedrag", COALESCE("aangemaakt", CURRENT_TIMESTAMP)
+      FROM "Inkomen" WHERE "factuurId" IS NOT NULL
+    `)
+  } catch {}
+
   // Seed default categories if none exist
   const catCount = (db.prepare('SELECT COUNT(*) as count FROM "Categorie"').get() as { count: number }).count;
   if (catCount === 0) {
