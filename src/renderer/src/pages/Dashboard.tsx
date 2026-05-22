@@ -14,7 +14,9 @@ import {
   Cell,
   Legend,
 } from "recharts";
-import { TrendingUp, AlertCircle, TrendingDown, Activity, ArrowRight, Loader2, TriangleAlert, Building2 } from "lucide-react";
+import { TrendingUp, AlertCircle, TrendingDown, Activity, ArrowRight, Loader2, TriangleAlert, Building2, Bell } from "lucide-react";
+import { Modal, ModalContent, ModalHeader, ModalTitle, ModalFooter, ModalClose } from "@/components/ui/modal";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Header } from "@/components/layout/header";
@@ -33,6 +35,9 @@ interface Factuur {
   btwBedrag: number;
   status: string;
   klant: { id: string; naam: string; bedrijf?: string | null };
+  reedsBetaald?: number;
+  openstaand?: number;
+  teveel?: number;
 }
 
 interface Inkomen {
@@ -152,6 +157,7 @@ export default function Dashboard() {
   const [uitgaven, setUitgaven] = useState<Uitgave[]>([]);
   const [instellingen, setInstellingen] = useState<Instellingen>({});
   const [laden, setLaden] = useState(true);
+  const [opstartModalOpen, setOpstartModalOpen] = useState(false);
 
   useEffect(() => {
     async function laadData() {
@@ -162,10 +168,16 @@ export default function Dashboard() {
           window.api.uitgaven.list(),
           window.api.instellingen.get(),
         ]);
-        setFacturen(Array.isArray(facturenData) ? facturenData as Factuur[] : []);
+        const f = Array.isArray(facturenData) ? facturenData as Factuur[] : []
+        setFacturen(f);
         setInkomen(Array.isArray(inkomenData) ? inkomenData as Inkomen[] : []);
         setUitgaven(Array.isArray(uitgavenData) ? uitgavenData as Uitgave[] : []);
         setInstellingen(instellingenData as Instellingen ?? {});
+        const heeftOpenstaand = f.some(fac =>
+          (fac.status === 'VERZONDEN' || fac.status === 'VERLOPEN') &&
+          ((fac.openstaand ?? fac.totaal) > 0.01)
+        )
+        if (heeftOpenstaand) setOpstartModalOpen(true);
       } catch (e) {
         console.error("Fout bij laden dashboard:", e);
       } finally {
@@ -322,7 +334,10 @@ export default function Dashboard() {
   const aankomendBetalingen = useMemo(
     () =>
       facturen
-        .filter((f) => f.status === "VERZONDEN")
+        .filter((f) =>
+          (f.status === "VERZONDEN" || f.status === "VERLOPEN") &&
+          (f.openstaand ?? f.totaal) > 0.01
+        )
         .sort(
           (a, b) =>
             new Date(a.vervaldatum).getTime() - new Date(b.vervaldatum).getTime()
@@ -493,6 +508,8 @@ export default function Dashboard() {
               ) : (
                 aankomendBetalingen.map((f) => {
                   const verloopt = new Date(f.vervaldatum) < nu;
+                  const openBedrag = f.openstaand ?? f.totaal;
+                  const deelsBetaald = (f.reedsBetaald ?? 0) > 0.01;
                   return (
                     <Link
                       key={f.id}
@@ -502,6 +519,7 @@ export default function Dashboard() {
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-gray-900 truncate">
                           {f.klant.bedrijf ?? f.klant.naam}
+                          <span className="ml-2 text-xs text-gray-400 font-normal">{f.nummer}</span>
                         </p>
                         <p className="text-xs text-gray-400">
                           {verloopt ? (
@@ -509,11 +527,17 @@ export default function Dashboard() {
                           ) : (
                             <>Vervalt {formatDatum(f.vervaldatum)}</>
                           )}
+                          {deelsBetaald && (
+                            <span className="ml-2 text-amber-600">gedeeltelijk betaald</span>
+                          )}
                         </p>
                       </div>
-                      <span className="text-sm font-semibold text-gray-900 ml-3 shrink-0">
-                        {formatBedrag(f.totaal)}
-                      </span>
+                      <div className="text-right ml-3 shrink-0">
+                        <p className="text-sm font-semibold text-gray-900">{formatBedrag(openBedrag)}</p>
+                        {deelsBetaald && (
+                          <p className="text-xs text-gray-400">van {formatBedrag(f.totaal)}</p>
+                        )}
+                      </div>
                     </Link>
                   );
                 })
@@ -639,6 +663,72 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Startup-popup: openstaande facturen */}
+      <Modal open={opstartModalOpen} onOpenChange={setOpstartModalOpen}>
+        <ModalContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+          <ModalHeader>
+            <ModalTitle className="flex items-center gap-2">
+              <Bell className="h-5 w-5 text-amber-500" />
+              Openstaande facturen
+            </ModalTitle>
+          </ModalHeader>
+          <div className="space-y-2">
+            <p className="text-sm text-gray-500 mb-3">
+              De volgende facturen hebben nog een openstaand bedrag.
+            </p>
+            {facturen
+              .filter(f =>
+                (f.status === 'VERZONDEN' || f.status === 'VERLOPEN') &&
+                (f.openstaand ?? f.totaal) > 0.01
+              )
+              .sort((a, b) => new Date(a.vervaldatum).getTime() - new Date(b.vervaldatum).getTime())
+              .map(f => {
+                const verloopt = new Date(f.vervaldatum) < nu;
+                const openBedrag = f.openstaand ?? f.totaal;
+                const deelsBetaald = (f.reedsBetaald ?? 0) > 0.01;
+                return (
+                  <div
+                    key={f.id}
+                    className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer hover:bg-gray-50 transition-colors ${verloopt ? 'border-red-200 bg-red-50/40' : 'border-gray-200'}`}
+                    onClick={() => { setOpstartModalOpen(false); navigate(`/facturen/${f.id}`); }}
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-gray-900 truncate">
+                        {f.klant.bedrijf ?? f.klant.naam}
+                        <span className="ml-2 text-xs text-gray-400 font-normal">{f.nummer}</span>
+                      </p>
+                      <p className="text-xs mt-0.5">
+                        {verloopt ? (
+                          <span className="text-red-600 font-medium">Verlopen {formatDatum(f.vervaldatum)}</span>
+                        ) : (
+                          <span className="text-gray-400">Vervalt {formatDatum(f.vervaldatum)}</span>
+                        )}
+                        {deelsBetaald && <span className="ml-2 text-amber-600">gedeeltelijk betaald</span>}
+                      </p>
+                    </div>
+                    <div className="text-right ml-4 shrink-0">
+                      <p className={`text-sm font-semibold ${verloopt ? 'text-red-600' : 'text-gray-900'}`}>
+                        {formatBedrag(openBedrag)}
+                      </p>
+                      {deelsBetaald && (
+                        <p className="text-xs text-gray-400">van {formatBedrag(f.totaal)}</p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+          </div>
+          <ModalFooter>
+            <ModalClose asChild>
+              <Button variant="outline">Sluiten</Button>
+            </ModalClose>
+            <Button onClick={() => { setOpstartModalOpen(false); navigate('/facturen?status=VERZONDEN'); }}>
+              Naar facturen
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
     </div>
   );
 }
