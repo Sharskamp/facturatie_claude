@@ -727,36 +727,33 @@ function setupIpcHandlers() {
           ]
         } : {}),
       },
-      include: { klant: true, betalingen: { select: { inkomstenId: true, bedrag: true } } },
+      include: { klant: true, betalingen: { select: { inkomstenId: true, bedrag: true, aangemaakt: true } } },
       orderBy: { datum: 'desc' }
     })
 
-    // Transitieve groepsberekening: zelfde logica als inkomen:list
-    // 1. Verzamel alle inkomstenIds vanuit de betalingen van alle facturen
+    type FactuurBetaling = { inkomstenId: string; bedrag: number; aangemaakt: Date | string }
+
     const alleInkomstenIds = new Set<string>()
     for (const f of facturen) {
       for (const b of f.betalingen) alleInkomstenIds.add(b.inkomstenId)
     }
 
-    // Facturen zonder betalingen: direct ophalen
     if (alleInkomstenIds.size === 0) {
       return facturen.map(f => ({ ...f, reedsBetaald: 0, openstaand: f.totaal, teveel: 0 }))
     }
 
-    // 2. Haal alle InkomenFactuur-records op voor die betalingen (kan extra facturen onthullen)
     const alleKoppelingen = await prisma.inkomenFactuur.findMany({
       where: { inkomstenId: { in: Array.from(alleInkomstenIds) } },
       select: { inkomstenId: true, factuurId: true, bedrag: true },
     })
 
-    // 3. Bouw graaf-mappen
     const bekendFactuurIds = new Set(facturen.map(f => f.id))
-    const fBetalingen = new Map<string, Array<{ inkomstenId: string; bedrag: number }>>()
+    const fBetalingen = new Map<string, FactuurBetaling[]>()
     const fTotalen = new Map<string, number>()
     const inkNaarFacturen = new Map<string, Set<string>>()
 
     for (const f of facturen) {
-      fBetalingen.set(f.id, f.betalingen)
+      fBetalingen.set(f.id, f.betalingen as FactuurBetaling[])
       fTotalen.set(f.id, f.totaal)
       for (const b of f.betalingen) {
         if (!inkNaarFacturen.has(b.inkomstenId)) inkNaarFacturen.set(b.inkomstenId, new Set())
@@ -768,15 +765,14 @@ function setupIpcHandlers() {
       inkNaarFacturen.get(k.inkomstenId)!.add(k.factuurId)
     }
 
-    // 4. Haal extra facturen op die via gedeelde betalingen verbonden zijn maar niet in de lijst staan
     const extraIds = [...new Set(alleKoppelingen.map(k => k.factuurId))].filter(id => !bekendFactuurIds.has(id))
     if (extraIds.length > 0) {
       const extras = await prisma.factuur.findMany({
         where: { id: { in: extraIds } },
-        select: { id: true, totaal: true, betalingen: { select: { inkomstenId: true, bedrag: true } } },
+        select: { id: true, totaal: true, betalingen: { select: { inkomstenId: true, bedrag: true, aangemaakt: true } } },
       })
       for (const f of extras) {
-        fBetalingen.set(f.id, f.betalingen)
+        fBetalingen.set(f.id, f.betalingen as FactuurBetaling[])
         fTotalen.set(f.id, f.totaal)
         for (const b of f.betalingen) {
           if (!inkNaarFacturen.has(b.inkomstenId)) inkNaarFacturen.set(b.inkomstenId, new Set())
@@ -785,7 +781,6 @@ function setupIpcHandlers() {
       }
     }
 
-    // 5. BFS: vind verbonden component startend vanuit een factuurId
     const vindGroepVanFactuur = (startId: string): Set<string> => {
       const bezochteF = new Set<string>([startId])
       const bezochteB = new Set<string>()
@@ -803,23 +798,36 @@ function setupIpcHandlers() {
       return bezochteF
     }
 
-    // 6. Cache om hetzelfde component niet twee keer te berekenen
-    const groepCache = new Map<string, { groepTotaal: number; groepOntvangen: number }>()
+    const groepCache = new Map<string, { groepTotaal: number; groepOntvangen: number; groepMaxMs: number }>()
 
     return facturen.map(f => {
+      let groepTotaal: number, groepOntvangen: number, groepMaxMs: number
       if (groepCache.has(f.id)) {
-        const { groepTotaal, groepOntvangen } = groepCache.get(f.id)!
-        return { ...f, reedsBetaald: groepOntvangen, openstaand: Math.max(0, groepTotaal - groepOntvangen), teveel: Math.max(0, groepOntvangen - groepTotaal) }
+        ;({ groepTotaal, groepOntvangen, groepMaxMs } = groepCache.get(f.id)!)
+      } else {
+        const groep = vindGroepVanFactuur(f.id)
+        groepTotaal = 0; groepOntvangen = 0; groepMaxMs = 0
+        for (const fId of groep) {
+          groepTotaal += fTotalen.get(fId) ?? 0
+          for (const b of fBetalingen.get(fId) ?? []) {
+            groepOntvangen += b.bedrag
+            groepMaxMs = Math.max(groepMaxMs, new Date(b.aangemaakt).getTime())
+          }
+        }
+        for (const fId of groep) groepCache.set(fId, { groepTotaal, groepOntvangen, groepMaxMs })
       }
-      const groep = vindGroepVanFactuur(f.id)
-      let groepTotaal = 0
-      let groepOntvangen = 0
-      for (const fId of groep) {
-        groepTotaal += fTotalen.get(fId) ?? 0
-        for (const b of fBetalingen.get(fId) ?? []) groepOntvangen += b.bedrag
+
+      // Toon saldo alleen bij de factuur met de MEEST RECENTE koppeling in de groep
+      const eigenMaxMs = (fBetalingen.get(f.id) ?? []).reduce((m, b) => Math.max(m, new Date(b.aangemaakt).getTime()), 0)
+      const isLaatste = eigenMaxMs > 0 && eigenMaxMs >= groepMaxMs
+
+      const perFactuurBetaald = (fBetalingen.get(f.id) ?? []).reduce((s, b) => s + b.bedrag, 0)
+      return {
+        ...f,
+        reedsBetaald: perFactuurBetaald,
+        openstaand: isLaatste ? Math.max(0, groepTotaal - groepOntvangen) : 0,
+        teveel: isLaatste ? Math.max(0, groepOntvangen - groepTotaal) : 0,
       }
-      for (const fId of groep) groepCache.set(fId, { groepTotaal, groepOntvangen })
-      return { ...f, reedsBetaald: groepOntvangen, openstaand: Math.max(0, groepTotaal - groepOntvangen), teveel: Math.max(0, groepOntvangen - groepTotaal) }
     })
   })
 
