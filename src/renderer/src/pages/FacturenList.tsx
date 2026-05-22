@@ -394,6 +394,7 @@ export default function FacturenPage() {
                     <TableHead>Datum</TableHead>
                     <TableHead>Vervaldatum</TableHead>
                     <TableHead className="text-right">Totaal</TableHead>
+                    <TableHead className="text-right">Betaald</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Acties</TableHead>
                   </TableRow>
@@ -446,14 +447,19 @@ export default function FacturenPage() {
                             {formatDatum(f.vervaldatum)}
                           </span>
                         </TableCell>
+                        <TableCell className="text-right font-semibold text-gray-900">
+                          {formatBedrag(f.totaal)}
+                        </TableCell>
                         <TableCell className="text-right">
-                          <div className="font-semibold text-gray-900">{formatBedrag(f.totaal)}</div>
-                          {(f.openstaand ?? 0) > 0.01 && f.status !== "CONCEPT" && (
-                            <div className="text-xs text-amber-600 mt-0.5">nog {formatBedrag(f.openstaand ?? 0)}</div>
-                          )}
-                          {(f.teveel ?? 0) > 0.01 && (
-                            <div className="text-xs text-red-600 mt-0.5">+{formatBedrag(f.teveel ?? 0)} teveel</div>
-                          )}
+                          {(f.openstaand ?? 0) > 0.01 && f.status !== "CONCEPT" ? (
+                            <span className="font-semibold text-red-600">
+                              -{formatBedrag(f.openstaand ?? 0)}
+                            </span>
+                          ) : (f.teveel ?? 0) > 0.01 ? (
+                            <span className="font-semibold text-blue-600">
+                              +{formatBedrag(f.teveel ?? 0)}
+                            </span>
+                          ) : null}
                         </TableCell>
                         <TableCell>
                           <span
