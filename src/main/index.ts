@@ -1197,25 +1197,32 @@ function setupIpcHandlers() {
       orderBy: { datum: 'desc' }
     })
 
-    // Verrijk elke koppeling met reedsBetaald/openstaand/teveel berekend over ALLE betalingen op die factuur
-    return inkomenList.map(inkomen => ({
-      ...inkomen,
-      koppelingen: inkomen.koppelingen.map(k => {
-        const reedsBetaald = k.factuur?.betalingen?.reduce((s: number, b: { bedrag: number }) => s + b.bedrag, 0) ?? 0
-        return {
+    // Groepsaldo: sommeer over ALLE facturen van dezelfde betaling (niet per-factuur)
+    // zodat het niet uitmaakt aan welke factuur een extra betaling gekoppeld wordt
+    return inkomenList.map(inkomen => {
+      const groepOntvangen = inkomen.koppelingen.reduce((sum, k) => {
+        return sum + (k.factuur?.betalingen?.reduce((s: number, b: { bedrag: number }) => s + b.bedrag, 0) ?? 0)
+      }, 0)
+      const groepTotaal = inkomen.koppelingen.reduce((sum, k) => sum + (k.factuur?.totaal ?? 0), 0)
+      const groepOpenstaand = Math.max(0, groepTotaal - groepOntvangen)
+      const groepTeveel = Math.max(0, groepOntvangen - groepTotaal)
+
+      return {
+        ...inkomen,
+        koppelingen: inkomen.koppelingen.map(k => ({
           ...k,
           factuur: k.factuur ? {
             id: k.factuur.id,
             nummer: k.factuur.nummer,
             totaal: k.factuur.totaal,
             status: k.factuur.status,
-            reedsBetaald,
-            openstaand: Math.max(0, k.factuur.totaal - reedsBetaald),
-            teveel: Math.max(0, reedsBetaald - k.factuur.totaal),
+            reedsBetaald: groepOntvangen,
+            openstaand: groepOpenstaand,
+            teveel: groepTeveel,
           } : null,
-        }
-      }),
-    }))
+        })),
+      }
+    })
   })
 
   ipcMain.handle('inkomen:create', async (_, data: Record<string, unknown>) => {
