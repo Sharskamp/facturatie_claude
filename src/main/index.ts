@@ -684,6 +684,35 @@ function setupIpcHandlers() {
     return prisma.klant.update({ where: { id }, data: { actief: !klant.actief } })
   })
 
+  // Helper: bepaal groep facturen via gedeelde betalingen en update statussen
+  async function berekenEnUpdateGroep(startFactuurId: string) {
+    const betalingIds = (await prisma.inkomenFactuur.findMany({
+      where: { factuurId: startFactuurId },
+      select: { inkomstenId: true },
+    })).map(r => r.inkomstenId)
+
+    const groepFactuurIds = betalingIds.length === 0
+      ? [startFactuurId]
+      : [...new Set((await prisma.inkomenFactuur.findMany({
+          where: { inkomstenId: { in: betalingIds } },
+          select: { factuurId: true },
+        })).map(r => r.factuurId))]
+
+    const [groepKoppelingen, groepFacturen] = await Promise.all([
+      prisma.inkomenFactuur.findMany({ where: { factuurId: { in: groepFactuurIds } }, select: { bedrag: true } }),
+      prisma.factuur.findMany({ where: { id: { in: groepFactuurIds } }, select: { id: true, totaal: true, status: true } }),
+    ])
+
+    const groepTotaal = groepFacturen.reduce((s, f) => s + f.totaal, 0)
+    const groepOntvangen = groepKoppelingen.reduce((s, k) => s + k.bedrag, 0)
+
+    if (groepOntvangen >= groepTotaal * 0.99) {
+      await prisma.factuur.updateMany({ where: { id: { in: groepFactuurIds } }, data: { status: 'BETAALD' } })
+    }
+
+    return { groepFactuurIds, groepTotaal, groepOntvangen }
+  }
+
   // Facturen
   ipcMain.handle('facturen:list', async (_, params?: { status?: string; klantId?: string; zoek?: string }) => {
     const facturen = await prisma.factuur.findMany({
@@ -1187,7 +1216,7 @@ function setupIpcHandlers() {
             factuur: {
               select: {
                 id: true, nummer: true, totaal: true, status: true,
-                betalingen: { select: { bedrag: true } },
+                betalingen: { select: { bedrag: true, aangemaakt: true } },
               },
             },
           },
@@ -1197,8 +1226,8 @@ function setupIpcHandlers() {
       orderBy: { datum: 'desc' }
     })
 
-    // Groepsaldo: sommeer over ALLE facturen van dezelfde betaling (niet per-factuur)
-    // zodat het niet uitmaakt aan welke factuur een extra betaling gekoppeld wordt
+    // Groepsaldo: sommeer over ALLE facturen van dezelfde betaling.
+    // Toon het saldo alleen bij de LAATSTE koppeling van de groep.
     return inkomenList.map(inkomen => {
       const groepOntvangen = inkomen.koppelingen.reduce((sum, k) => {
         return sum + (k.factuur?.betalingen?.reduce((s: number, b: { bedrag: number }) => s + b.bedrag, 0) ?? 0)
@@ -1206,6 +1235,14 @@ function setupIpcHandlers() {
       const groepTotaal = inkomen.koppelingen.reduce((sum, k) => sum + (k.factuur?.totaal ?? 0), 0)
       const groepOpenstaand = Math.max(0, groepTotaal - groepOntvangen)
       const groepTeveel = Math.max(0, groepOntvangen - groepTotaal)
+
+      // Is dit de MEEST RECENT gekoppelde betaling in de groep?
+      const eigenMaxMs = inkomen.koppelingen.reduce((max, k) => Math.max(max, new Date(k.aangemaakt).getTime()), 0)
+      const groepMaxMs = inkomen.koppelingen.reduce((max, k) => {
+        const kMax = (k.factuur?.betalingen ?? []).reduce((m: number, b: { aangemaakt: Date | string }) => Math.max(m, new Date(b.aangemaakt).getTime()), 0)
+        return Math.max(max, kMax)
+      }, 0)
+      const isLaatsteKoppeling = eigenMaxMs >= groepMaxMs
 
       return {
         ...inkomen,
@@ -1217,8 +1254,8 @@ function setupIpcHandlers() {
             totaal: k.factuur.totaal,
             status: k.factuur.status,
             reedsBetaald: groepOntvangen,
-            openstaand: groepOpenstaand,
-            teveel: groepTeveel,
+            openstaand: isLaatsteKoppeling ? groepOpenstaand : 0,
+            teveel: isLaatsteKoppeling ? groepTeveel : 0,
           } : null,
         })),
       }
@@ -3270,31 +3307,25 @@ Gebruik null voor velden die je niet kunt vinden. Retourneer ALLEEN JSON.`
   })
 
   ipcMain.handle('bank:koppelAanFactuur', async (_, params: { inkomstenId: string; factuurId: string }) => {
-    const [factuur, inkomen] = await Promise.all([
-      prisma.factuur.findUnique({ where: { id: params.factuurId }, include: { betalingen: { select: { bedrag: true } } } }),
-      prisma.inkomen.findUnique({ where: { id: params.inkomstenId }, select: { bedrag: true } }),
-    ])
-    if (!factuur || !inkomen) throw new Error('Niet gevonden')
+    const inkomen = await prisma.inkomen.findUnique({ where: { id: params.inkomstenId }, select: { bedrag: true } })
+    if (!inkomen) throw new Error('Niet gevonden')
 
-    // Voeg koppeling toe (of update bedrag als al gekoppeld)
     await prisma.inkomenFactuur.upsert({
       where: { inkomstenId_factuurId: { inkomstenId: params.inkomstenId, factuurId: params.factuurId } },
       create: { inkomstenId: params.inkomstenId, factuurId: params.factuurId, bedrag: inkomen.bedrag },
       update: { bedrag: inkomen.bedrag },
     })
 
-    const reedsBetaald = factuur.betalingen.reduce((s: number, b: { bedrag: number }) => s + b.bedrag, 0) + inkomen.bedrag
-    const volledigBetaald = reedsBetaald >= factuur.totaal * 0.99
-    const updatedFactuur = await prisma.factuur.update({
-      where: { id: params.factuurId },
-      data: { status: volledigBetaald ? 'BETAALD' : factuur.status },
-    })
+    // Bereken groepsstatus en update ALLE facturen in de groep
+    const { groepTotaal, groepOntvangen } = await berekenEnUpdateGroep(params.factuurId)
+    const factuur = await prisma.factuur.findUnique({ where: { id: params.factuurId }, select: { nummer: true } })
+    const volledigBetaald = groepOntvangen >= groepTotaal * 0.99
     return {
       succes: true,
-      factuurNummer: updatedFactuur.nummer,
+      factuurNummer: factuur?.nummer ?? '',
       volledigBetaald,
-      openstaand: Math.max(0, factuur.totaal - reedsBetaald),
-      teveel: Math.max(0, reedsBetaald - factuur.totaal),
+      openstaand: Math.max(0, groepTotaal - groepOntvangen),
+      teveel: Math.max(0, groepOntvangen - groepTotaal),
     }
   })
 
@@ -3305,37 +3336,31 @@ Gebruik null voor velden die je niet kunt vinden. Retourneer ALLEEN JSON.`
     const inkomen = await prisma.inkomen.findUnique({ where: { id: params.inkomstenId } })
     if (!inkomen) throw new Error('Inkomen niet gevonden')
 
-    const resultaten: { factuurNummer: string; volledigBetaald: boolean; openstaand: number; teveel: number }[] = []
-
+    // Sla alle koppelingen op
     for (const { factuurId, bedrag } of params.koppelingen) {
-      const factuur = await prisma.factuur.findUnique({
-        where: { id: factuurId },
-        include: { betalingen: { select: { bedrag: true } } },
-      })
-      if (!factuur) continue
-
-      // Sla koppeling op in junction-tabel (geen klonen van Inkomen-records meer)
       await prisma.inkomenFactuur.upsert({
         where: { inkomstenId_factuurId: { inkomstenId: params.inkomstenId, factuurId } },
         create: { inkomstenId: params.inkomstenId, factuurId, bedrag },
         update: { bedrag },
       })
-
-      const reedsBetaald = factuur.betalingen.reduce((s: number, b: { bedrag: number }) => s + b.bedrag, 0) + bedrag
-      const volledigBetaald = reedsBetaald >= factuur.totaal * 0.99
-
-      await prisma.factuur.update({
-        where: { id: factuurId },
-        data: { status: volledigBetaald ? 'BETAALD' : factuur.status },
-      })
-
-      resultaten.push({
-        factuurNummer: factuur.nummer,
-        volledigBetaald,
-        openstaand: Math.max(0, factuur.totaal - reedsBetaald),
-        teveel: Math.max(0, reedsBetaald - factuur.totaal),
-      })
     }
+
+    // Bereken groepsstatus via eerste factuurId (alle zijn verbonden via dezelfde betaling)
+    const eersteFactuurId = params.koppelingen[0]?.factuurId
+    if (!eersteFactuurId) return { succes: true, resultaten: [] }
+
+    const { groepTotaal, groepOntvangen } = await berekenEnUpdateGroep(eersteFactuurId)
+    const volledigBetaald = groepOntvangen >= groepTotaal * 0.99
+
+    const resultaten = await Promise.all(params.koppelingen.map(async ({ factuurId }) => {
+      const f = await prisma.factuur.findUnique({ where: { id: factuurId }, select: { nummer: true } })
+      return {
+        factuurNummer: f?.nummer ?? '',
+        volledigBetaald,
+        openstaand: Math.max(0, groepTotaal - groepOntvangen),
+        teveel: Math.max(0, groepOntvangen - groepTotaal),
+      }
+    }))
 
     return { succes: true, resultaten }
   })
