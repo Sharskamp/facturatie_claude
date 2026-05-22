@@ -59,6 +59,9 @@ function runMigratie(dbPath: string): void {
   const Database = require('better-sqlite3')
   const db = new Database(dbPath)
 
+  // WAL mode: betere crash-recovery en betere gelijktijdige lees-toegang
+  db.exec('PRAGMA journal_mode=WAL')
+  db.exec('PRAGMA foreign_keys=ON')
   db.exec(`
     CREATE TABLE IF NOT EXISTS "Rit" (
       "id" TEXT NOT NULL PRIMARY KEY,
@@ -189,6 +192,7 @@ function runMigratie(dbPath: string): void {
   kolomToevoegen('Factuur', 'molliePaymentLinkId', 'TEXT')
   kolomToevoegen('Factuur', 'historisch', 'BOOLEAN NOT NULL DEFAULT false')
   kolomToevoegen('Factuur', 'handmatigBedrag', 'BOOLEAN NOT NULL DEFAULT false')
+  kolomToevoegen('Factuur', 'handmatigBetaald', 'BOOLEAN NOT NULL DEFAULT false')
   kolomToevoegen('Factuur', 'bronBestandPad', 'TEXT')
 
   // Offerte — nieuwe kolommen
@@ -296,9 +300,28 @@ function runMigratie(dbPath: string): void {
 }
 
 function initPrisma() {
-  const dbPath = getDbPath()
-  const adapter = new PrismaBetterSqlite3({ url: dbPath })
-  prisma = new PrismaClient({ adapter })
+  try {
+    const dbPath = getDbPath()
+    const adapter = new PrismaBetterSqlite3({ url: dbPath })
+    prisma = new PrismaClient({ adapter })
+  } catch (e) {
+    logSchrijven(`Prisma initialisatie mislukt: ${e}`)
+    dialog.showErrorBox(
+      'Database kon niet worden geopend',
+      `De database kon niet worden geïnitialiseerd.\n\nFout: ${e}\n\nSluit de applicatie en probeer opnieuw. Neem contact op als dit probleem aanhoudt.`
+    )
+    app.quit()
+  }
+}
+
+async function verifieerDbVerbinding(): Promise<boolean> {
+  try {
+    await prisma.$queryRaw`SELECT 1`
+    return true
+  } catch (e) {
+    logSchrijven(`Database verbinding verificatie mislukt: ${e}`)
+    return false
+  }
 }
 
 async function refreshTokenIfNeeded(user: {
@@ -1459,20 +1482,12 @@ function setupIpcHandlers() {
 
     if (factuurId) {
       const fid = factuurId as string
-      const factuur = await prisma.factuur.findUnique({
-        where: { id: fid },
-        include: { betalingen: { select: { bedrag: true } } },
+      await prisma.inkomenFactuur.upsert({
+        where: { inkomstenId_factuurId: { inkomstenId: inkomen.id, factuurId: fid } },
+        create: { inkomstenId: inkomen.id, factuurId: fid, bedrag: inkomen.bedrag },
+        update: { bedrag: inkomen.bedrag },
       })
-      if (factuur) {
-        const reedsBetaald = factuur.betalingen.reduce((s: number, b: { bedrag: number }) => s + b.bedrag, 0) + inkomen.bedrag
-        await prisma.inkomenFactuur.upsert({
-          where: { inkomstenId_factuurId: { inkomstenId: inkomen.id, factuurId: fid } },
-          create: { inkomstenId: inkomen.id, factuurId: fid, bedrag: inkomen.bedrag },
-          update: { bedrag: inkomen.bedrag },
-        })
-        const volledigBetaald = reedsBetaald >= factuur.totaal * 0.99
-        await prisma.factuur.update({ where: { id: fid }, data: { status: volledigBetaald ? 'BETAALD' : factuur.status } })
-      }
+      await berekenEnUpdateGroep(fid)
     }
 
     return inkomen
@@ -1486,39 +1501,35 @@ function setupIpcHandlers() {
       include: { factuur: { include: { klant: true } }, koppelingen: { include: { factuur: { select: { id: true, nummer: true, totaal: true, status: true } } } } }
     })
 
-    // Synchroniseer InkomenFactuur wanneer factuurId of bedrag wijzigt
     const nieuwFactuurId = data.factuurId as string | null | undefined
     const nieuwBedrag = data.bedrag !== undefined ? data.bedrag as number : huidig?.bedrag ?? 0
+
+    // Ontkoppel oude factuur als factuurId wijzigt
     if (huidig?.factuurId && huidig.factuurId !== nieuwFactuurId) {
-      // Ontkoppel oude factuur
       await prisma.inkomenFactuur.deleteMany({ where: { inkomstenId: id, factuurId: huidig.factuurId } })
-      const oudeFactuur = await prisma.factuur.findUnique({ where: { id: huidig.factuurId }, include: { betalingen: { select: { bedrag: true } }, inkomsten: { select: { bedrag: true } } } })
-      if (oudeFactuur) {
-        const reedsBetaald = oudeFactuur.betalingen.reduce((s: number, b: { bedrag: number }) => s + b.bedrag, 0)
-        if (reedsBetaald < oudeFactuur.totaal * 0.99 && oudeFactuur.status === 'BETAALD') {
-          await prisma.factuur.update({ where: { id: huidig.factuurId }, data: { status: 'VERZONDEN' } })
-        }
-      }
+      await berekenEnUpdateGroep(huidig.factuurId)
     }
+
+    // Koppel aan nieuwe factuur of update bedrag
     if (nieuwFactuurId) {
       await prisma.inkomenFactuur.upsert({
         where: { inkomstenId_factuurId: { inkomstenId: id, factuurId: nieuwFactuurId } },
         create: { inkomstenId: id, factuurId: nieuwFactuurId, bedrag: nieuwBedrag },
         update: { bedrag: nieuwBedrag },
       })
-      const nieuwFactuur = await prisma.factuur.findUnique({ where: { id: nieuwFactuurId }, include: { betalingen: { select: { bedrag: true } } } })
-      if (nieuwFactuur) {
-        const reedsBetaald = nieuwFactuur.betalingen.reduce((s: number, b: { bedrag: number }) => s + b.bedrag, 0)
-        const volledigBetaald = reedsBetaald >= nieuwFactuur.totaal * 0.99
-        await prisma.factuur.update({ where: { id: nieuwFactuurId }, data: { status: volledigBetaald ? 'BETAALD' : nieuwFactuur.status } })
-      }
+      await berekenEnUpdateGroep(nieuwFactuurId)
     }
 
     return updated
   })
 
   ipcMain.handle('inkomen:delete', async (_, id: string) => {
+    // Haal factuurkoppelingen op VOOR verwijdering zodat we de groepsstatus kunnen herberekenen
+    const koppelingen = await prisma.inkomenFactuur.findMany({ where: { inkomstenId: id }, select: { factuurId: true } })
     await prisma.inkomen.delete({ where: { id } })
+    for (const { factuurId } of koppelingen) {
+      await berekenEnUpdateGroep(factuurId)
+    }
     return { succes: true }
   })
 
@@ -2665,7 +2676,12 @@ function setupIpcHandlers() {
     if (!fs.existsSync(bonMap)) fs.mkdirSync(bonMap, { recursive: true })
 
     const doelPad = join(bonMap, `${uitgaveId}-${Date.now()}-${bestandsnaam}`)
-    fs.copyFileSync(bronPad, doelPad)
+    try {
+      fs.copyFileSync(bronPad, doelPad)
+    } catch (e) {
+      logSchrijven(`Bon kopiëren mislukt: ${e}`)
+      return { succes: false, fout: 'Bestand kon niet worden gekopieerd. Controleer of er voldoende schijfruimte is.' }
+    }
 
     await prisma.uitgave.update({ where: { id: uitgaveId }, data: { bonBestand: doelPad } })
     return { succes: true, pad: doelPad }
@@ -2692,7 +2708,12 @@ function setupIpcHandlers() {
     if (!fs.existsSync(bonMap)) fs.mkdirSync(bonMap, { recursive: true })
 
     const doelPad = join(bonMap, `tmp-${Date.now()}-${bestandsnaam}`)
-    fs.copyFileSync(bronPad, doelPad)
+    try {
+      fs.copyFileSync(bronPad, doelPad)
+    } catch (e) {
+      logSchrijven(`Bon kopiëren mislukt: ${e}`)
+      return { succes: false, fout: 'Bestand kon niet worden gekopieerd. Controleer of er voldoende schijfruimte is.' }
+    }
     return { succes: true, pad: doelPad }
   })
 
@@ -3044,7 +3065,12 @@ Gebruik null voor velden die je niet kunt vinden. Retourneer ALLEEN JSON.`
 
     if (!result.filePath) return { geannuleerd: true }
 
-    fs.copyFileSync(dbPath, result.filePath)
+    try {
+      fs.copyFileSync(dbPath, result.filePath)
+    } catch (e) {
+      logSchrijven(`Database backup mislukt: ${e}`)
+      return { succes: false, fout: `Backup kon niet worden opgeslagen: ${e}` }
+    }
     return { succes: true, pad: result.filePath }
   })
 
@@ -3823,8 +3849,25 @@ app.whenReady().then(async () => {
     logSchrijven('Database migratie succesvol')
   } catch (e) {
     logSchrijven(`Database migratie fout: ${e}`)
+    dialog.showErrorBox(
+      'Database initialisatie mislukt',
+      `Er is een fout opgetreden bij het bijwerken van de database.\n\nFout: ${e}\n\nDe applicatie wordt afgesloten. Maak een back-up van uw database en probeer opnieuw.`
+    )
+    app.quit()
+    return
   }
+
   initPrisma()
+
+  const dbOk = await verifieerDbVerbinding()
+  if (!dbOk) {
+    dialog.showErrorBox(
+      'Database niet bereikbaar',
+      'De database kon niet worden bereikt na initialisatie. De applicatie wordt afgesloten.'
+    )
+    app.quit()
+    return
+  }
 
   setupIpcHandlers()
   createWindow()
