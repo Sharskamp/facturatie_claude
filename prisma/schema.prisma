@@ -186,6 +186,7 @@ model Factuur {
   molliePaymentLinkId  String?
   historisch           Boolean        @default(false)
   handmatigBedrag   Boolean        @default(false)
+  handmatigBetaald  Boolean        @default(false)
   bronBestandPad    String?
   aangemaakt        DateTime       @default(now())
   bijgewerkt        DateTime       @updatedAt

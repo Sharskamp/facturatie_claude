@@ -700,7 +700,7 @@ function setupIpcHandlers() {
 
     const [groepKoppelingen, groepFacturen] = await Promise.all([
       prisma.inkomenFactuur.findMany({ where: { factuurId: { in: groepFactuurIds } }, select: { bedrag: true } }),
-      prisma.factuur.findMany({ where: { id: { in: groepFactuurIds } }, select: { id: true, totaal: true, status: true } }),
+      prisma.factuur.findMany({ where: { id: { in: groepFactuurIds } }, select: { id: true, totaal: true, status: true, handmatigBetaald: true, vervaldatum: true } }),
     ])
 
     const groepTotaal = groepFacturen.reduce((s, f) => s + f.totaal, 0)
@@ -708,6 +708,15 @@ function setupIpcHandlers() {
 
     if (groepOntvangen >= groepTotaal * 0.99) {
       await prisma.factuur.updateMany({ where: { id: { in: groepFactuurIds } }, data: { status: 'BETAALD' } })
+    } else {
+      // Reset automatisch ingestelde BETAALD terug naar VERZONDEN/VERLOPEN als groep niet volledig betaald is
+      const nu = new Date()
+      for (const f of groepFacturen) {
+        if (f.status === 'BETAALD' && !f.handmatigBetaald) {
+          const nieuweStatus = new Date(f.vervaldatum) < nu ? 'VERLOPEN' : 'VERZONDEN'
+          await prisma.factuur.update({ where: { id: f.id }, data: { status: nieuweStatus } })
+        }
+      }
     }
 
     return { groepFactuurIds, groepTotaal, groepOntvangen }
@@ -930,6 +939,13 @@ function setupIpcHandlers() {
   ipcMain.handle('facturen:update', async (_, id: string, payload: Record<string, unknown> & { regels?: Array<Record<string, unknown>> }) => {
     const { regels, ...data } = payload
 
+    // Track manual BETAALD status changes
+    if (data.status === 'BETAALD') {
+      data.handmatigBetaald = true
+    } else if (data.status !== undefined) {
+      data.handmatigBetaald = false
+    }
+
     if (regels) {
       let subtotaal = 0
       let btwBedrag = 0
@@ -983,6 +999,15 @@ function setupIpcHandlers() {
       prisma.factuur.delete({ where: { id } }),
     ])
     return { succes: true }
+  })
+
+  ipcMain.handle('facturen:verwijderBetaaldStatus', async (_, id: string) => {
+    const factuur = await prisma.factuur.findUnique({ where: { id }, select: { vervaldatum: true } })
+    if (!factuur) return { succes: false }
+    const nu = new Date()
+    const nieuweStatus = new Date(factuur.vervaldatum) < nu ? 'VERLOPEN' : 'VERZONDEN'
+    await prisma.factuur.update({ where: { id }, data: { status: nieuweStatus, handmatigBetaald: false } })
+    return { succes: true, nieuweStatus }
   })
 
   ipcMain.handle('facturen:deleteAll', async () => {
@@ -3538,18 +3563,9 @@ Gebruik null voor velden die je niet kunt vinden. Retourneer ALLEEN JSON.`
       prisma.inkomenFactuur.deleteMany({ where: { inkomstenId } }),
       prisma.inkomen.update({ where: { id: inkomstenId }, data: { factuurId: null } }).catch(() => {}),
     ])
-    // Herstel facturstatus voor alle losgekoppelde facturen
+    // Herstel facturstatus via groepsberekening (respecteert handmatigBetaald)
     for (const { factuurId } of koppelingen) {
-      const factuur = await prisma.factuur.findUnique({
-        where: { id: factuurId },
-        include: { betalingen: { select: { bedrag: true } } },
-      })
-      if (factuur && factuur.status === 'BETAALD') {
-        const reedsBetaald = factuur.betalingen.reduce((s: number, b: { bedrag: number }) => s + b.bedrag, 0)
-        if (reedsBetaald < factuur.totaal * 0.99) {
-          await prisma.factuur.update({ where: { id: factuurId }, data: { status: 'VERZONDEN' } })
-        }
-      }
+      await berekenEnUpdateGroep(factuurId)
     }
     return { succes: true }
   })

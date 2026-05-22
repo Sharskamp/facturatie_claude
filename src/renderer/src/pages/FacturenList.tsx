@@ -32,6 +32,7 @@ interface Factuur {
   reedsBetaald?: number;
   openstaand?: number;
   teveel?: number;
+  handmatigBetaald?: boolean;
   klant: { id: string; naam: string; bedrijf?: string | null };
 }
 
@@ -136,6 +137,16 @@ export default function FacturenPage() {
       laadFacturen(statusFilter);
     } catch (e) {
       console.error("Fout bij updaten status:", e);
+    }
+  }
+
+  async function contextVerwijderBetaaldStatus(f: Factuur) {
+    setContextMenu(null);
+    try {
+      await window.api.facturen.verwijderBetaaldStatus(f.id);
+      laadFacturen(statusFilter);
+    } catch (e) {
+      console.error("Fout bij verwijderen betaald status:", e);
     }
   }
 
@@ -530,13 +541,24 @@ export default function FacturenPage() {
             <Copy className="h-4 w-4 text-gray-400" />
             Dupliceer als nieuw concept
           </button>
-          <button
-            onClick={() => contextMarkeerBetaald(contextMenu.factuur)}
-            className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
-          >
-            <span className="h-4 w-4 flex items-center justify-center text-green-500 font-bold text-xs">✓</span>
-            Markeer als betaald
-          </button>
+          {contextMenu.factuur.status !== "BETAALD" && (
+            <button
+              onClick={() => contextMarkeerBetaald(contextMenu.factuur)}
+              className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+            >
+              <span className="h-4 w-4 flex items-center justify-center text-green-500 font-bold text-xs">✓</span>
+              Markeer als betaald
+            </button>
+          )}
+          {contextMenu.factuur.status === "BETAALD" && (
+            <button
+              onClick={() => contextVerwijderBetaaldStatus(contextMenu.factuur)}
+              className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+            >
+              <span className="h-4 w-4 flex items-center justify-center text-orange-500 font-bold text-xs">✕</span>
+              Verwijder betaald status
+            </button>
+          )}
           <button
             onClick={() => contextKopieerNummer(contextMenu.factuur)}
             className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"

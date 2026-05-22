@@ -41,6 +41,7 @@ contextBridge.exposeInMainWorld('api', {
     scanPdfLokaal: (data: { pad: string }) => ipcRenderer.invoke('facturen:scanPdfLokaal', data),
     kiesBestanden: () => ipcRenderer.invoke('facturen:kiesBestanden'),
     openBronBestand: (id: string) => ipcRenderer.invoke('facturen:openBronBestand', id),
+    verwijderBetaaldStatus: (id: string) => ipcRenderer.invoke('facturen:verwijderBetaaldStatus', id),
   },
   offertes: {
     list: (params?: unknown) => ipcRenderer.invoke('offertes:list', params),
