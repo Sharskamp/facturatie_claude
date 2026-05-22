@@ -487,7 +487,7 @@ export default function Dashboard() {
           <Card>
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
-                <CardTitle>Aankomende betalingen</CardTitle>
+                <CardTitle>Openstaande facturen</CardTitle>
                 <Link
                   to="/facturen?status=VERZONDEN"
                   className="text-xs text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1"
@@ -503,7 +503,7 @@ export default function Dashboard() {
                 </div>
               ) : aankomendBetalingen.length === 0 ? (
                 <p className="text-sm text-gray-400 text-center py-8">
-                  Geen openstaande betalingen
+                  Geen openstaande facturen
                 </p>
               ) : (
                 aankomendBetalingen.map((f) => {

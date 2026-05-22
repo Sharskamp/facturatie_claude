@@ -819,7 +819,7 @@ function setupIpcHandlers() {
 
       // Toon saldo alleen bij de factuur met de MEEST RECENTE koppeling in de groep
       const eigenMaxMs = (fBetalingen.get(f.id) ?? []).reduce((m, b) => Math.max(m, new Date(b.aangemaakt).getTime()), 0)
-      const isLaatste = eigenMaxMs > 0 && eigenMaxMs >= groepMaxMs
+      const isLaatste = eigenMaxMs >= groepMaxMs
 
       const perFactuurBetaald = (fBetalingen.get(f.id) ?? []).reduce((s, b) => s + b.bedrag, 0)
       return {
