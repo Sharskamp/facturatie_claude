@@ -1206,7 +1206,7 @@ function setupIpcHandlers() {
       })
       if (factuur) {
         const reedsBetaald = factuur.betalingen.reduce((s: number, b: { bedrag: number }) => s + b.bedrag, 0) + inkomen.bedrag
-        await prisma.inkomenfactuur.upsert({
+        await prisma.inkomenFactuur.upsert({
           where: { inkomstenId_factuurId: { inkomstenId: inkomen.id, factuurId: fid } },
           create: { inkomstenId: inkomen.id, factuurId: fid, bedrag: inkomen.bedrag },
           update: { bedrag: inkomen.bedrag },
@@ -1232,7 +1232,7 @@ function setupIpcHandlers() {
     const nieuwBedrag = data.bedrag !== undefined ? data.bedrag as number : huidig?.bedrag ?? 0
     if (huidig?.factuurId && huidig.factuurId !== nieuwFactuurId) {
       // Ontkoppel oude factuur
-      await prisma.inkomenfactuur.deleteMany({ where: { inkomstenId: id, factuurId: huidig.factuurId } })
+      await prisma.inkomenFactuur.deleteMany({ where: { inkomstenId: id, factuurId: huidig.factuurId } })
       const oudeFactuur = await prisma.factuur.findUnique({ where: { id: huidig.factuurId }, include: { betalingen: { select: { bedrag: true } }, inkomsten: { select: { bedrag: true } } } })
       if (oudeFactuur) {
         const reedsBetaald = oudeFactuur.betalingen.reduce((s: number, b: { bedrag: number }) => s + b.bedrag, 0)
@@ -1242,7 +1242,7 @@ function setupIpcHandlers() {
       }
     }
     if (nieuwFactuurId) {
-      await prisma.inkomenfactuur.upsert({
+      await prisma.inkomenFactuur.upsert({
         where: { inkomstenId_factuurId: { inkomstenId: id, factuurId: nieuwFactuurId } },
         create: { inkomstenId: id, factuurId: nieuwFactuurId, bedrag: nieuwBedrag },
         update: { bedrag: nieuwBedrag },
@@ -3243,7 +3243,7 @@ Gebruik null voor velden die je niet kunt vinden. Retourneer ALLEEN JSON.`
     if (!factuur || !inkomen) throw new Error('Niet gevonden')
 
     // Voeg koppeling toe (of update bedrag als al gekoppeld)
-    await prisma.inkomenfactuur.upsert({
+    await prisma.inkomenFactuur.upsert({
       where: { inkomstenId_factuurId: { inkomstenId: params.inkomstenId, factuurId: params.factuurId } },
       create: { inkomstenId: params.inkomstenId, factuurId: params.factuurId, bedrag: inkomen.bedrag },
       update: { bedrag: inkomen.bedrag },
@@ -3281,7 +3281,7 @@ Gebruik null voor velden die je niet kunt vinden. Retourneer ALLEEN JSON.`
       if (!factuur) continue
 
       // Sla koppeling op in junction-tabel (geen klonen van Inkomen-records meer)
-      await prisma.inkomenfactuur.upsert({
+      await prisma.inkomenFactuur.upsert({
         where: { inkomstenId_factuurId: { inkomstenId: params.inkomstenId, factuurId } },
         create: { inkomstenId: params.inkomstenId, factuurId, bedrag },
         update: { bedrag },
@@ -3308,12 +3308,12 @@ Gebruik null voor velden die je niet kunt vinden. Retourneer ALLEEN JSON.`
 
   // ── Bank: ontkoppel betaling van factuur/facturen ──
   ipcMain.handle('bank:ontkoppelVanFacturen', async (_, inkomstenId: string) => {
-    const koppelingen = await prisma.inkomenfactuur.findMany({
+    const koppelingen = await prisma.inkomenFactuur.findMany({
       where: { inkomstenId },
       select: { factuurId: true, bedrag: true },
     })
     await Promise.all([
-      prisma.inkomenfactuur.deleteMany({ where: { inkomstenId } }),
+      prisma.inkomenFactuur.deleteMany({ where: { inkomstenId } }),
       prisma.inkomen.update({ where: { id: inkomstenId }, data: { factuurId: null } }).catch(() => {}),
     ])
     // Herstel facturstatus voor alle losgekoppelde facturen
