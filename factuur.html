@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8" />
+  <title>Factuur {{factuurNummer}}</title>
+
+  <style>
+    @page {
+      size: A4;
+      margin: 0;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      color: #0f172a;
+      background: #f3f4f6;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .page {
+      width: 794px;
+      min-height: 1123px;
+      padding: 36px 36px 24px 36px;
+      margin: 20px auto;
+      background: #ffffff;
+      box-shadow: 0 20px 60px rgba(15, 23, 42, 0.10);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .top-content {
+      flex: 0 0 auto;
+    }
+
+    .bottom-content {
+      margin-top: auto;
+      padding-top: 28px;
+    }
+
+    .top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 40px;
+      margin-bottom: 34px;
+    }
+
+    .logo-wrap {
+      margin-bottom: 12px;
+      max-width: 170px;
+      max-height: 70px;
+    }
+
+    .logo-wrap img {
+      max-width: 170px;
+      max-height: 70px;
+      object-fit: contain;
+    }
+
+    .invoice-title {
+      margin: 0;
+      font-size: 38px;
+      font-weight: 900;
+      letter-spacing: 0.03em;
+      color: #0f172a;
+      text-align: right;
+    }
+
+    .address-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 28px;
+      margin-bottom: 26px;
+    }
+
+    .card {
+      background: #f8fafc;
+      border-radius: 16px;
+      padding: 18px 20px;
+    }
+
+    .customer-card {
+      border-left: 4px solid #0f172a;
+    }
+
+    .company-card {
+      text-align: right;
+      border-right: 4px solid #0f172a;
+    }
+
+    .section-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.09em;
+      color: #94a3b8;
+      font-weight: 800;
+      margin-bottom: 8px;
+    }
+
+    .name {
+      font-size: 15px;
+      font-weight: 800;
+      color: #0f172a;
+      margin-bottom: 5px;
+    }
+
+    .small-text {
+      color: #475467;
+      font-size: 12px;
+    }
+
+    .small-text div {
+      margin: 1px 0;
+    }
+
+    .invoice-info {
+      width: 520px;
+      margin: 0 auto 24px auto;
+      border-top: 1px solid #eef2f7;
+      border-bottom: 1px solid #eef2f7;
+      padding: 18px 0;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 18px;
+      text-align: center;
+    }
+
+    .info-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #94a3b8;
+      font-weight: 800;
+      margin-bottom: 5px;
+    }
+
+    .info-value {
+      font-size: 15px;
+      color: #0f172a;
+      font-weight: 800;
+    }
+
+    .regels {
+      margin-bottom: 24px;
+    }
+
+    .regels table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    .regels th {
+      text-align: left;
+      padding: 10px 8px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #64748b;
+      border-bottom: 2px solid #e5e7eb;
+    }
+
+    .regels td {
+      padding: 12px 8px;
+      border-bottom: 1px solid #eef2f7;
+      color: #0f172a;
+      vertical-align: top;
+    }
+
+    .regels th:nth-child(n+2),
+    .regels td:nth-child(n+2) {
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .financial-section {
+      display: grid;
+      grid-template-columns: 1fr 360px;
+      gap: 36px;
+      align-items: end;
+      margin-bottom: 26px;
+    }
+
+    .payment-card {
+      border-top: 1px solid #eef2f7;
+      padding-top: 18px;
+    }
+
+    .payment-row {
+      display: grid;
+      grid-template-columns: 1fr 130px;
+      gap: 20px;
+      align-items: end;
+    }
+
+    .bottom-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.09em;
+      color: #94a3b8;
+      font-weight: 800;
+      margin-bottom: 8px;
+    }
+
+    .bottom-text {
+      color: #475467;
+      font-size: 12px;
+      white-space: pre-wrap;
+    }
+
+    .qr-box {
+      text-align: center;
+    }
+
+    .qr-box img {
+      max-width: 120px;
+      max-height: 120px;
+    }
+
+    .qr-text {
+      margin-top: 8px;
+      font-size: 10.5px;
+      color: #64748b;
+      line-height: 1.35;
+      text-align: center;
+    }
+
+    .totals-box {
+      width: 100%;
+      align-self: end;
+    }
+
+    .total-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 5px 0;
+      font-size: 12px;
+    }
+
+    .total-row .label {
+      color: #64748b;
+      font-weight: 600;
+    }
+
+    .total-row .value {
+      color: #0f172a;
+      font-weight: 700;
+    }
+
+    .total-row.discount .value {
+      color: #16a34a;
+    }
+
+    .total-final {
+      margin-top: 10px;
+      padding: 14px 0 0 0;
+      border-top: 2px solid #0f172a;
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      font-size: 19px;
+      font-weight: 900;
+      color: #0f172a;
+    }
+
+    .footer {
+      margin-top: 0;
+      padding-top: 16px;
+      border-top: 1px solid #eef2f7;
+      text-align: center;
+      font-size: 11px;
+      color: #98a2b3;
+      flex: 0 0 auto;
+    }
+
+    .footer-kor {
+      margin-top: 7px;
+      color: #475467;
+      font-weight: 600;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    @media print {
+      body {
+        background: #ffffff;
+      }
+
+      .page {
+        margin: 0;
+        box-shadow: none;
+        width: auto;
+        min-height: 100vh;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="page">
+
+    <div class="content">
+
+      <div class="top-content">
+
+        <div class="top">
+          <div class="logo-wrap">
+            {{logo}}
+          </div>
+
+          <h1 class="invoice-title">
+            FACTUUR
+          </h1>
+        </div>
+
+        <div class="address-grid">
+
+          <div class="card customer-card">
+            <div class="section-label">Factuur aan</div>
+            <div class="name">{{klantBedrijf}} {{klantNaam}}</div>
+
+            <div class="small-text">
+              <div>{{klantAdres}}</div>
+              <div>{{klantPostcode}} {{klantStad}}</div>
+              <div>{{klantBtwNummer}}</div>
+            </div>
+          </div>
+
+          <div class="card company-card">
+            <div class="section-label">Afzender</div>
+            <div class="name">{{bedrijfsnaam}}</div>
+
+            <div class="small-text">
+              <div>{{bedrijfEmail}}</div>
+              <div>{{bedrijfTelefoon}}</div>
+              <div>{{bedrijfWebsite}}</div>
+              <div>KvK: {{kvkNummer}}</div>
+              <div>IBAN: {{iban}}</div>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="invoice-info">
+
+          <div>
+            <div class="info-label">Factuurnummer</div>
+            <div class="info-value">{{factuurNummer}}</div>
+          </div>
+
+          <div>
+            <div class="info-label">Factuurdatum</div>
+            <div class="info-value">{{factuurDatum}}</div>
+          </div>
+
+          <div>
+            <div class="info-label">Vervaldatum</div>
+            <div class="info-value">{{vervaldatum}}</div>
+          </div>
+
+        </div>
+
+        <div class="regels">
+          {{regelsHtml}}
+        </div>
+
+      </div>
+
+      <div class="bottom-content">
+
+        <div class="financial-section">
+
+          <div class="payment-card">
+
+            <div class="payment-row">
+
+              <div>
+
+                <div class="bottom-title">
+                  Betalingsinformatie
+                </div>
+
+                <div class="bottom-text">
+Gelieve deze factuur uiterlijk {{vervaldatum}} te voldoen onder vermelding van uw naam en factuurnummer {{factuurNummer}}.
+                </div>
+
+                <br>
+
+                <div class="bottom-title">
+                  Betaalgegevens
+                </div>
+
+                <div class="bottom-text">IBAN: {{iban}}
+Ten name van: {{bedrijfsnaam}}
+Factuurnummer: {{factuurNummer}}</div>
+
+              </div>
+
+              <!-- QR-code alleen tonen indien aanwezig -->
+              <div class="qr-box {{betaalQrCodeClass}}">
+
+                {{betaalQrCode}}
+
+                <div class="qr-text">
+                  Scan de QR-code met de scanner in uw bankapp om direct te betalen.
+                </div>
+
+              </div>
+
+            </div>
+
+          </div>
+
+          <div class="totals-box">
+
+            <div class="total-row">
+              <span class="label">Subtotaal</span>
+              <span class="value">{{subtotaal}}</span>
+            </div>
+
+            <!-- Alleen tonen indien korting aanwezig -->
+            <div class="total-row discount {{kortingClass}}">
+              <span class="label">Korting</span>
+              <span class="value">{{kortingBedrag}}</span>
+            </div>
+
+            <div class="total-final">
+              <span>Totaal te betalen</span>
+              <span>{{totaalBedrag}}</span>
+            </div>
+
+          </div>
+
+        </div>
+
+      </div>
+
+    </div>
+
+    <div class="footer">
+
+      {{bedrijfsnaam}} · KvK {{kvkNummer}} · IBAN {{iban}}
+
+      <div class="footer-kor {{korClass}}">
+        Deze factuur is vrijgesteld van omzetbelasting wegens deelname aan de Kleineondernemersregeling (KOR). Er wordt daarom geen BTW berekend.
+      </div>
+
+    </div>
+
+  </div>
+</body>
+</html>
