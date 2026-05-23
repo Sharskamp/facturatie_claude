@@ -264,20 +264,21 @@
       display: grid;
       grid-template-columns: 1fr 360px;
       gap: 36px;
-      align-items: end;
+      align-items: start;
       margin-bottom: 26px;
-    }
-
-    .payment-card {
       border-top: 1px solid #eef2f7;
       padding-top: 18px;
     }
 
+    .payment-card {
+      padding-top: 0;
+    }
+
     .payment-row {
       display: grid;
-      grid-template-columns: 1fr 130px;
-      gap: 20px;
-      align-items: end;
+      grid-template-columns: 1fr 150px;
+      gap: 28px;
+      align-items: start;
     }
 
     .bottom-title {
@@ -286,20 +287,23 @@
       letter-spacing: 0.09em;
       color: #94a3b8;
       font-weight: 800;
-      margin-bottom: 8px;
+      margin-bottom: 0;
+      line-height: 1.1;
     }
 
     .bottom-text {
       color: #475467;
       font-size: 12px;
       white-space: pre-wrap;
+      margin-top: 0;
+      padding-top: 0;
     }
-
-    .qr-box {
+.qr-box {
       text-align: center;
       background: #ffffff;
-      padding: 8px;
+      padding: 0;
       border-radius: 8px;
+      align-self: start;
     }
 
     .qr-box img {
@@ -312,6 +316,7 @@
 
     .qr-text {
       margin-top: 8px;
+      width: 150px;
       font-size: 10.5px;
       color: #64748b;
       line-height: 1.35;
@@ -320,7 +325,7 @@
 
     .totals-box {
       width: 100%;
-      align-self: end;
+      align-self: start;
     }
 
     .total-row {
@@ -376,6 +381,15 @@
     .hidden {
       display: none;
     }
+
+    .total-row[data-value="0"],
+    .total-row[data-value="0,00"],
+    .total-row[data-value="€ 0,00"],
+    .total-row[data-value="- € 0,00"],
+    .total-row[data-value="0.00"] {
+      display: none;
+    }
+
 
     @media print {
       body {
@@ -488,18 +502,21 @@
                 </div>
 
                 <div class="bottom-text">
-Gelieve deze factuur uiterlijk {{vervaldatum}} te voldoen onder vermelding van uw naam en factuurnummer {{factuurNummer}}.
+Gelieve deze factuur uiterlijk <strong>{{vervaldatum}}</strong> te voldoen onder vermelding van uw naam en factuurnummer <strong>{{factuurNummer}}</strong>.
                 </div>
 
-                <br>
+
+              </div>
 
               <!-- QR-code alleen tonen indien aanwezig -->
               
 
-                {{betaalQrCode}}
+                <div class="qr-box">
+                  {{betaalQrCode}}
 
-                <div class="qr-text">
-                  Scan de QR-code met de scanner in uw bankapp om direct te betalen.
+                  <div class="qr-text">
+                    Scan de QR-code met de scanner in uw bankapp om direct te betalen.
+                  </div>
                 </div>
 
               
@@ -515,17 +532,21 @@ Gelieve deze factuur uiterlijk {{vervaldatum}} te voldoen onder vermelding van u
               <span class="value">{{subtotaal}}</span>
             </div>
 
-            <!-- Alleen tonen indien korting aanwezig -->
-            <div class="total-row discount {{kortingClass}}">
+            <!-- Alleen tonen indien totaalkorting aanwezig. Gebruik kortingClass="hidden" wanneer {{kortingBedrag}} 0 is. -->
+            
+            <div class="total-row discount {{kortingClass}}" data-value="{{kortingBedrag}}">
               <span class="label">Korting</span>
               <span class="value">{{kortingBedrag}}</span>
             </div>
+            
 
-            <!-- Alleen tonen indien BTW aanwezig -->
-            <div class="total-row {{btwClass}}">
+            <!-- Alleen tonen indien BTW aanwezig. Gebruik btwClass="hidden" wanneer {{btwBedrag}} 0 is. -->
+            
+            <div class="total-row {{btwClass}}" data-value="{{btwBedrag}}">
               <span class="label">BTW</span>
               <span class="value">{{btwBedrag}}</span>
             </div>
+            
 
             <div class="total-final">
               <span>Totaal te betalen</span>
