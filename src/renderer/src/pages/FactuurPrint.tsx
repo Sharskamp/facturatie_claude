@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import { Printer } from "lucide-react";
 import { formatBedrag, formatDatum } from "@/lib/utils";
 import QRCode from "qrcode";
+import { FactuurHtmlDocument } from "@/components/facturen/FactuurHtmlDocument";
 
 interface FactuurRegel {
   id: string;
@@ -73,6 +74,7 @@ interface Instellingen {
   layoutRegelSpacing?: string;
   layoutSectieVolgorde?: string;
   logoBase64?: string;
+  factuurHtmlTemplate?: string;
 }
 
 export default function FactuurPrintPage() {
@@ -116,6 +118,32 @@ export default function FactuurPrintPage() {
       <div className="flex items-center justify-center min-h-screen">
         <div className="animate-spin h-8 w-8 rounded-full border-2 border-indigo-600 border-t-transparent" />
       </div>
+    );
+  }
+
+  if (instellingen.factuurHtmlTemplate?.trim()) {
+    return (
+      <>
+        <div className="no-print fixed top-4 right-4 z-10">
+          <button
+            onClick={() => window.print()}
+            className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700"
+          >
+            <Printer className="h-4 w-4" /> Afdrukken / PDF opslaan
+          </button>
+        </div>
+
+        <div className="min-h-screen bg-gray-100 no-print:pt-20 print:bg-white">
+          <div className="max-w-[794px] mx-auto bg-white shadow-sm print:shadow-none min-h-[1123px]">
+            <FactuurHtmlDocument
+              title={`Factuur ${factuur.nummer}`}
+              factuur={factuur}
+              instellingen={instellingen}
+              frameStyle={{ width: "794px", height: "1123px" }}
+            />
+          </div>
+        </div>
+      </>
     );
   }
 

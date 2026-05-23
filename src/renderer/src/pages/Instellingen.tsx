@@ -35,6 +35,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useTheme } from "@/context/theme";
+import { FactuurLayoutPreview } from "@/components/facturen/FactuurLayoutPreview";
+import { FactuurHtmlDocument } from "@/components/facturen/FactuurHtmlDocument";
+import { type FactuurHtmlFactuur } from "@/lib/factuur-html";
 
 type Tab = "bedrijf" | "facturen" | "layout" | "email" | "google" | "kor" | "overig" | "geavanceerd" | "navigatie" | "bank";
 
@@ -272,6 +275,40 @@ function KolomConfigurator({
   );
 }
 
+function maakPreviewFactuur(instellingen: Instellingen): FactuurHtmlFactuur {
+  const subtotaal = 85;
+  const btwBedrag = instellingen.korActief ? 0 : 17.85;
+  const totaal = subtotaal + btwBedrag;
+
+  return {
+    nummer: "2026-0043",
+    datum: "2026-05-23",
+    vervaldatum: "2026-06-06",
+    subtotaal,
+    kortingBedrag: 0,
+    btwBedrag,
+    totaal,
+    notities: "",
+    betalingsCondities: "Gelieve deze factuur uiterlijk 06-06-2026 te voldoen onder vermelding van uw naam en factuurnummer 2026-0043.",
+    regels: [
+      {
+        omschrijving: "pt / uur",
+        aantal: 1,
+        eenheid: null,
+        prijs: 85,
+        totaal: subtotaal,
+        kortingPercentage: 0,
+      },
+    ],
+    klant: {
+      naam: "Sven Harskamp",
+      adres: "Orxmasingel 17",
+      postcode: "9036JT",
+      stad: "Menaam",
+    },
+  };
+}
+
 export default function InstellingenPagina() {
   const { modus, setModus } = useTheme();
   const [actieveTab, setActieveTab] = useState<Tab>("bedrijf");
@@ -293,6 +330,8 @@ export default function InstellingenPagina() {
   const [uitgavenVeldenLijst, setUitgavenVeldenLijst] = useState<string[]>(() => ALLE_UITGAVEN_VELDEN.map(v => v.id));
   const isGeladen = useRef(false);
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const previewContainerRef = useRef<HTMLDivElement>(null);
+  const [previewSchaal, setPreviewSchaal] = useState(0.65);
   const haalInstellingenOp = useCallback(async () => {
     try {
       const data = await window.api.instellingen.get();
@@ -336,6 +375,23 @@ export default function InstellingenPagina() {
   useEffect(() => {
     window.api.app.getAutoStart().then(setAutoStart).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (actieveTab !== "layout") return;
+    const el = previewContainerRef.current;
+    if (!el) return;
+
+    const observer = new ResizeObserver(([entry]) => {
+      const schaal = (entry.contentRect.width - 24) / 794;
+      setPreviewSchaal(Math.max(0.45, Math.min(1.2, schaal)));
+    });
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [actieveTab]);
+
+  const effectievePreviewSchaal = Math.max(0.45, Math.min(1.2, previewSchaal));
+  const previewFactuur = maakPreviewFactuur(instellingen);
 
   const toonMelding = (type: "succes" | "fout", tekst: string) => {
     setMelding({ type, tekst });
@@ -423,7 +479,7 @@ export default function InstellingenPagina() {
     <div className="flex flex-col min-h-screen">
       <Header titel="Instellingen" subtitel="Beheer je accountgegevens" />
 
-      <div className="flex-1 p-6 space-y-6 max-w-4xl mx-auto w-full">
+      <div className={`flex-1 p-6 space-y-6 mx-auto w-full ${actieveTab === "layout" ? "max-w-[1700px]" : "max-w-4xl"}`}>
         {melding && (
           <div
             className={`rounded-lg px-4 py-3 text-sm font-medium flex items-center gap-2 ${
@@ -771,85 +827,126 @@ export default function InstellingenPagina() {
 
         {/* ── Factuurlayout ── */}
         {actieveTab === "layout" && (
-          <div className="space-y-6 max-w-4xl">
-            <Card>
-              <CardHeader>
-                <CardTitle>Factuurtemplate (HTML/CSS)</CardTitle>
-                <CardDescription>Maak een volledig eigen factuurlayout met HTML en CSS. Gebruik {"{{"}variabele{"}}"}  placeholders voor dynamische waarden. Laat leeg voor de standaard opmaak.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <textarea
-                  rows={30}
-                  className="w-full font-mono text-xs rounded-md border border-gray-200 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  placeholder="Laat leeg om de standaard opmaak te gebruiken..."
-                  value={instellingen.factuurHtmlTemplate ?? ""}
-                  onChange={(e) => updateVeld("factuurHtmlTemplate", e.target.value)}
-                  onBlur={() => slaOp({ factuurHtmlTemplate: instellingen.factuurHtmlTemplate })}
-                  style={{ minHeight: "500px" }}
-                />
-                <details className="rounded-lg border border-gray-100 bg-gray-50">
-                  <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-gray-600 select-none">Beschikbare variabelen</summary>
-                  <div className="px-3 pb-3 pt-1 grid grid-cols-2 gap-4 text-xs text-gray-600">
-                    <div>
-                      <p className="font-semibold text-gray-700 mb-1">Bedrijf</p>
-                      <ul className="space-y-0.5 font-mono text-gray-500">
-                        <li>{"{{bedrijfsnaam}}"}</li>
-                        <li>{"{{bedrijfAdres}}"}</li>
-                        <li>{"{{bedrijfPostcode}}"}</li>
-                        <li>{"{{bedrijfStad}}"}</li>
-                        <li>{"{{bedrijfEmail}}"}</li>
-                        <li>{"{{bedrijfTelefoon}}"}</li>
-                        <li>{"{{bedrijfWebsite}}"}</li>
-                        <li>{"{{kvkNummer}}"}</li>
-                        <li>{"{{btwNummer}}"}</li>
-                        <li>{"{{iban}}"}</li>
-                        <li>{"{{logo}}"}</li>
-                      </ul>
+          <div className="flex gap-6 items-start" style={{ minHeight: "calc(100vh - 220px)" }}>
+            <div className="w-[420px] shrink-0 space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Factuurtemplate (HTML/CSS)</CardTitle>
+                  <CardDescription>Maak een volledig eigen factuurlayout met HTML en CSS. Gebruik {"{{"}variabele{"}}"} placeholders voor dynamische waarden. Laat leeg voor de standaard opmaak.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <textarea
+                    rows={30}
+                    className="w-full font-mono text-xs rounded-md border border-gray-200 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    placeholder="Laat leeg om de standaard opmaak te gebruiken..."
+                    value={instellingen.factuurHtmlTemplate ?? ""}
+                    onChange={(e) => updateVeld("factuurHtmlTemplate", e.target.value)}
+                    onBlur={() => slaOp({ factuurHtmlTemplate: instellingen.factuurHtmlTemplate })}
+                    style={{ minHeight: "500px" }}
+                  />
+                  <details className="rounded-lg border border-gray-100 bg-gray-50">
+                    <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-gray-600 select-none">Beschikbare variabelen</summary>
+                    <div className="px-3 pb-3 pt-1 grid grid-cols-2 gap-4 text-xs text-gray-600">
+                      <div>
+                        <p className="font-semibold text-gray-700 mb-1">Bedrijf</p>
+                        <ul className="space-y-0.5 font-mono text-gray-500">
+                          <li>{"{{bedrijfsnaam}}"}</li>
+                          <li>{"{{bedrijfAdres}}"}</li>
+                          <li>{"{{bedrijfPostcode}}"}</li>
+                          <li>{"{{bedrijfStad}}"}</li>
+                          <li>{"{{bedrijfEmail}}"}</li>
+                          <li>{"{{bedrijfTelefoon}}"}</li>
+                          <li>{"{{bedrijfWebsite}}"}</li>
+                          <li>{"{{kvkNummer}}"}</li>
+                          <li>{"{{btwNummer}}"}</li>
+                          <li>{"{{iban}}"}</li>
+                          <li>{"{{logo}}"}</li>
+                        </ul>
+                      </div>
+                      <div>
+                        <p className="font-semibold text-gray-700 mb-1">Factuur</p>
+                        <ul className="space-y-0.5 font-mono text-gray-500">
+                          <li>{"{{factuurNummer}}"}</li>
+                          <li>{"{{factuurDatum}}"}</li>
+                          <li>{"{{vervaldatum}}"}</li>
+                          <li>{"{{notities}}"}</li>
+                          <li>{"{{betalingsCondities}}"}</li>
+                        </ul>
+                        <p className="font-semibold text-gray-700 mb-1 mt-3">Klant</p>
+                        <ul className="space-y-0.5 font-mono text-gray-500">
+                          <li>{"{{klantNaam}}"}</li>
+                          <li>{"{{klantBedrijf}}"}</li>
+                          <li>{"{{klantAdres}}"}</li>
+                          <li>{"{{klantPostcode}}"}</li>
+                          <li>{"{{klantStad}}"}</li>
+                          <li>{"{{klantBtwNummer}}"}</li>
+                        </ul>
+                        <p className="font-semibold text-gray-700 mb-1 mt-3">Totalen</p>
+                        <ul className="space-y-0.5 font-mono text-gray-500">
+                          <li>{"{{subtotaal}}"}</li>
+                          <li>{"{{kortingBedrag}}"}</li>
+                          <li>{"{{kortingClass}}"}</li>
+                          <li>{"{{btwBedrag}}"}</li>
+                          <li>{"{{btwClass}}"}</li>
+                          <li>{"{{totaalBedrag}}"}</li>
+                          <li>{"{{regelsHtml}}"} <span className="font-sans text-gray-400">(HTML tabel)</span></li>
+                          <li>{"{{betaalQrCode}}"} <span className="font-sans text-gray-400">(SEPA betaal QR-code afbeelding)</span></li>
+                        </ul>
+                      </div>
                     </div>
-                    <div>
-                      <p className="font-semibold text-gray-700 mb-1">Factuur</p>
-                      <ul className="space-y-0.5 font-mono text-gray-500">
-                        <li>{"{{factuurNummer}}"}</li>
-                        <li>{"{{factuurDatum}}"}</li>
-                        <li>{"{{vervaldatum}}"}</li>
-                        <li>{"{{notities}}"}</li>
-                        <li>{"{{betalingsCondities}}"}</li>
-                      </ul>
-                      <p className="font-semibold text-gray-700 mb-1 mt-3">Klant</p>
-                      <ul className="space-y-0.5 font-mono text-gray-500">
-                        <li>{"{{klantNaam}}"}</li>
-                        <li>{"{{klantBedrijf}}"}</li>
-                        <li>{"{{klantAdres}}"}</li>
-                        <li>{"{{klantPostcode}}"}</li>
-                        <li>{"{{klantStad}}"}</li>
-                        <li>{"{{klantBtwNummer}}"}</li>
-                      </ul>
-                      <p className="font-semibold text-gray-700 mb-1 mt-3">Totalen</p>
-                      <ul className="space-y-0.5 font-mono text-gray-500">
-                        <li>{"{{subtotaal}}"}</li>
-                        <li>{"{{kortingBedrag}}"}</li>
-                        <li>{"{{btwBedrag}}"}</li>
-                        <li>{"{{totaalBedrag}}"}</li>
-                        <li>{"{{regelsHtml}}"} <span className="font-sans text-gray-400">(HTML tabel)</span></li>
-                        <li>{"{{betaalQrCode}}"} <span className="font-sans text-gray-400">(SEPA betaal QR-code afbeelding)</span></li>
-                      </ul>
-                    </div>
+                  </details>
+                  <div className="flex items-center gap-2 justify-end">
+                    <button
+                      type="button"
+                      className="text-xs text-gray-500 hover:text-gray-700 underline"
+                      onClick={() => { updateVeld("factuurHtmlTemplate", ""); slaOp({ factuurHtmlTemplate: "" }); }}
+                    >
+                      Reset naar standaard
+                    </button>
+                    <Button onClick={() => slaOp({ factuurHtmlTemplate: instellingen.factuurHtmlTemplate })} loading={opslaan}>
+                      Opslaan
+                    </Button>
                   </div>
-                </details>
-                <div className="flex items-center gap-2 justify-end">
-                  <button
-                    type="button"
-                    className="text-xs text-gray-500 hover:text-gray-700 underline"
-                    onClick={() => { updateVeld("factuurHtmlTemplate", ""); slaOp({ factuurHtmlTemplate: "" }); }}
-                  >
-                    Reset naar standaard
-                  </button>
-                  <Button onClick={() => slaOp({ factuurHtmlTemplate: instellingen.factuurHtmlTemplate })} loading={opslaan}>
-                    Opslaan
-                  </Button>
+                </CardContent>
+              </Card>
+            </div>
+
+            <div className="flex-1 min-w-0">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Live voorbeeld van de factuur</p>
+                <p className="text-xs text-gray-500">Deze preview schaalt automatisch mee met je scherm</p>
+              </div>
+              <div
+                ref={previewContainerRef}
+                className="overflow-auto rounded-xl bg-gray-100 px-4 py-5"
+                style={{ boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.08)", minHeight: "calc(100vh - 280px)" }}
+              >
+                <div
+                  style={{
+                    width: `${Math.round(794 * effectievePreviewSchaal)}px`,
+                    height: `${Math.round(1123 * effectievePreviewSchaal)}px`,
+                    overflow: "hidden",
+                    borderRadius: "4px",
+                    boxShadow: "0 8px 40px rgba(0,0,0,0.18)",
+                    margin: "0 auto",
+                    background: "white",
+                  }}
+                >
+                  <div style={{ width: "794px", transformOrigin: "top left", transform: `scale(${effectievePreviewSchaal})` }}>
+                    {instellingen.factuurHtmlTemplate?.trim() ? (
+                      <FactuurHtmlDocument
+                        title="Factuur template preview"
+                        instellingen={instellingen}
+                        factuur={previewFactuur}
+                        frameStyle={{ width: "794px", height: "1123px" }}
+                      />
+                    ) : (
+                      <FactuurLayoutPreview inst={instellingen} />
+                    )}
+                  </div>
                 </div>
-              </CardContent>
-            </Card>
+              </div>
+            </div>
           </div>
         )}
 

@@ -185,6 +185,81 @@
       white-space: nowrap;
     }
 
+    /* Productregel-korting */
+    .regel-omschrijving {
+      font-weight: 700;
+      color: #0f172a;
+    }
+
+    .regel-subtekst {
+      margin-top: 3px;
+      color: #64748b;
+      font-size: 11px;
+      white-space: normal;
+    }
+
+    .regel-korting {
+      margin-top: 5px;
+      display: inline-block;
+      padding: 3px 7px;
+      border-radius: 999px;
+      background: #ecfdf3;
+      color: #047857;
+      font-size: 10.5px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .prijs-origineel {
+      display: block;
+      color: #94a3b8;
+      text-decoration: line-through;
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    .prijs-na-korting {
+      display: block;
+      color: #0f172a;
+      font-weight: 800;
+    }
+
+    .korting-bedrag {
+      color: #16a34a;
+      font-weight: 800;
+    }
+
+    .regel-totaal {
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .regel-totaal-opbouw {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 2px;
+      line-height: 1.25;
+    }
+
+    .regel-totaal-origineel {
+      color: #64748b;
+      font-size: 11px;
+      text-decoration: line-through;
+    }
+
+    .regel-totaal-korting {
+      color: #16a34a;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .regel-totaal-eind {
+      color: #0f172a;
+      font-size: 12px;
+      font-weight: 900;
+    }
+
     .financial-section {
       display: grid;
       grid-template-columns: 1fr 360px;
@@ -222,11 +297,17 @@
 
     .qr-box {
       text-align: center;
+      background: #ffffff;
+      padding: 8px;
+      border-radius: 8px;
     }
 
     .qr-box img {
-      max-width: 120px;
-      max-height: 120px;
+      width: 150px;
+      height: 150px;
+      object-fit: contain;
+      display: block;
+      margin: 0 auto;
     }
 
     .qr-text {
@@ -376,6 +457,17 @@
         </div>
 
         <div class="regels">
+          <!--
+            Voor regelkorting kan {{regelsHtml}} per regel bijvoorbeeld dit gebruiken in de totaal-kolom:
+
+            <td class="regel-totaal">
+              <div class="regel-totaal-opbouw">
+                <span class="regel-totaal-origineel">€ 85,00</span>
+                <span class="regel-totaal-korting">- € 8,50 korting</span>
+                <span class="regel-totaal-eind">€ 76,50</span>
+              </div>
+            </td>
+          -->
           {{regelsHtml}}
         </div>
 
@@ -392,7 +484,7 @@
               <div>
 
                 <div class="bottom-title">
-                  Betalingsinformatie
+                  Betalingscondities
                 </div>
 
                 <div class="bottom-text">
@@ -401,18 +493,8 @@ Gelieve deze factuur uiterlijk {{vervaldatum}} te voldoen onder vermelding van u
 
                 <br>
 
-                <div class="bottom-title">
-                  Betaalgegevens
-                </div>
-
-                <div class="bottom-text">IBAN: {{iban}}
-Ten name van: {{bedrijfsnaam}}
-Factuurnummer: {{factuurNummer}}</div>
-
-              </div>
-
               <!-- QR-code alleen tonen indien aanwezig -->
-              <div class="qr-box {{betaalQrCodeClass}}">
+              
 
                 {{betaalQrCode}}
 
@@ -420,7 +502,7 @@ Factuurnummer: {{factuurNummer}}</div>
                   Scan de QR-code met de scanner in uw bankapp om direct te betalen.
                 </div>
 
-              </div>
+              
 
             </div>
 
@@ -437,6 +519,12 @@ Factuurnummer: {{factuurNummer}}</div>
             <div class="total-row discount {{kortingClass}}">
               <span class="label">Korting</span>
               <span class="value">{{kortingBedrag}}</span>
+            </div>
+
+            <!-- Alleen tonen indien BTW aanwezig -->
+            <div class="total-row {{btwClass}}">
+              <span class="label">BTW</span>
+              <span class="value">{{btwBedrag}}</span>
             </div>
 
             <div class="total-final">
@@ -456,7 +544,7 @@ Factuurnummer: {{factuurNummer}}</div>
 
       {{bedrijfsnaam}} · KvK {{kvkNummer}} · IBAN {{iban}}
 
-      <div class="footer-kor {{korClass}}">
+      <div class="footer-kor">
         Deze factuur is vrijgesteld van omzetbelasting wegens deelname aan de Kleineondernemersregeling (KOR). Er wordt daarom geen BTW berekend.
       </div>
 
