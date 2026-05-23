@@ -491,6 +491,16 @@ async function maakEpcQrHtml(iban: string | null | undefined, bedrijfsnaam: stri
   }
 }
 
+function bouwRegelsHtml(regels: Array<{ omschrijving: string; aantal: number; eenheid?: string | null; prijs: number; kortingPercentage: number; totaal: number }>): string {
+  const toonKorting = regels.some(r => (r.kortingPercentage ?? 0) > 0)
+  const p = 'padding:10px 12px;border-bottom:1px solid #eee'
+  const ph = 'padding:10px 12px;border-bottom:1px solid #ddd'
+  if (toonKorting) {
+    return `<table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left;${ph}">Omschrijving</th><th style="text-align:center;${ph}">Aantal</th><th style="text-align:right;${ph}">Prijs</th><th style="text-align:right;${ph}">Korting</th><th style="text-align:right;${ph}">Totaal</th></tr></thead><tbody>${regels.map(r => `<tr><td style="${p}">${r.omschrijving}${r.eenheid ? ` / ${r.eenheid}` : ''}</td><td style="text-align:center;${p}">${r.aantal}</td><td style="text-align:right;${p}">€${r.prijs.toFixed(2)}</td><td style="text-align:right;${p}">${(r.kortingPercentage ?? 0) > 0 ? `${r.kortingPercentage}%` : '-'}</td><td style="text-align:right;${p}">€${r.totaal.toFixed(2)}</td></tr>`).join('')}</tbody></table>`
+  }
+  return `<table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left;${ph}">Omschrijving</th><th style="text-align:center;${ph}">Aantal</th><th style="text-align:right;${ph}">Prijs</th><th style="text-align:right;${ph}">Totaal</th></tr></thead><tbody>${regels.map(r => `<tr><td style="${p}">${r.omschrijving}${r.eenheid ? ` / ${r.eenheid}` : ''}</td><td style="text-align:center;${p}">${r.aantal}</td><td style="text-align:right;${p}">€${r.prijs.toFixed(2)}</td><td style="text-align:right;${p}">€${r.totaal.toFixed(2)}</td></tr>`).join('')}</tbody></table>`
+}
+
 async function genereerFactuurPdfBufferIntern(factuurId: string): Promise<Buffer> {
   const factuur = await prisma.factuur.findUnique({ where: { id: factuurId }, include: { regels: true, klant: true } })
   if (!factuur) throw new Error('Factuur niet gevonden')
@@ -499,7 +509,7 @@ async function genereerFactuurPdfBufferIntern(factuurId: string): Promise<Buffer
   pdfWindow.setMenuBarVisibility(false)
   if (user?.factuurHtmlTemplate?.trim()) {
     const f = factuur as typeof factuur & { klant: { naam: string; bedrijf?: string | null; adres?: string | null; postcode?: string | null; stad?: string | null; btwNummer?: string | null }; regels: Array<{ omschrijving: string; aantal: number; eenheid?: string | null; prijs: number; btwPercentage: number; kortingPercentage: number; totaal: number }> }
-    const regelsHtml = `<table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:4px 8px;border-bottom:1px solid #ddd">Omschrijving</th><th style="text-align:center;padding:4px 8px;border-bottom:1px solid #ddd">Aantal</th><th style="text-align:right;padding:4px 8px;border-bottom:1px solid #ddd">Prijs</th><th style="text-align:right;padding:4px 8px;border-bottom:1px solid #ddd">Totaal</th></tr></thead><tbody>${f.regels.map(r => `<tr><td style="padding:4px 8px;border-bottom:1px solid #eee">${r.omschrijving}${r.eenheid ? ` / ${r.eenheid}` : ''}</td><td style="text-align:center;padding:4px 8px;border-bottom:1px solid #eee">${r.aantal}</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid #eee">€${r.prijs.toFixed(2)}</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid #eee">€${r.totaal.toFixed(2)}</td></tr>`).join('')}</tbody></table>`
+    const regelsHtml = bouwRegelsHtml(f.regels)
     const logoHtml = user.logoBase64 ? `<img src="${user.logoBase64}" style="max-height:80px" />` : ''
     const qrHtml = await maakEpcQrHtml(user.iban, user.bedrijfsnaam ?? user.naam ?? '', f.totaal, f.nummer)
     const subtotaalNaRegelKortingPdf = f.regels.reduce((acc, r) => acc + r.prijs * r.aantal * (1 - (r.kortingPercentage ?? 0) / 100), 0)
@@ -538,6 +548,7 @@ async function genereerFactuurPdfBufferIntern(factuurId: string): Promise<Buffer
       kortingLabel: kortingLabelPdf,
       kortingClass: totaalKortingEffectiefPdf > 0.005 ? '' : 'hidden',
       btwClass: f.btwBedrag > 0 ? '' : 'hidden',
+      korClass: user.korActief ? '' : 'hidden',
       regelsHtml,
       betaalQrCode: qrHtml,
       betaalQrCodeClass: qrHtml ? '' : 'hidden'
@@ -2675,7 +2686,7 @@ function setupIpcHandlers() {
       if (user?.factuurHtmlTemplate?.trim()) {
         // Render custom HTML template met variabelen
         const f = factuur as typeof factuur & { klant: { naam: string; bedrijf?: string | null; adres?: string | null; postcode?: string | null; stad?: string | null; btwNummer?: string | null }; regels: Array<{ omschrijving: string; aantal: number; eenheid?: string | null; prijs: number; btwPercentage: number; kortingPercentage: number; totaal: number }> }
-        const regelsHtml = `<table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:4px 8px;border-bottom:1px solid #ddd">Omschrijving</th><th style="text-align:center;padding:4px 8px;border-bottom:1px solid #ddd">Aantal</th><th style="text-align:right;padding:4px 8px;border-bottom:1px solid #ddd">Prijs</th><th style="text-align:right;padding:4px 8px;border-bottom:1px solid #ddd">Totaal</th></tr></thead><tbody>${f.regels.map(r => `<tr><td style="padding:4px 8px;border-bottom:1px solid #eee">${r.omschrijving}${r.eenheid ? ` / ${r.eenheid}` : ''}</td><td style="text-align:center;padding:4px 8px;border-bottom:1px solid #eee">${r.aantal}</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid #eee">€${r.prijs.toFixed(2)}</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid #eee">€${r.totaal.toFixed(2)}</td></tr>`).join('')}</tbody></table>`
+        const regelsHtml = bouwRegelsHtml(f.regels)
         const logoHtml = user.logoBase64 ? `<img src="${user.logoBase64}" style="max-height:80px" />` : ''
         const qrHtml = await maakEpcQrHtml(user.iban, user.bedrijfsnaam ?? user.naam ?? '', f.totaal, f.nummer)
         const subtotaalNaRegelKortingEmail = f.regels.reduce((acc, r) => acc + r.prijs * r.aantal * (1 - (r.kortingPercentage ?? 0) / 100), 0)
@@ -2714,6 +2725,7 @@ function setupIpcHandlers() {
           kortingLabel: kortingLabelEmail,
           kortingClass: totaalKortingEffectiefEmail > 0.005 ? '' : 'hidden',
           btwClass: f.btwBedrag > 0 ? '' : 'hidden',
+          korClass: user.korActief ? '' : 'hidden',
           regelsHtml,
           betaalQrCode: qrHtml,
           betaalQrCodeClass: qrHtml ? '' : 'hidden',
@@ -4066,9 +4078,16 @@ function setupIpcHandlers() {
         if (user?.factuurHtmlTemplate?.trim()) {
           const factuur = await prisma.factuur.findUnique({ where: { id: f.id }, include: { regels: true, klant: true } })
           if (factuur) {
-            const regelsHtml = `<table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:4px 8px;border-bottom:1px solid #ddd">Omschrijving</th><th style="text-align:center;padding:4px 8px;border-bottom:1px solid #ddd">Aantal</th><th style="text-align:right;padding:4px 8px;border-bottom:1px solid #ddd">Prijs</th><th style="text-align:right;padding:4px 8px;border-bottom:1px solid #ddd">Totaal</th></tr></thead><tbody>${factuur.regels.map((r: { omschrijving: string; aantal: number; eenheid?: string | null; prijs: number; totaal: number }) => `<tr><td style="padding:4px 8px;border-bottom:1px solid #eee">${r.omschrijving}${r.eenheid ? ` / ${r.eenheid}` : ''}</td><td style="text-align:center;padding:4px 8px;border-bottom:1px solid #eee">${r.aantal}</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid #eee">€${r.prijs.toFixed(2)}</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid #eee">€${r.totaal.toFixed(2)}</td></tr>`).join('')}</tbody></table>`
+            const regelsHtml = bouwRegelsHtml(factuur.regels as Array<{ omschrijving: string; aantal: number; eenheid?: string | null; prijs: number; kortingPercentage: number; totaal: number }>)
             const logoHtml3 = user.logoBase64 ? `<img src="${user.logoBase64}" style="max-height:80px" />` : ''
             const qrHtml3 = await maakEpcQrHtml(user.iban, user.bedrijfsnaam ?? user.naam ?? '', factuur.totaal, factuur.nummer)
+            const fRegels3 = factuur.regels as Array<{ prijs: number; aantal: number; kortingPercentage: number }>
+            const subtotaalNaRegelKorting3 = fRegels3.reduce((acc, r) => acc + r.prijs * r.aantal * (1 - (r.kortingPercentage ?? 0) / 100), 0)
+            const totaalKortingEffectief3 = factuur.kortingBedrag + ((factuur as unknown as { totaalKortingBedrag: number }).totaalKortingBedrag ?? 0)
+            const totaalKortingPct3 = subtotaalNaRegelKorting3 > 0.005 ? Math.round(totaalKortingEffectief3 / subtotaalNaRegelKorting3 * 1000) / 10 : 0
+            const kortingLabel3 = totaalKortingPct3 > 0
+              ? `Korting (${Number.isInteger(totaalKortingPct3) ? totaalKortingPct3 : totaalKortingPct3.toFixed(1).replace('.', ',')}%)`
+              : 'Korting'
             const vars: Record<string, string> = {
               bedrijfsnaam: user.bedrijfsnaam ?? user.naam ?? '', bedrijfAdres: user.adres ?? '', bedrijfPostcode: user.postcode ?? '',
               bedrijfStad: user.stad ?? '', bedrijfEmail: user.email ?? '', bedrijfTelefoon: user.telefoon ?? '',
@@ -4082,10 +4101,12 @@ function setupIpcHandlers() {
               klantPostcode: (factuur.klant as { postcode?: string | null }).postcode ?? '',
               klantStad: (factuur.klant as { stad?: string | null }).stad ?? '',
               klantBtwNummer: (factuur.klant as { btwNummer?: string | null }).btwNummer ?? '',
-              subtotaal: `€${factuur.subtotaal.toFixed(2)}`, kortingBedrag: `€${factuur.kortingBedrag.toFixed(2)}`,
+              subtotaal: `€${subtotaalNaRegelKorting3.toFixed(2)}`, kortingBedrag: `€${totaalKortingEffectief3.toFixed(2)}`,
               btwBedrag: `€${factuur.btwBedrag.toFixed(2)}`, totaalBedrag: `€${factuur.totaal.toFixed(2)}`,
-              kortingClass: factuur.kortingBedrag > 0 ? '' : 'hidden',
+              kortingLabel: kortingLabel3,
+              kortingClass: totaalKortingEffectief3 > 0.005 ? '' : 'hidden',
               btwClass: factuur.btwBedrag > 0 ? '' : 'hidden',
+              korClass: user.korActief ? '' : 'hidden',
               regelsHtml,
               betaalQrCode: qrHtml3, betaalQrCodeClass: qrHtml3 ? '' : 'hidden',
             }
