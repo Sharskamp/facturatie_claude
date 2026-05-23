@@ -14,6 +14,7 @@ interface EmailOpties {
   onderwerp: string;
   html: string;
   tekst?: string;
+  bcc?: string;
   bijlagen?: Array<{
     bestandsnaam: string;
     inhoud: string | Buffer;
@@ -51,6 +52,7 @@ export async function verstuurEmail(config: EmailConfig, opties: EmailOpties) {
   await transporter.sendMail({
     from: opties.van,
     to: opties.naar,
+    bcc: opties.bcc || undefined,
     subject: opties.onderwerp,
     html: opties.html,
     text: opties.tekst,

@@ -9,7 +9,7 @@ import * as http from 'http'
 import * as net from 'net'
 import { DOMParser } from '@xmldom/xmldom'
 import { verstuurEmail, maakFactuurEmailHtml } from '../lib/email'
-import { haalAgendaAfspraken, haalKalenderLijst, maakGoogleAfspraak, wijzigGoogleAfspraak, maakGoogleAuthUrl, wisselCodeVoorTokens, vernieuwAccessToken } from '../lib/google-calendar'
+import { haalAgendaAfspraken, haalKalenderLijst, maakGoogleAfspraak, wijzigGoogleAfspraak, verwijderGoogleAfspraak, maakGoogleAuthUrl, wisselCodeVoorTokens, vernieuwAccessToken } from '../lib/google-calendar'
 import { autoUpdater } from 'electron-updater'
 import * as os from 'os'
 import { scanBestandLokaal } from '../lib/lokale-ocr'
@@ -174,6 +174,11 @@ function runMigratie(dbPath: string): void {
   kolomToevoegen('User', 'agendaHerinneringVoorafUren', 'INTEGER NOT NULL DEFAULT 2')
   kolomToevoegen('User', 'agendaHerinneringDagen', 'INTEGER NOT NULL DEFAULT 1')
   kolomToevoegen('User', 'agendaHerinneringTijd', "TEXT NOT NULL DEFAULT '09:00'")
+  // BCC en e-mailsjablonen uitbreidingen
+  kolomToevoegen('User', 'emailBcc', 'TEXT')
+  kolomToevoegen('User', 'emailBevestigingOnderwerp', 'TEXT')
+  kolomToevoegen('User', 'emailBevestigingTekst', 'TEXT')
+  kolomToevoegen('User', 'emailFactuurTekst', 'TEXT')
 
   // Klant — nieuwe kolommen
   kolomToevoegen('Klant', 'betaalTermijn', 'INTEGER')
@@ -607,7 +612,8 @@ async function stuurHerinneringen(): Promise<{ verstuurd: number; fouten: number
       : `Betalingsherinnering - ${facturenMetSaldo.length === 1 ? `Factuur ${facturenMetSaldo[0].nummer}` : `${facturenMetSaldo.length} openstaande facturen`}`
 
     try {
-      await verstuurEmail(smtpConfig, { van: user.emailSmtpUser!, naar: klant.email, onderwerp, html })
+      const emailBcc = (user as Record<string, unknown>).emailBcc as string | null
+      await verstuurEmail(smtpConfig, { van: user.emailSmtpUser!, naar: klant.email, bcc: emailBcc || undefined, onderwerp, html })
       // Markeer alle facturen als herinnerd
       for (const f of facturenMetSaldo) {
         await prisma.factuur.update({ where: { id: f.id }, data: { herinneringVerzondenOp: nu } })
@@ -1195,21 +1201,45 @@ function setupIpcHandlers() {
         throw new Error('Email SMTP niet geconfigureerd. Ga naar Instellingen > Email.')
       }
 
-      const emailHtml = maakFactuurEmailHtml({
-        klantNaam: factuur.klant.naam,
-        bedrijfsnaam: user.bedrijfsnaam ?? user.naam,
-        factuurNummer: factuur.nummer,
-        totaal: formatBedrag(factuur.totaal),
-        vervaldatum: formatDatum(factuur.vervaldatum),
-        factuurUrl: ``,
-        notities: payload.bericht,
-        mollieBetaalLink: factuur.mollieBetaalLink,
-      })
+      const bedrijfsnaam = user.bedrijfsnaam ?? user.naam
+      let emailHtml: string
+      const emailFactuurTekst = (user as Record<string, unknown>).emailFactuurTekst as string | null
+      if (emailFactuurTekst) {
+        const aanhef = (user.emailAanhef ?? 'Geachte {{naam}},').replace('{{naam}}', factuur.klant.naam)
+        const bodyLines = emailFactuurTekst
+          .replace('{{naam}}', factuur.klant.naam)
+          .replace('{{bedrijf}}', bedrijfsnaam)
+          .replace('{{nummer}}', factuur.nummer)
+          .replace('{{totaal}}', formatBedrag(factuur.totaal))
+          .replace('{{vervaldatum}}', formatDatum(factuur.vervaldatum))
+          .split('\n').map(l => `<p>${l}</p>`).join('')
+        const afsluiting = user.emailAfsluitingsTekst ?? 'Met vriendelijke groet,'
+        emailHtml = `<p>${aanhef}</p>${bodyLines}<p>${afsluiting}<br><strong>${bedrijfsnaam}</strong></p>`
+        if (factuur.mollieBetaalLink) {
+          emailHtml += `<div style="text-align:center;margin:24px 0"><a href="${factuur.mollieBetaalLink}" style="background:#16a34a;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold">Direct betalen via iDEAL</a></div>`
+        }
+      } else {
+        emailHtml = maakFactuurEmailHtml({
+          klantNaam: factuur.klant.naam,
+          bedrijfsnaam,
+          factuurNummer: factuur.nummer,
+          totaal: formatBedrag(factuur.totaal),
+          vervaldatum: formatDatum(factuur.vervaldatum),
+          factuurUrl: ``,
+          notities: payload.bericht,
+          mollieBetaalLink: factuur.mollieBetaalLink,
+        })
+      }
+
+      const factuurOnderwerp = ((user as Record<string, unknown>).emailFactuurOnderwerp as string | null)
+        ?.replace('{{nummer}}', factuur.nummer).replace('{{bedrijf}}', bedrijfsnaam)
+        ?? `Factuur ${factuur.nummer} - ${bedrijfsnaam}`
+      const emailBcc = (user as Record<string, unknown>).emailBcc as string | null
 
       try {
         await verstuurEmail(
           { host: user.emailSmtpHost, port: user.emailSmtpPort ?? 587, secure: user.emailSmtpSecure, user: user.emailSmtpUser, pass: user.emailSmtpPass ?? '' },
-          { van: `${user.bedrijfsnaam ?? user.naam} <${user.emailSmtpUser}>`, naar: payload.naarEmail ?? factuur.klant.email ?? '', onderwerp: `Factuur ${factuur.nummer} - ${user.bedrijfsnaam ?? user.naam}`, html: emailHtml }
+          { van: `${bedrijfsnaam} <${user.emailSmtpUser}>`, naar: payload.naarEmail ?? factuur.klant.email ?? '', bcc: emailBcc || undefined, onderwerp: factuurOnderwerp, html: emailHtml }
         )
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : 'Onbekende fout'
@@ -1421,9 +1451,10 @@ function setupIpcHandlers() {
   </div>
 </body></html>`
 
+    const emailBccOfferte = (user as Record<string, unknown>).emailBcc as string | null
     await verstuurEmail(
       { host: user.emailSmtpHost, port: user.emailSmtpPort ?? 587, secure: user.emailSmtpSecure, user: user.emailSmtpUser, pass: user.emailSmtpPass ?? '' },
-      { naar: payload.email, van: `"${bedrijfsnaam}" <${user.emailSmtpUser}>`, onderwerp, html }
+      { naar: payload.email, van: `"${bedrijfsnaam}" <${user.emailSmtpUser}>`, bcc: emailBccOfferte || undefined, onderwerp, html }
     )
 
     await prisma.offerte.update({ where: { id }, data: { verzondenOp: new Date(), status: offerte.status === 'CONCEPT' ? 'VERZONDEN' : offerte.status } })
@@ -1799,11 +1830,12 @@ function setupIpcHandlers() {
         logo: true, logoBase64: true,
         factuurPrefix: true, offertePrefix: true, factuurVolgNummer: true, offerteVolgNummer: true,
         factuurNummerFormaat: true, standaardCreditnotaPrefix: true,
-        emailSmtpHost: true, emailSmtpPort: true, emailSmtpUser: true, emailSmtpSecure: true,
+        emailSmtpHost: true, emailSmtpPort: true, emailSmtpUser: true, emailSmtpSecure: true, emailSmtpPass: true,
         korActief: true, korDrempel: true, korWaarschuwing: true,
         standaardBetaalTermijn: true, standaardBtwTarief: true,
         betalingsherinneringen: true, herinneringDagen: true,
         emailFactuurOnderwerp: true, emailHerinneringOnderwerp: true, emailHerinneringTekst: true,
+        emailBcc: true, emailBevestigingOnderwerp: true, emailBevestigingTekst: true, emailFactuurTekst: true,
         agendaHerinneringActief: true, agendaHerinneringModus: true, agendaHerinneringVoorafUren: true, agendaHerinneringDagen: true, agendaHerinneringTijd: true,
         googleRefreshToken: true, googleClientId: true, googleClientSecret: true, googlePrimaryCalendarId: true, kmVergoeding: true,
         anthropicApiKey: true, openaiApiKey: true, aiModel: true, factuurHtmlTemplate: true, offerteGeldigheidDagen: true,
@@ -1820,7 +1852,8 @@ function setupIpcHandlers() {
         spaarrekeningen: true,
       }
     })
-    return { ...user, googleGekoppeld: !!user?.googleRefreshToken, googleClientId: user?.googleClientId ?? '' }
+    const { emailSmtpPass, ...safeUser } = user ?? {} as NonNullable<typeof user>
+    return { ...safeUser, emailSmtpPassIngesteld: !!user?.emailSmtpPass, googleGekoppeld: !!user?.googleRefreshToken, googleClientId: user?.googleClientId ?? '' }
   })
 
   ipcMain.handle('instellingen:update', async (_, data: Record<string, unknown>) => {
@@ -1838,6 +1871,7 @@ function setupIpcHandlers() {
       'donkerModus', 'autoStart', 'pdfMapPad',
       'emailAanhef', 'emailAfsluitingsTekst',
       'emailFactuurOnderwerp', 'emailHerinneringOnderwerp', 'emailHerinneringTekst',
+      'emailBcc', 'emailBevestigingOnderwerp', 'emailBevestigingTekst', 'emailFactuurTekst',
       'agendaHerinneringActief', 'agendaHerinneringModus', 'agendaHerinneringVoorafUren', 'agendaHerinneringDagen', 'agendaHerinneringTijd',
       'googleClientId', 'googleClientSecret',
       'layoutPrimairKleur', 'layoutSecundairKleur', 'layoutLettertype',
@@ -1851,21 +1885,27 @@ function setupIpcHandlers() {
     for (const [sleutel, waarde] of Object.entries(data)) {
       if (toegestaneVelden.has(sleutel)) updateData[sleutel] = waarde
     }
-    if (updateData.emailSmtpPass === '') delete updateData.emailSmtpPass
+    if (!updateData.emailSmtpPass) delete updateData.emailSmtpPass
     if (updateData.anthropicApiKey === '') updateData.anthropicApiKey = null
     await prisma.user.updateMany({ data: updateData })
     if ('bankAfschriftenMap' in updateData) startBankWatcher().catch(() => {})
     return { succes: true }
   })
 
-  ipcMain.handle('instellingen:test-email', async (_, config: { host: string; port: number; secure: boolean; user: string; pass: string; naar: string }) => {
+  ipcMain.handle('instellingen:test-email', async (_, config: { host: string; port: number; secure: boolean; user: string; pass?: string; naar: string }) => {
     try {
       // Port 465 = direct SSL; port 587/25/other = STARTTLS (secure must be false)
       const secureDwingen = config.port === 465 ? true : config.port === 587 ? false : config.secure
       const naar = config.naar?.trim() || config.user // fallback: stuur naar eigen adres
       if (!naar) throw new Error('Geen ontvanger opgegeven. Vul je e-mailadres in bij Bedrijfsgegevens of gebruikersnaam bij SMTP.')
+      // Retrieve password from DB if not provided (frontend doesn't hold the password)
+      let pass = config.pass ?? ''
+      if (!pass) {
+        const dbUser = await prisma.user.findFirst({ select: { emailSmtpPass: true } })
+        pass = dbUser?.emailSmtpPass ?? ''
+      }
       await verstuurEmail(
-        { host: config.host, port: config.port, secure: secureDwingen, user: config.user, pass: config.pass },
+        { host: config.host, port: config.port, secure: secureDwingen, user: config.user, pass },
         { van: config.user, naar, onderwerp: 'AdminPro - Test e-mail', html: '<p>Dit is een test e-mail van AdminPro. Uw SMTP-instellingen werken correct!</p>' }
       )
       return { succes: true }
@@ -2240,27 +2280,66 @@ function setupIpcHandlers() {
         : `${new Date(afspraakDetails.start).toLocaleDateString('nl-NL', { weekday: 'long', day: 'numeric', month: 'long' })} van ${new Date(afspraakDetails.start).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' })} tot ${new Date(afspraakDetails.einde!).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' })}`
       : ''
 
+    const emailBevestigingOnderwerp = (user as Record<string, unknown>).emailBevestigingOnderwerp as string | null
+    const emailBevestigingTekst = (user as Record<string, unknown>).emailBevestigingTekst as string | null
+    const emailBcc = (user as Record<string, unknown>).emailBcc as string | null
+
     let verstuurd = 0
     for (const klant of klanten) {
       if (!klant.email) continue
       const aanhef = (user.emailAanhef ?? 'Geachte {{naam}},').replace('{{naam}}', klant.naam)
-      const html = `
-        <p>${aanhef}</p>
-        <p>Hierbij bevestigen wij uw afspraak:</p>
-        <table style="border-collapse:collapse;width:100%;margin:12px 0">
-          ${afspraakDetails.samenvatting ? `<tr><td style="padding:6px 10px;color:#6b7280;width:140px">Onderwerp</td><td style="padding:6px 10px"><strong>${afspraakDetails.samenvatting}</strong></td></tr>` : ''}
-          ${datumStr ? `<tr><td style="padding:6px 10px;color:#6b7280">Datum & tijd</td><td style="padding:6px 10px">${datumStr}</td></tr>` : ''}
-          ${afspraakDetails.locatie ? `<tr><td style="padding:6px 10px;color:#6b7280">Locatie</td><td style="padding:6px 10px">${afspraakDetails.locatie}</td></tr>` : ''}
-        </table>
-        <p>${user.emailAfsluitingsTekst ?? 'Met vriendelijke groet,'}<br>${user.naam}${user.bedrijfsnaam ? '<br>' + user.bedrijfsnaam : ''}</p>
-      `
+      const afsluiting = `${user.emailAfsluitingsTekst ?? 'Met vriendelijke groet,'}<br>${user.naam}${user.bedrijfsnaam ? '<br>' + user.bedrijfsnaam : ''}`
+
+      let html: string
+      if (emailBevestigingTekst) {
+        const bodyLines = emailBevestigingTekst
+          .replace(/{{naam}}/g, klant.naam)
+          .replace(/{{onderwerp}}/g, afspraakDetails.samenvatting ?? '')
+          .replace(/{{datum}}/g, datumStr)
+          .replace(/{{locatie}}/g, afspraakDetails.locatie ?? '')
+          .split('\n').map(l => `<p>${l}</p>`).join('')
+        html = `<p>${aanhef}</p>${bodyLines}<p>${afsluiting}</p>`
+      } else {
+        html = `
+          <p>${aanhef}</p>
+          <p>Hierbij bevestigen wij uw afspraak:</p>
+          <table style="border-collapse:collapse;width:100%;margin:12px 0">
+            ${afspraakDetails.samenvatting ? `<tr><td style="padding:6px 10px;color:#6b7280;width:140px">Onderwerp</td><td style="padding:6px 10px"><strong>${afspraakDetails.samenvatting}</strong></td></tr>` : ''}
+            ${datumStr ? `<tr><td style="padding:6px 10px;color:#6b7280">Datum &amp; tijd</td><td style="padding:6px 10px">${datumStr}</td></tr>` : ''}
+            ${afspraakDetails.locatie ? `<tr><td style="padding:6px 10px;color:#6b7280">Locatie</td><td style="padding:6px 10px">${afspraakDetails.locatie}</td></tr>` : ''}
+          </table>
+          <p>${afsluiting}</p>
+        `
+      }
+
+      const onderwerp = emailBevestigingOnderwerp
+        ? emailBevestigingOnderwerp.replace(/{{onderwerp}}/g, afspraakDetails.samenvatting ?? '').replace(/{{naam}}/g, klant.naam)
+        : `Afspraakbevestiging${afspraakDetails.samenvatting ? ' – ' + afspraakDetails.samenvatting : ''}`
+
       try {
-        await verstuurEmail(smtpConfig, { van: user.emailSmtpUser!, naar: klant.email, onderwerp: `Afspraakbevestiging${afspraakDetails.samenvatting ? ' – ' + afspraakDetails.samenvatting : ''}`, html })
+        await verstuurEmail(smtpConfig, { van: user.emailSmtpUser!, naar: klant.email, bcc: emailBcc || undefined, onderwerp, html })
         verstuurd++
       } catch {}
     }
 
     return { succes: true, verstuurd }
+  })
+
+  ipcMain.handle('agenda:verwijder-afspraak', async (_, eventId: string, calendarId?: string) => {
+    const user = await prisma.user.findFirst()
+    if (!user) throw new Error('Geen gebruiker')
+
+    const accessToken = await refreshTokenIfNeeded(user)
+    if (!accessToken) throw new Error('Google niet gekoppeld')
+
+    const kalId = calendarId || (user as Record<string, unknown>).googlePrimaryCalendarId as string | null || 'primary'
+
+    await verwijderGoogleAfspraak(accessToken, kalId, eventId)
+
+    // Remove local data as well
+    await prisma.agendaAfspraakData.deleteMany({ where: { eventId } }).catch(() => {})
+
+    return { succes: true }
   })
 
   // ── Ritten (Kilometerregistratie) ──
@@ -4129,9 +4208,10 @@ Gebruik null voor velden die je niet kunt vinden. Retourneer ALLEEN JSON.`
 <tr><td style="padding:4px 8px"><strong>Openstaand bedrag:</strong></td><td><strong>€ ${factuur.totaal.toFixed(2).replace('.', ',')}</strong></td></tr>
 ${dagenTeLasten > 0 ? `<tr><td style="padding:4px 8px"><strong>Dagen te laat:</strong></td><td>${dagenTeLasten} dagen</td></tr>` : ''}
 </table><p>Met vriendelijke groet,<br>${user.naam}${user.bedrijfsnaam ? '<br>' + user.bedrijfsnaam : ''}</p>`
+    const emailBccHerinnering = (user as Record<string, unknown>).emailBcc as string | null
     await verstuurEmail(
       { host: user.emailSmtpHost, port: user.emailSmtpPort ?? 587, secure: user.emailSmtpSecure, user: user.emailSmtpUser, pass: user.emailSmtpPass ?? '' },
-      { van: user.emailSmtpUser, naar: factuur.klant.email, onderwerp: `Betalingsherinnering - Factuur ${factuur.nummer}`, html }
+      { van: user.emailSmtpUser, naar: factuur.klant.email, bcc: emailBccHerinnering || undefined, onderwerp: `Betalingsherinnering - Factuur ${factuur.nummer}`, html }
     )
     await prisma.factuur.update({ where: { id }, data: { herinneringVerzondenOp: nu } })
     return { succes: true }

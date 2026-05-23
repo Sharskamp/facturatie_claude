@@ -134,6 +134,7 @@ contextBridge.exposeInMainWorld('api', {
     haalAfspraakData: (eventId: string) => ipcRenderer.invoke('agenda:haal-afspraak-data', eventId),
     updateAfspraak: (eventId: string, data: unknown) => ipcRenderer.invoke('agenda:update-afspraak', eventId, data),
     stuurBevestiging: (eventId: string) => ipcRenderer.invoke('agenda:stuur-bevestiging', eventId),
+    verwijderAfspraak: (eventId: string, calendarId?: string) => ipcRenderer.invoke('agenda:verwijder-afspraak', eventId, calendarId),
   },
   producten: {
     list: () => ipcRenderer.invoke('producten:list'),

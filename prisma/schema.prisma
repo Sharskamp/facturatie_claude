@@ -59,6 +59,10 @@ model User {
   agendaHerinneringVoorafUren Int   @default(2)
   agendaHerinneringDagen    Int     @default(1)
   agendaHerinneringTijd     String  @default("09:00")
+  emailBcc                  String?
+  emailBevestigingOnderwerp String?
+  emailBevestigingTekst     String?
+  emailFactuurTekst         String?
   logoBase64            String?
   factuurNummerFormaat  String    @default("{PREFIX}{JAAR}-{NNNN}")
   korWaarschuwing       Boolean   @default(true)

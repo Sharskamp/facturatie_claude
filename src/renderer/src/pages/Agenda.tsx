@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  ChevronLeft, ChevronRight, Clock, MapPin, FileText,
+  ChevronLeft, ChevronRight, FileText,
   Loader2, AlertCircle, X, Plus, Trash2, Mail, Edit3, Check,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
@@ -461,10 +461,10 @@ function RegelRij({ regel, index, korActief, producten, onChange, onVerwijder }:
           value={regel.omschrijving}
           onChange={e => onChange(index, "omschrijving", e.target.value)}
           placeholder="Omschrijving"
-          className="h-7 w-full rounded border border-gray-200 px-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400"
+          className={`h-7 w-full rounded border border-gray-200 px-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 ${producten.length > 0 ? "pr-7" : ""}`}
         />
         {producten.length > 0 && (
-          <div className="relative inline-block">
+          <>
             <button
               type="button"
               onClick={() => setProductOpen(v => !v)}
@@ -491,7 +491,7 @@ function RegelRij({ regel, index, korActief, producten, onChange, onVerwijder }:
                 </div>
               </>
             )}
-          </div>
+          </>
         )}
       </div>
       <input
@@ -637,6 +637,7 @@ function BewerkenAfspraakModal({ afspraak, klanten, producten, korActief, kalend
   const [factuurLaden, setFactuurLaden] = useState(false);
   const [bevestigingLaden, setBevestigingLaden] = useState(false);
   const [bevestigingSucces, setBevestigingSucces] = useState(false);
+  const [verwijderLaden, setVerwijderLaden] = useState(false);
   const [fout, setFout] = useState<string | null>(null);
 
   useEffect(() => {
@@ -693,6 +694,18 @@ function BewerkenAfspraakModal({ afspraak, klanten, producten, korActief, kalend
     } catch (e) {
       setFout(e instanceof Error ? e.message : "Versturen mislukt");
     } finally { setBevestigingLaden(false); }
+  };
+
+  const verwijderAfspraak = async () => {
+    if (!confirm(`Weet je zeker dat je "${afspraak.samenvatting}" wilt verwijderen? Dit kan niet ongedaan worden gemaakt.`)) return;
+    setVerwijderLaden(true); setFout(null);
+    try {
+      await (window.api.agenda as any).verwijderAfspraak(afspraak.id, afspraak.kalenderId);
+      onOpgeslagen();
+      onSluit();
+    } catch (e) {
+      setFout(e instanceof Error ? e.message : "Verwijderen mislukt");
+    } finally { setVerwijderLaden(false); }
   };
 
   return (
@@ -790,9 +803,14 @@ function BewerkenAfspraakModal({ afspraak, klanten, producten, korActief, kalend
           )}
         </div>
 
-        <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-2 shrink-0">
-          <Button variant="outline" onClick={onSluit}>Annuleren</Button>
-          <Button loading={opslaan} onClick={slaOp}>Opslaan</Button>
+        <div className="px-6 py-4 border-t border-gray-100 flex justify-between items-center shrink-0">
+          <Button variant="outline" loading={verwijderLaden} onClick={verwijderAfspraak} className="text-red-600 border-red-200 hover:bg-red-50 gap-1.5">
+            <Trash2 className="h-3.5 w-3.5" /> Verwijderen
+          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={onSluit}>Annuleren</Button>
+            <Button loading={opslaan} onClick={slaOp}>Opslaan</Button>
+          </div>
         </div>
       </ModalContent>
     </Modal>
@@ -1222,6 +1240,21 @@ export default function AgendaPagina() {
               className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
             >
               <Mail className="h-3.5 w-3.5 text-gray-400" /> Bevestiging sturen
+            </button>
+            <hr className="my-1 border-gray-100" />
+            <button
+              onClick={async () => {
+                const afspraak = contextMenu.afspraak;
+                setContextMenu(null);
+                if (!confirm(`Weet je zeker dat je "${afspraak.samenvatting}" wilt verwijderen?`)) return;
+                try {
+                  await (window.api.agenda as any).verwijderAfspraak(afspraak.id, afspraak.kalenderId);
+                  await laadAfspraken(van, tot);
+                } catch {}
+              }}
+              className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+            >
+              <Trash2 className="h-3.5 w-3.5 text-red-400" /> Verwijderen
             </button>
           </div>
         </>
