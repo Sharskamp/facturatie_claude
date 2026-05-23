@@ -1042,9 +1042,9 @@ export default function FactuurDetailPage() {
                     PDF wordt automatisch gegenereerd en meegestuurd als bijlage.
                   </div>
                 </div>
-                <div className="flex flex-col">
+                <div className="flex flex-col" style={{ height: 420 }}>
                   <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1.5">E-mail voorbeeld</p>
-                  <div className="flex-1 rounded-lg border border-gray-200 overflow-hidden bg-white relative" style={{ minHeight: 260 }}>
+                  <div className="rounded-lg border border-gray-200 overflow-hidden bg-white relative flex-1">
                     {emailPreviewLaden && (
                       <div className="absolute inset-0 flex items-center justify-center bg-white/80 z-10">
                         <Loader2 className="h-5 w-5 animate-spin text-indigo-400" />
@@ -1054,7 +1054,7 @@ export default function FactuurDetailPage() {
                       <iframe
                         srcDoc={emailPreviewHtml}
                         className="w-full h-full"
-                        style={{ minHeight: 260, border: 'none' }}
+                        style={{ border: 'none', display: 'block' }}
                         sandbox="allow-same-origin"
                         title="E-mail voorbeeld"
                       />

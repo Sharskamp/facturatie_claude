@@ -177,7 +177,10 @@ export default function Dashboard() {
           (fac.status === 'VERZONDEN' || fac.status === 'VERLOPEN') &&
           ((fac.openstaand ?? fac.totaal) > 0.01)
         )
-        if (heeftOpenstaand) setOpstartModalOpen(true);
+        if (heeftOpenstaand && !sessionStorage.getItem('dashboard_opstart_getoond')) {
+          setOpstartModalOpen(true);
+          sessionStorage.setItem('dashboard_opstart_getoond', '1');
+        }
       } catch (e) {
         console.error("Fout bij laden dashboard:", e);
       } finally {

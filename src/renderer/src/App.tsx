@@ -33,7 +33,6 @@ import Producten from './pages/Producten'
 import VasteActiva from './pages/VasteActiva'
 import Crediteuren from './pages/Crediteuren'
 import DashboardLayout from './components/layout/DashboardLayout'
-import OnbetaaldeFactuurMelding from './components/facturen/OnbetaaldeFactuurMelding'
 
 function AppRoutes() {
   const { user, laden } = useAuth()
@@ -106,7 +105,6 @@ export default function App() {
         <AuthProvider>
           <LogoCacheEffect />
           <AppRoutes />
-          <OnbetaaldeFactuurMelding />
         </AuthProvider>
       </HelpProvider>
     </ThemeProvider>
