@@ -831,6 +831,7 @@ export default function InstellingenPagina() {
                         <li>{"{{btwBedrag}}"}</li>
                         <li>{"{{totaalBedrag}}"}</li>
                         <li>{"{{regelsHtml}}"} <span className="font-sans text-gray-400">(HTML tabel)</span></li>
+                        <li>{"{{betaalQrCode}}"} <span className="font-sans text-gray-400">(SEPA betaal QR-code afbeelding)</span></li>
                       </ul>
                     </div>
                   </div>
