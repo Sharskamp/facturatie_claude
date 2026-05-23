@@ -12,6 +12,7 @@ import { verstuurEmail, maakFactuurEmailHtml } from '../lib/email'
 import { haalAgendaAfspraken, haalKalenderLijst, maakGoogleAfspraak, wijzigGoogleAfspraak, verwijderGoogleAfspraak, maakGoogleAuthUrl, wisselCodeVoorTokens, vernieuwAccessToken } from '../lib/google-calendar'
 import { autoUpdater } from 'electron-updater'
 import * as os from 'os'
+import QRCode from 'qrcode'
 
 app.setName('Streamline Facturatie')
 
@@ -479,6 +480,17 @@ function maakIcsInhoud(details: { samenvatting?: string; start?: string; einde?:
 }
 
 // ── PDF generatie helper (zonder dialoog) ──
+async function maakEpcQrHtml(iban: string | null | undefined, bedrijfsnaam: string, bedrag: number, referentie: string): Promise<string> {
+  if (!iban) return ''
+  try {
+    const epcData = ['BCD', '002', '1', 'SCT', '', bedrijfsnaam, iban.replace(/\s/g, ''), `EUR${bedrag.toFixed(2)}`, '', referentie, ''].join('\n')
+    const dataUrl = await QRCode.toDataURL(epcData, { errorCorrectionLevel: 'M', width: 120 })
+    return `<div style="display:flex;align-items:center;gap:16px;margin-top:16px"><img src="${dataUrl}" style="width:112px;height:112px" alt="SEPA betaal QR"/><div style="font-size:11px;color:#6b7280"><p style="font-weight:600;color:#374151;margin:0 0 4px">SEPA betaal QR</p><p style="margin:0">Scan met je bank-app om</p><p style="margin:0">direct te betalen</p></div></div>`
+  } catch {
+    return ''
+  }
+}
+
 async function genereerFactuurPdfBufferIntern(factuurId: string): Promise<Buffer> {
   const factuur = await prisma.factuur.findUnique({ where: { id: factuurId }, include: { regels: true, klant: true } })
   if (!factuur) throw new Error('Factuur niet gevonden')
@@ -489,7 +501,8 @@ async function genereerFactuurPdfBufferIntern(factuurId: string): Promise<Buffer
     const f = factuur as typeof factuur & { klant: { naam: string; bedrijf?: string | null; adres?: string | null; postcode?: string | null; stad?: string | null; btwNummer?: string | null }; regels: Array<{ omschrijving: string; aantal: number; eenheid?: string | null; prijs: number; btwPercentage: number; kortingPercentage: number; totaal: number }> }
     const regelsHtml = `<table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:4px 8px;border-bottom:1px solid #ddd">Omschrijving</th><th style="text-align:center;padding:4px 8px;border-bottom:1px solid #ddd">Aantal</th><th style="text-align:right;padding:4px 8px;border-bottom:1px solid #ddd">Prijs</th><th style="text-align:right;padding:4px 8px;border-bottom:1px solid #ddd">Totaal</th></tr></thead><tbody>${f.regels.map(r => `<tr><td style="padding:4px 8px;border-bottom:1px solid #eee">${r.omschrijving}${r.eenheid ? ` / ${r.eenheid}` : ''}</td><td style="text-align:center;padding:4px 8px;border-bottom:1px solid #eee">${r.aantal}</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid #eee">€${r.prijs.toFixed(2)}</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid #eee">€${r.totaal.toFixed(2)}</td></tr>`).join('')}</tbody></table>`
     const logoHtml = user.logoBase64 ? `<img src="${user.logoBase64}" style="max-height:80px" />` : ''
-    const vars: Record<string, string> = { bedrijfsnaam: user.bedrijfsnaam ?? user.naam ?? '', bedrijfAdres: user.adres ?? '', bedrijfPostcode: user.postcode ?? '', bedrijfStad: user.stad ?? '', bedrijfEmail: user.email ?? '', bedrijfTelefoon: user.telefoon ?? '', bedrijfWebsite: user.website ?? '', kvkNummer: user.kvkNummer ?? '', btwNummer: user.btwNummer ?? '', iban: user.iban ?? '', logo: logoHtml, factuurNummer: f.nummer, factuurDatum: f.datum.toISOString().split('T')[0], vervaldatum: f.vervaldatum.toISOString().split('T')[0], notities: f.notities ?? '', betalingsCondities: f.betalingsCondities ?? '', klantNaam: f.klant.naam, klantBedrijf: f.klant.bedrijf ?? '', klantAdres: f.klant.adres ?? '', klantPostcode: f.klant.postcode ?? '', klantStad: f.klant.stad ?? '', klantBtwNummer: f.klant.btwNummer ?? '', subtotaal: `€${f.subtotaal.toFixed(2)}`, kortingBedrag: `€${f.kortingBedrag.toFixed(2)}`, btwBedrag: `€${f.btwBedrag.toFixed(2)}`, totaalBedrag: `€${f.totaal.toFixed(2)}`, regelsHtml }
+    const qrHtml = await maakEpcQrHtml(user.iban, user.bedrijfsnaam ?? user.naam ?? '', f.totaal, f.nummer)
+    const vars: Record<string, string> = { bedrijfsnaam: user.bedrijfsnaam ?? user.naam ?? '', bedrijfAdres: user.adres ?? '', bedrijfPostcode: user.postcode ?? '', bedrijfStad: user.stad ?? '', bedrijfEmail: user.email ?? '', bedrijfTelefoon: user.telefoon ?? '', bedrijfWebsite: user.website ?? '', kvkNummer: user.kvkNummer ?? '', btwNummer: user.btwNummer ?? '', iban: user.iban ?? '', logo: logoHtml, factuurNummer: f.nummer, factuurDatum: f.datum.toISOString().split('T')[0], vervaldatum: f.vervaldatum.toISOString().split('T')[0], notities: f.notities ?? '', betalingsCondities: f.betalingsCondities ?? '', klantNaam: f.klant.naam, klantBedrijf: f.klant.bedrijf ?? '', klantAdres: f.klant.adres ?? '', klantPostcode: f.klant.postcode ?? '', klantStad: f.klant.stad ?? '', klantBtwNummer: f.klant.btwNummer ?? '', subtotaal: `€${f.subtotaal.toFixed(2)}`, kortingBedrag: `€${f.kortingBedrag.toFixed(2)}`, btwBedrag: `€${f.btwBedrag.toFixed(2)}`, totaalBedrag: `€${f.totaal.toFixed(2)}`, regelsHtml, betaalQrCode: qrHtml, betaalQrCodeClass: qrHtml }
     const html = user.factuurHtmlTemplate.replace(/\{\{(\w+)\}\}/g, (_, k) => vars[k] ?? '')
     await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
   } else if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
@@ -2625,6 +2638,7 @@ function setupIpcHandlers() {
         const f = factuur as typeof factuur & { klant: { naam: string; bedrijf?: string | null; adres?: string | null; postcode?: string | null; stad?: string | null; btwNummer?: string | null }; regels: Array<{ omschrijving: string; aantal: number; eenheid?: string | null; prijs: number; btwPercentage: number; kortingPercentage: number; totaal: number }> }
         const regelsHtml = `<table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:4px 8px;border-bottom:1px solid #ddd">Omschrijving</th><th style="text-align:center;padding:4px 8px;border-bottom:1px solid #ddd">Aantal</th><th style="text-align:right;padding:4px 8px;border-bottom:1px solid #ddd">Prijs</th><th style="text-align:right;padding:4px 8px;border-bottom:1px solid #ddd">Totaal</th></tr></thead><tbody>${f.regels.map(r => `<tr><td style="padding:4px 8px;border-bottom:1px solid #eee">${r.omschrijving}${r.eenheid ? ` / ${r.eenheid}` : ''}</td><td style="text-align:center;padding:4px 8px;border-bottom:1px solid #eee">${r.aantal}</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid #eee">€${r.prijs.toFixed(2)}</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid #eee">€${r.totaal.toFixed(2)}</td></tr>`).join('')}</tbody></table>`
         const logoHtml = user.logoBase64 ? `<img src="${user.logoBase64}" style="max-height:80px" />` : ''
+        const qrHtml = await maakEpcQrHtml(user.iban, user.bedrijfsnaam ?? user.naam ?? '', f.totaal, f.nummer)
         const vars: Record<string, string> = {
           bedrijfsnaam: user.bedrijfsnaam ?? user.naam ?? '',
           bedrijfAdres: user.adres ?? '',
@@ -2653,6 +2667,8 @@ function setupIpcHandlers() {
           btwBedrag: `€${f.btwBedrag.toFixed(2)}`,
           totaalBedrag: `€${f.totaal.toFixed(2)}`,
           regelsHtml,
+          betaalQrCode: qrHtml,
+          betaalQrCodeClass: qrHtml,
         }
         const html = user.factuurHtmlTemplate.replace(/\{\{(\w+)\}\}/g, (_, k) => vars[k] ?? '')
         await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
@@ -4003,11 +4019,13 @@ function setupIpcHandlers() {
           const factuur = await prisma.factuur.findUnique({ where: { id: f.id }, include: { regels: true, klant: true } })
           if (factuur) {
             const regelsHtml = `<table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:4px 8px;border-bottom:1px solid #ddd">Omschrijving</th><th style="text-align:center;padding:4px 8px;border-bottom:1px solid #ddd">Aantal</th><th style="text-align:right;padding:4px 8px;border-bottom:1px solid #ddd">Prijs</th><th style="text-align:right;padding:4px 8px;border-bottom:1px solid #ddd">Totaal</th></tr></thead><tbody>${factuur.regels.map((r: { omschrijving: string; aantal: number; eenheid?: string | null; prijs: number; totaal: number }) => `<tr><td style="padding:4px 8px;border-bottom:1px solid #eee">${r.omschrijving}${r.eenheid ? ` / ${r.eenheid}` : ''}</td><td style="text-align:center;padding:4px 8px;border-bottom:1px solid #eee">${r.aantal}</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid #eee">€${r.prijs.toFixed(2)}</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid #eee">€${r.totaal.toFixed(2)}</td></tr>`).join('')}</tbody></table>`
+            const logoHtml3 = user.logoBase64 ? `<img src="${user.logoBase64}" style="max-height:80px" />` : ''
+            const qrHtml3 = await maakEpcQrHtml(user.iban, user.bedrijfsnaam ?? user.naam ?? '', factuur.totaal, factuur.nummer)
             const vars: Record<string, string> = {
               bedrijfsnaam: user.bedrijfsnaam ?? user.naam ?? '', bedrijfAdres: user.adres ?? '', bedrijfPostcode: user.postcode ?? '',
               bedrijfStad: user.stad ?? '', bedrijfEmail: user.email ?? '', bedrijfTelefoon: user.telefoon ?? '',
               bedrijfWebsite: user.website ?? '', kvkNummer: user.kvkNummer ?? '', btwNummer: user.btwNummer ?? '',
-              iban: user.iban ?? '', logo: user.logoBase64 ? `<img src="${user.logoBase64}" style="max-height:80px" />` : '',
+              iban: user.iban ?? '', logo: logoHtml3,
               factuurNummer: factuur.nummer, factuurDatum: factuur.datum.toISOString().split('T')[0],
               vervaldatum: factuur.vervaldatum.toISOString().split('T')[0], notities: factuur.notities ?? '',
               betalingsCondities: factuur.betalingsCondities ?? '', klantNaam: (factuur.klant as { naam: string }).naam,
@@ -4018,6 +4036,7 @@ function setupIpcHandlers() {
               klantBtwNummer: (factuur.klant as { btwNummer?: string | null }).btwNummer ?? '',
               subtotaal: `€${factuur.subtotaal.toFixed(2)}`, kortingBedrag: `€${factuur.kortingBedrag.toFixed(2)}`,
               btwBedrag: `€${factuur.btwBedrag.toFixed(2)}`, totaalBedrag: `€${factuur.totaal.toFixed(2)}`, regelsHtml,
+              betaalQrCode: qrHtml3, betaalQrCodeClass: qrHtml3,
             }
             const html = user.factuurHtmlTemplate.replace(/\{\{(\w+)\}\}/g, (_, k) => vars[k] ?? '')
             await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
