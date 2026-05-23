@@ -128,7 +128,7 @@ export default function UitgavenPagina() {
   const [opslaan, setOpslaan] = useState(false);
   const [uitgavenVelden, setUitgavenVelden] = useState<string[]>(ALLE_UITGAVEN_VELDEN.map(v => v.id));
   const [spaarIbans, setSpaarIbans] = useState<string[]>([]);
-  const [verbergSpaarrekeningen, setVerbergSpaarrekeningen] = useState(false);
+  const [verbergSpaarrekeningen, setVerbergSpaarrekeningen] = useState(true);
 
   const [categorieModalOpen, setCategorieModalOpen] = useState(false);
   const [nieuwCategorie, setNieuwCategorie] = useState({ naam: '', kleur: '#6366f1' });

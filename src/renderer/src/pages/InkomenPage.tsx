@@ -169,7 +169,7 @@ export default function InkomenPagina() {
     'datum', 'omschrijving', 'tegenrekeningNaam', 'tegenrekening', 'mutatiesoort', 'mededelingen', 'betalingskenmerk', 'saldoNaBoeking', 'bedrag', 'bron', 'factuur'
   ]);
   const [spaarVelden, setSpaarVelden] = useState<string[]>([]);
-  const [verbergSpaarrekeningen, setVerbergSpaarrekeningen] = useState(false);
+  const [verbergSpaarrekeningen, setVerbergSpaarrekeningen] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [bewerkenId, setBewerkenId] = useState<string | null>(null);
   const [melding, setMelding] = useState<{ type: "succes" | "fout"; tekst: string } | null>(null);
