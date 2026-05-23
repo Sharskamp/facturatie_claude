@@ -82,6 +82,13 @@ interface Factuur {
   reedsBetaald?: number;
   openstaand?: number;
   teveel?: number;
+  groepTotaal?: number;
+  groepFacturen?: Array<{
+    id: string;
+    nummer: string;
+    totaal: number;
+    betalingen: FactuurBetaling[];
+  }>;
   klant: {
     id: string;
     naam: string;
@@ -823,11 +830,11 @@ export default function FactuurDetailPage() {
                 <h3 className="text-sm font-semibold text-gray-700">Betaalstatus</h3>
               </div>
               <div className="p-4 space-y-3">
-                {/* Samenvatting */}
+                {/* Samenvatting op groepniveau */}
                 <div className="flex flex-wrap gap-4 text-sm">
                   <div>
-                    <span className="text-gray-500">Factuurbedrag: </span>
-                    <span className="font-medium">{formatBedrag(factuur.totaal)}</span>
+                    <span className="text-gray-500">{factuur.groepFacturen ? "Groepstotaal: " : "Factuurbedrag: "}</span>
+                    <span className="font-medium">{formatBedrag(factuur.groepTotaal ?? factuur.totaal)}</span>
                   </div>
                   <div>
                     <span className="text-gray-500">Ontvangen: </span>
@@ -849,21 +856,50 @@ export default function FactuurDetailPage() {
                   )}
                 </div>
 
-                {/* Voortgangsbalk */}
-                {factuur.totaal > 0 && (
+                {/* Voortgangsbalk op groepniveau */}
+                {(factuur.groepTotaal ?? factuur.totaal) > 0 && (
                   <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
                     <div
                       className={`h-full rounded-full transition-all ${
                         (factuur.teveel ?? 0) > 0.01 ? "bg-red-500" :
                         (factuur.openstaand ?? 0) < 0.01 ? "bg-green-500" : "bg-amber-400"
                       }`}
-                      style={{ width: `${Math.min(100, ((factuur.reedsBetaald ?? 0) / factuur.totaal) * 100)}%` }}
+                      style={{ width: `${Math.min(100, ((factuur.reedsBetaald ?? 0) / (factuur.groepTotaal ?? factuur.totaal)) * 100)}%` }}
                     />
                   </div>
                 )}
 
-                {/* Betaalhistorie */}
-                {factuur.betalingen && factuur.betalingen.length > 0 ? (
+                {/* Betaalhistorie: gegroepeerd per factuur als er meerdere zijn */}
+                {factuur.groepFacturen ? (
+                  <div className="space-y-4 mt-2">
+                    {factuur.groepFacturen.map(gf => (
+                      <div key={gf.id}>
+                        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
+                          Factuur {gf.nummer} · {formatBedrag(gf.totaal)}
+                          {gf.id === factuur.id && <span className="ml-1 text-indigo-500">(deze factuur)</span>}
+                        </p>
+                        {gf.betalingen.length > 0 ? (
+                          <div className="space-y-1">
+                            {gf.betalingen.map(b => (
+                              <div key={b.id} className="flex items-center justify-between text-sm py-1.5 border-b border-gray-50 last:border-0">
+                                <div className="flex items-center gap-3">
+                                  <span className="text-gray-400 text-xs">{formatDatumLang(b.inkomen.datum)}</span>
+                                  <span className="text-gray-700">{b.inkomen.tegenrekeningNaam ?? b.inkomen.omschrijving}</span>
+                                  {b.inkomen.bedrag !== b.bedrag && (
+                                    <span className="text-xs text-gray-400">(totale betaling: {formatBedrag(b.inkomen.bedrag)})</span>
+                                  )}
+                                </div>
+                                <span className="font-semibold text-green-700">{formatBedrag(b.bedrag)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-sm text-gray-400 italic">Nog geen betalingen.</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : factuur.betalingen && factuur.betalingen.length > 0 ? (
                   <div className="space-y-2 mt-2">
                     <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Ontvangen betalingen</p>
                     {factuur.betalingen.map(b => (

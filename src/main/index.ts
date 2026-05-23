@@ -878,10 +878,45 @@ function setupIpcHandlers() {
       },
     })
     if (!factuur) return null
-    const reedsBetaald = factuur.betalingen.reduce((s: number, b: { bedrag: number }) => s + b.bedrag, 0)
-    const openstaand = Math.max(0, factuur.totaal - reedsBetaald)
-    const teveel = Math.max(0, reedsBetaald - factuur.totaal)
-    return { ...factuur, reedsBetaald, openstaand, teveel }
+
+    // BFS: vind alle facturen in de groep via gedeelde betalingen (zelfde als berekenEnUpdateGroep)
+    const eigenBetalingIds = factuur.betalingen.map(b => b.inkomstenId)
+    let groepFactuurIds: string[] = [id]
+    if (eigenBetalingIds.length > 0) {
+      const gekoppeld = await prisma.inkomenFactuur.findMany({
+        where: { inkomstenId: { in: eigenBetalingIds } },
+        select: { factuurId: true },
+      })
+      groepFactuurIds = [...new Set(gekoppeld.map(e => e.factuurId))]
+    }
+
+    // Haal alle groepfacturen op met hun betalingen (inclusief deze factuur zelf)
+    const groepFacturen = await prisma.factuur.findMany({
+      where: { id: { in: groepFactuurIds } },
+      select: {
+        id: true, nummer: true, totaal: true,
+        betalingen: {
+          include: { inkomen: { select: { id: true, datum: true, omschrijving: true, bedrag: true, bron: true, tegenrekeningNaam: true } } },
+          orderBy: { aangemaakt: 'asc' },
+        },
+      },
+      orderBy: { aangemaakt: 'asc' },
+    })
+
+    const groepTotaal = groepFacturen.reduce((s, f) => s + f.totaal, 0)
+    const groepOntvangen = groepFacturen.reduce((s, f) => s + f.betalingen.reduce((ss, b) => ss + b.bedrag, 0), 0)
+    const openstaand = Math.max(0, groepTotaal - groepOntvangen)
+    const teveel = Math.max(0, groepOntvangen - groepTotaal)
+
+    return {
+      ...factuur,
+      reedsBetaald: groepOntvangen,
+      openstaand,
+      teveel,
+      groepTotaal,
+      // Stuur groepFacturen mee als er meerdere facturen in de groep zijn
+      groepFacturen: groepFacturen.length > 1 ? groepFacturen : undefined,
+    }
   })
 
   ipcMain.handle('facturen:create', async (_, payload: {
