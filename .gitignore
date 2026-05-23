@@ -43,6 +43,8 @@ next-env.d.ts
 /src/generated/prisma
 .env.local
 dev.db
+*.db-wal
+*.db-shm
 *.db-journal
 .env
 .claude/
