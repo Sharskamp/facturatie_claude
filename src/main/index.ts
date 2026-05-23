@@ -453,6 +453,56 @@ function formatDatum(datum: string | Date): string {
   return new Intl.DateTimeFormat('nl-NL', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(datum))
 }
 
+// ── ICS hulpfunctie ──
+function maakIcsInhoud(details: { samenvatting?: string; start?: string; einde?: string; geheledag?: boolean; locatie?: string; uid: string }): string {
+  const nu = new Date()
+  const dtStamp = nu.toISOString().replace(/[-:.]/g, '').slice(0, 15) + 'Z'
+  let dtStart: string
+  let dtEnd: string
+  if (details.geheledag) {
+    dtStart = `DTSTART;VALUE=DATE:${(details.start ?? '').replace(/-/g, '').slice(0, 8) || dtStamp.slice(0, 8)}`
+    dtEnd = `DTEND;VALUE=DATE:${(details.einde ?? '').replace(/-/g, '').slice(0, 8) || dtStamp.slice(0, 8)}`
+  } else {
+    const s = details.start ? new Date(details.start).toISOString().replace(/[-:.]/g, '').slice(0, 15) + 'Z' : dtStamp
+    const e = details.einde ? new Date(details.einde).toISOString().replace(/[-:.]/g, '').slice(0, 15) + 'Z' : s
+    dtStart = `DTSTART:${s}`
+    dtEnd = `DTEND:${e}`
+  }
+  const lines = [
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//AdminPro//NL', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
+    'BEGIN:VEVENT', `DTSTAMP:${dtStamp}`, `UID:${details.uid}@adminpro`,
+    dtStart, dtEnd, `SUMMARY:${(details.samenvatting ?? 'Afspraak').replace(/\n/g, ' ')}`,
+    ...(details.locatie ? [`LOCATION:${details.locatie.replace(/\n/g, ' ')}`] : []),
+    'END:VEVENT', 'END:VCALENDAR',
+  ]
+  return lines.join('\r\n')
+}
+
+// ── PDF generatie helper (zonder dialoog) ──
+async function genereerFactuurPdfBufferIntern(factuurId: string): Promise<Buffer> {
+  const factuur = await prisma.factuur.findUnique({ where: { id: factuurId }, include: { regels: true, klant: true } })
+  if (!factuur) throw new Error('Factuur niet gevonden')
+  const user = await prisma.user.findFirst({ select: { factuurHtmlTemplate: true, logoBase64: true, naam: true, bedrijfsnaam: true, adres: true, postcode: true, stad: true, email: true, telefoon: true, website: true, kvkNummer: true, btwNummer: true, iban: true, korActief: true } })
+  const pdfWindow = new BrowserWindow({ show: false, width: 900, height: 1200, webPreferences: { preload: join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false } })
+  pdfWindow.setMenuBarVisibility(false)
+  if (user?.factuurHtmlTemplate?.trim()) {
+    const f = factuur as typeof factuur & { klant: { naam: string; bedrijf?: string | null; adres?: string | null; postcode?: string | null; stad?: string | null; btwNummer?: string | null }; regels: Array<{ omschrijving: string; aantal: number; eenheid?: string | null; prijs: number; btwPercentage: number; kortingPercentage: number; totaal: number }> }
+    const regelsHtml = `<table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:4px 8px;border-bottom:1px solid #ddd">Omschrijving</th><th style="text-align:center;padding:4px 8px;border-bottom:1px solid #ddd">Aantal</th><th style="text-align:right;padding:4px 8px;border-bottom:1px solid #ddd">Prijs</th><th style="text-align:right;padding:4px 8px;border-bottom:1px solid #ddd">Totaal</th></tr></thead><tbody>${f.regels.map(r => `<tr><td style="padding:4px 8px;border-bottom:1px solid #eee">${r.omschrijving}${r.eenheid ? ` / ${r.eenheid}` : ''}</td><td style="text-align:center;padding:4px 8px;border-bottom:1px solid #eee">${r.aantal}</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid #eee">€${r.prijs.toFixed(2)}</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid #eee">€${r.totaal.toFixed(2)}</td></tr>`).join('')}</tbody></table>`
+    const logoHtml = user.logoBase64 ? `<img src="${user.logoBase64}" style="max-height:80px" />` : ''
+    const vars: Record<string, string> = { bedrijfsnaam: user.bedrijfsnaam ?? user.naam ?? '', bedrijfAdres: user.adres ?? '', bedrijfPostcode: user.postcode ?? '', bedrijfStad: user.stad ?? '', bedrijfEmail: user.email ?? '', bedrijfTelefoon: user.telefoon ?? '', bedrijfWebsite: user.website ?? '', kvkNummer: user.kvkNummer ?? '', btwNummer: user.btwNummer ?? '', iban: user.iban ?? '', logo: logoHtml, factuurNummer: f.nummer, factuurDatum: f.datum.toISOString().split('T')[0], vervaldatum: f.vervaldatum.toISOString().split('T')[0], notities: f.notities ?? '', betalingsCondities: f.betalingsCondities ?? '', klantNaam: f.klant.naam, klantBedrijf: f.klant.bedrijf ?? '', klantAdres: f.klant.adres ?? '', klantPostcode: f.klant.postcode ?? '', klantStad: f.klant.stad ?? '', klantBtwNummer: f.klant.btwNummer ?? '', subtotaal: `€${f.subtotaal.toFixed(2)}`, kortingBedrag: `€${f.kortingBedrag.toFixed(2)}`, btwBedrag: `€${f.btwBedrag.toFixed(2)}`, totaalBedrag: `€${f.totaal.toFixed(2)}`, regelsHtml }
+    const html = user.factuurHtmlTemplate.replace(/\{\{(\w+)\}\}/g, (_, k) => vars[k] ?? '')
+    await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+  } else if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+    await pdfWindow.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/#/facturen/${factuurId}/print`)
+  } else {
+    await pdfWindow.loadFile(join(__dirname, '../renderer/index.html'), { hash: `/facturen/${factuurId}/print` })
+  }
+  await new Promise(resolve => setTimeout(resolve, 1500))
+  const pdfBuffer = await pdfWindow.webContents.printToPDF({ printBackground: true, pageSize: 'A4' })
+  pdfWindow.destroy()
+  return pdfBuffer
+}
+
 // ── Terugkerende facturen (gedeeld tussen IPC en startup) ──
 async function maakTermijnFacturen(): Promise<number> {
   try {
@@ -1237,11 +1287,25 @@ function setupIpcHandlers() {
         ?? `Factuur ${factuur.nummer} - ${bedrijfsnaam}`
       const emailBcc = (user as Record<string, unknown>).emailBcc as string | null
 
+      // PDF bepalen of genereren
+      let pdfBijlage: { bestandsnaam: string; inhoud: Buffer; contentType: string } | undefined
+      try {
+        let pdfBuffer: Buffer | null = null
+        if (factuur.bronBestandPad && fs.existsSync(factuur.bronBestandPad)) {
+          pdfBuffer = fs.readFileSync(factuur.bronBestandPad)
+        } else {
+          pdfBuffer = await genereerFactuurPdfBufferIntern(id)
+        }
+        if (pdfBuffer) {
+          pdfBijlage = { bestandsnaam: `Factuur-${factuur.nummer}.pdf`, inhoud: pdfBuffer, contentType: 'application/pdf' }
+        }
+      } catch {}
+
       const _factuurPoort = user.emailSmtpPort ?? 587
       try {
         await verstuurEmail(
           { host: user.emailSmtpHost, port: _factuurPoort, secure: _factuurPoort === 465 ? true : _factuurPoort === 587 ? false : user.emailSmtpSecure, user: user.emailSmtpUser, pass: user.emailSmtpPass ?? '' },
-          { van: `${bedrijfsnaam} <${user.emailSmtpUser}>`, naar: payload.naarEmail ?? factuur.klant.email ?? '', bcc: emailBcc || undefined, onderwerp: factuurOnderwerp, html: emailHtml }
+          { van: `${bedrijfsnaam} <${user.emailSmtpUser}>`, naar: payload.naarEmail ?? factuur.klant.email ?? '', bcc: emailBcc || undefined, onderwerp: factuurOnderwerp, html: emailHtml, bijlagen: pdfBijlage ? [pdfBijlage] : undefined }
         )
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : 'Onbekende fout'
@@ -1273,6 +1337,26 @@ function setupIpcHandlers() {
     }
 
     throw new Error('Onbekende methode')
+  })
+
+  ipcMain.handle('facturen:previewEmail', async (_, id: string, bericht?: string) => {
+    const factuur = await prisma.factuur.findUnique({ where: { id }, include: { klant: true } })
+    if (!factuur) throw new Error('Factuur niet gevonden')
+    const user = await prisma.user.findFirst()
+    if (!user) throw new Error('Geen gebruiker')
+    const bedrijfsnaam = user.bedrijfsnaam ?? user.naam
+    const emailFactuurTekst = (user as Record<string, unknown>).emailFactuurTekst as string | null
+    let emailHtml: string
+    if (emailFactuurTekst) {
+      const aanhef = (user.emailAanhef ?? 'Geachte {{naam}},').replace('{{naam}}', factuur.klant.naam)
+      const bodyLines = emailFactuurTekst.replace('{{naam}}', factuur.klant.naam).replace('{{bedrijf}}', bedrijfsnaam).replace('{{nummer}}', factuur.nummer).replace('{{totaal}}', formatBedrag(factuur.totaal)).replace('{{vervaldatum}}', formatDatum(factuur.vervaldatum)).split('\n').map(l => `<p>${l}</p>`).join('')
+      const afsluiting = user.emailAfsluitingsTekst ?? 'Met vriendelijke groet,'
+      emailHtml = `<p>${aanhef}</p>${bodyLines}<p>${afsluiting}<br><strong>${bedrijfsnaam}</strong></p>`
+      if (factuur.mollieBetaalLink) emailHtml += `<div style="text-align:center;margin:24px 0"><a href="${factuur.mollieBetaalLink}" style="background:#16a34a;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold">Direct betalen via iDEAL</a></div>`
+    } else {
+      emailHtml = maakFactuurEmailHtml({ klantNaam: factuur.klant.naam, bedrijfsnaam, factuurNummer: factuur.nummer, totaal: formatBedrag(factuur.totaal), vervaldatum: formatDatum(factuur.vervaldatum), factuurUrl: '', notities: bericht, mollieBetaalLink: factuur.mollieBetaalLink })
+    }
+    return emailHtml
   })
 
   // Offertes
@@ -2323,8 +2407,15 @@ function setupIpcHandlers() {
         ? emailBevestigingOnderwerp.replace(/{{onderwerp}}/g, afspraakDetails.samenvatting ?? '').replace(/{{naam}}/g, klant.naam)
         : `Afspraakbevestiging${afspraakDetails.samenvatting ? ' – ' + afspraakDetails.samenvatting : ''}`
 
+      // ICS bijlage aanmaken
+      const icsBijlagen = afspraakDetails.start ? [{
+        bestandsnaam: 'afspraak.ics',
+        inhoud: maakIcsInhoud({ samenvatting: afspraakDetails.samenvatting, start: afspraakDetails.start, einde: afspraakDetails.einde, geheledag: afspraakDetails.geheledag, locatie: afspraakDetails.locatie, uid: eventId }),
+        contentType: 'text/calendar; method=PUBLISH'
+      }] : []
+
       try {
-        await verstuurEmail(smtpConfig, { van: user.emailSmtpUser!, naar: klant.email, bcc: emailBcc || undefined, onderwerp, html })
+        await verstuurEmail(smtpConfig, { van: user.emailSmtpUser!, naar: klant.email, bcc: emailBcc || undefined, onderwerp, html, bijlagen: icsBijlagen })
         verstuurd++
       } catch {}
     }

@@ -143,6 +143,8 @@ export default function FactuurDetailPage() {
   const [checkLaden, setCheckLaden] = useState(false);
   const [melding, setMelding] = useState<{ type: "succes" | "fout"; tekst: string } | null>(null);
   const [auditLogs, setAuditLogs] = useState<Array<{id: string; actie: string; details?: string; aangemaakt: string}>>([]);
+  const [emailPreviewHtml, setEmailPreviewHtml] = useState<string | null>(null);
+  const [emailPreviewLaden, setEmailPreviewLaden] = useState(false);
 
   const laadFactuur = useCallback(async () => {
     try {
@@ -176,6 +178,22 @@ export default function FactuurDetailPage() {
     if (!id) return;
     window.api.audit.list(id).then(setAuditLogs).catch(() => {});
   }, [id]);
+
+  useEffect(() => {
+    if (!verstuurModalOpen || verstuurTab !== "email" || !id) return;
+    setEmailPreviewLaden(true);
+    const timer = setTimeout(async () => {
+      try {
+        const html = await (window.api.facturen as unknown as { previewEmail: (id: string, bericht?: string) => Promise<string> }).previewEmail(id, emailBericht || undefined);
+        setEmailPreviewHtml(html);
+      } catch {
+        setEmailPreviewHtml(null);
+      } finally {
+        setEmailPreviewLaden(false);
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [verstuurModalOpen, verstuurTab, id, emailBericht]);
 
   async function verstuur() {
     if (!factuur) return;
@@ -944,7 +962,7 @@ export default function FactuurDetailPage() {
 
       {/* Verstuur modal */}
       <Modal open={verstuurModalOpen} onOpenChange={setVerstuurModalOpen}>
-        <ModalContent className="max-w-lg">
+        <ModalContent className="max-w-3xl">
           <ModalHeader>
             <ModalTitle>Factuur versturen</ModalTitle>
           </ModalHeader>
@@ -1000,39 +1018,56 @@ export default function FactuurDetailPage() {
             )}
 
             {verstuurTab === "email" ? (
-              <>
-                <Input
-                  label="Ontvanger e-mailadres"
-                  type="email"
-                  value={emailAdres}
-                  onChange={(e) => setEmailAdres(e.target.value)}
-                  placeholder="klant@voorbeeld.nl"
-                />
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Persoonlijk bericht (optioneel)
-                  </label>
-                  <Textarea
-                    value={emailBericht}
-                    onChange={(e) => setEmailBericht(e.target.value)}
-                    placeholder={`Beste ${factuur.klant.naam},\n\nBijgaand treft u factuur ${factuur.nummer} aan...`}
-                    rows={4}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-4">
+                  <Input
+                    label="Ontvanger e-mailadres"
+                    type="email"
+                    value={emailAdres}
+                    onChange={(e) => setEmailAdres(e.target.value)}
+                    placeholder="klant@voorbeeld.nl"
                   />
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Persoonlijk bericht (optioneel)
+                    </label>
+                    <Textarea
+                      value={emailBericht}
+                      onChange={(e) => setEmailBericht(e.target.value)}
+                      placeholder={`Beste ${factuur.klant.naam},\n\nBijgaand treft u factuur ${factuur.nummer} aan...`}
+                      rows={4}
+                    />
+                  </div>
+                  <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-xs text-blue-700">
+                    PDF wordt automatisch gegenereerd en meegestuurd als bijlage.
+                  </div>
                 </div>
-                <div className="rounded-lg bg-gray-50 border border-gray-200 p-3 text-xs text-gray-500">
-                  <p className="font-medium text-gray-700 mb-1">
-                    E-mail bevat:
-                  </p>
-                  <ul className="space-y-0.5 list-disc list-inside">
-                    <li>
-                      Factuur {factuur.nummer} —{" "}
-                      {formatBedrag(factuur.totaal)}
-                    </li>
-                    <li>Vervaldatum: {formatDatum(factuur.vervaldatum)}</li>
-                    <li>Link naar online factuur</li>
-                  </ul>
+                <div className="flex flex-col">
+                  <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1.5">E-mail voorbeeld</p>
+                  <div className="flex-1 rounded-lg border border-gray-200 overflow-hidden bg-white relative" style={{ minHeight: 260 }}>
+                    {emailPreviewLaden && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-white/80 z-10">
+                        <Loader2 className="h-5 w-5 animate-spin text-indigo-400" />
+                      </div>
+                    )}
+                    {emailPreviewHtml ? (
+                      <iframe
+                        srcDoc={emailPreviewHtml}
+                        className="w-full h-full"
+                        style={{ minHeight: 260, border: 'none' }}
+                        sandbox="allow-same-origin"
+                        title="E-mail voorbeeld"
+                      />
+                    ) : (
+                      !emailPreviewLaden && (
+                        <div className="flex items-center justify-center h-full text-xs text-gray-400 p-4 text-center">
+                          Voorbeeld wordt geladen...
+                        </div>
+                      )
+                    )}
+                  </div>
                 </div>
-              </>
+              </div>
             ) : (
               <>
                 {whatsappUrl ? (
