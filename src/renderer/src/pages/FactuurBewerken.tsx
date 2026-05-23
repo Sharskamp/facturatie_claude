@@ -28,7 +28,7 @@ import {
   ModalFooter,
   ModalTitle,
 } from "@/components/ui/modal";
-import { FactuurRegelTabel, type Regel } from "@/components/facturen/FactuurRegelTabel";
+import { FactuurRegelTabel, type Regel, type Product } from "@/components/facturen/FactuurRegelTabel";
 import { FactuurTotalenSidebar } from "@/components/facturen/FactuurTotalenSidebar";
 
 interface Klant {
@@ -96,6 +96,7 @@ export default function FactuurBewerkenPage() {
   const [factuurLaden, setFactuurLaden] = useState(true);
   const [korActief, setKorActief] = useState(false);
   const [kmVergoeding, setKmVergoeding] = useState(0.23);
+  const [producten, setProducten] = useState<Product[]>([]);
   const [factuurNummer, setFactuurNummer] = useState<string>("");
   const [nietBewerkbaar, setNietBewerkbaar] = useState(false);
   const [opslaan, setOpslaan] = useState(false);
@@ -218,6 +219,7 @@ export default function FactuurBewerkenPage() {
       setKorActief(inst?.korActief ?? false);
       setKmVergoeding(inst?.kmVergoeding ?? 0.23);
     }).catch(() => {});
+    window.api.producten.list().then(data => setProducten(Array.isArray(data) ? data : [])).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -669,7 +671,7 @@ export default function FactuurBewerkenPage() {
               regels={regels}
               btwVerlegd={btwVerlegd}
               korActief={korActief}
-              producten={[]}
+              producten={producten}
               foutenVelden={foutenVelden}
               kmVergoeding={kmVergoeding}
               onRegelUpdate={updateRegel}
