@@ -64,12 +64,15 @@ export async function bouwFactuurHtml({
 
   const grossSubtotaal = factuur.regels.reduce((acc, r) => acc + r.prijs * r.aantal, 0);
   const regelKortingTotaal = factuur.regels.reduce((acc, r) => acc + r.prijs * r.aantal * (r.kortingPercentage ?? 0) / 100, 0);
-  const effectieveKorting = regelKortingTotaal + factuur.kortingBedrag + (factuur.totaalKortingBedrag ?? 0);
-  const effectiefPct = grossSubtotaal > 0.005 ? Math.round(effectieveKorting / grossSubtotaal * 1000) / 10 : 0;
-  const pctStr = effectiefPct > 0
-    ? ` (${Number.isInteger(effectiefPct) ? effectiefPct : effectiefPct.toFixed(1).replace(".", ",")}%)`
+  const subtotaalNaRegelKorting = grossSubtotaal - regelKortingTotaal;
+  const totaalKortingEffectief = factuur.kortingBedrag + (factuur.totaalKortingBedrag ?? 0);
+  const totaalKortingPct = subtotaalNaRegelKorting > 0.005
+    ? Math.round(totaalKortingEffectief / subtotaalNaRegelKorting * 1000) / 10
+    : 0;
+  const totaalKortingPctStr = totaalKortingPct > 0
+    ? ` (${Number.isInteger(totaalKortingPct) ? totaalKortingPct : totaalKortingPct.toFixed(1).replace(".", ",")}%)`
     : "";
-  const kortingLabel = `Korting${pctStr}`;
+  const kortingLabel = `Korting${totaalKortingPctStr}`;
 
   const toonRegelKorting = factuur.regels.some((regel) => (regel.kortingPercentage ?? 0) > 0);
   const regelsHtml = toonRegelKorting
@@ -110,12 +113,12 @@ export async function bouwFactuurHtml({
     klantPostcode: factuur.klant.postcode ?? "",
     klantStad: factuur.klant.stad ?? "",
     klantBtwNummer: factuur.klant.btwNummer ?? "",
-    subtotaal: formatBedrag(grossSubtotaal),
-    kortingBedrag: formatBedrag(effectieveKorting),
+    subtotaal: formatBedrag(subtotaalNaRegelKorting),
+    kortingBedrag: formatBedrag(totaalKortingEffectief),
     btwBedrag: formatBedrag(factuur.btwBedrag),
     totaalBedrag: formatBedrag(factuur.totaal),
     kortingLabel,
-    kortingClass: effectieveKorting > 0.005 ? "" : "hidden",
+    kortingClass: totaalKortingEffectief > 0.005 ? "" : "hidden",
     btwClass: factuur.btwBedrag > 0 ? "" : "hidden",
     betaalQrCodeClass: betaalQrCode ? "" : "hidden",
     korClass: instellingen.korActief ? "" : "hidden",

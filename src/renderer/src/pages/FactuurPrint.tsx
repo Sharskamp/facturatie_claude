@@ -212,11 +212,10 @@ export default function FactuurPrintPage() {
   const heeftKorting = factuur.regels.some((r) => r.kortingPercentage > 0);
   const heeftBtw = !korActief && !factuur.btwVerlegd && Object.keys(btwGroepen).length > 0;
 
-  const grossSubtotaalPrint = factuur.regels.reduce((acc, r) => acc + r.prijs * r.aantal, 0);
-  const regelKortingTotaalPrint = factuur.regels.reduce((acc, r) => acc + r.prijs * r.aantal * r.kortingPercentage / 100, 0);
-  const effectieveKortingPrint = regelKortingTotaalPrint + factuur.kortingBedrag + factuur.totaalKortingBedrag;
-  const effectiefKortingPct = grossSubtotaalPrint > 0.005
-    ? Math.round(effectieveKortingPrint / grossSubtotaalPrint * 1000) / 10
+  const subtotaalNaRegelKortingPrint = factuur.regels.reduce((acc, r) => acc + r.prijs * r.aantal * (1 - r.kortingPercentage / 100), 0);
+  const totaalKortingEffectiefPrint = factuur.kortingBedrag + factuur.totaalKortingBedrag;
+  const totaalKortingPctPrint = subtotaalNaRegelKortingPrint > 0.005
+    ? Math.round(totaalKortingEffectiefPrint / subtotaalNaRegelKortingPrint * 1000) / 10
     : 0;
 
   const sectieBlokkken: Record<string, JSX.Element | null> = {
@@ -351,17 +350,17 @@ export default function FactuurPrintPage() {
           <div className="w-64">
             <div className="flex justify-between py-1.5 text-gray-600">
               <span>{labels.subtotal}</span>
-              <span>{formatBedrag(grossSubtotaalPrint)}</span>
+              <span>{formatBedrag(subtotaalNaRegelKortingPrint)}</span>
             </div>
-            {effectieveKortingPrint > 0.005 && (
+            {totaalKortingEffectiefPrint > 0.005 && (
               <div className="flex justify-between py-1.5 text-green-600">
                 <span>
                   {isEn ? "Discount" : "Korting"}
-                  {effectiefKortingPct > 0
-                    ? ` (${Number.isInteger(effectiefKortingPct) ? effectiefKortingPct : effectiefKortingPct.toFixed(1).replace(".", ",")}%)`
+                  {totaalKortingPctPrint > 0
+                    ? ` (${Number.isInteger(totaalKortingPctPrint) ? totaalKortingPctPrint : totaalKortingPctPrint.toFixed(1).replace(".", ",")}%)`
                     : ""}
                 </span>
-                <span>- {formatBedrag(effectieveKortingPrint)}</span>
+                <span>- {formatBedrag(totaalKortingEffectiefPrint)}</span>
               </div>
             )}
             {!korActief && factuur.btwVerlegd && (
