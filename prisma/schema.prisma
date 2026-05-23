@@ -382,15 +382,24 @@ model VasteActiva {
 }
 
 model Product {
-  id            String   @id @default(cuid())
+  id            String                  @id @default(cuid())
   naam          String
   omschrijving  String?
-  prijs         Float    @default(0)
-  eenheid       String?  @default("stuks")
-  btwPercentage Float    @default(21)
-  actief        Boolean  @default(true)
-  aangemaakt    DateTime @default(now())
-  bijgewerkt    DateTime @updatedAt
+  prijs         Float                   @default(0)
+  eenheid       String?                 @default("stuks")
+  btwPercentage Float                   @default(21)
+  actief        Boolean                 @default(true)
+  aangemaakt    DateTime                @default(now())
+  bijgewerkt    DateTime                @updatedAt
+  prijsHistorie ProductPrijsHistorie[]
+}
+
+model ProductPrijsHistorie {
+  id         String   @id @default(cuid())
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  prijs      Float
+  aangemaakt DateTime @default(now())
 }
 
 model KlantNotitie {

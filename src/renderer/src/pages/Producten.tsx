@@ -50,6 +50,12 @@ const LEEG_FORMULIER = {
   btwPercentage: "21",
 };
 
+interface PrijsHistorieRegel {
+  id: string;
+  prijs: number;
+  aangemaakt: string;
+}
+
 export default function ProductenPage() {
   const [producten, setProducten] = useState<Product[]>([]);
   const [laden, setLaden] = useState(true);
@@ -58,6 +64,7 @@ export default function ProductenPage() {
   const [melding, setMelding] = useState<{ type: "succes" | "fout"; tekst: string } | null>(null);
   const [opslaan, setOpslaan] = useState(false);
   const [formulier, setFormulier] = useState(LEEG_FORMULIER);
+  const [prijsHistorie, setPrijsHistorie] = useState<PrijsHistorieRegel[]>([]);
 
   const haalProductenOp = useCallback(async () => {
     try {
@@ -79,12 +86,7 @@ export default function ProductenPage() {
     setTimeout(() => setMelding(null), 4000);
   };
 
-  const resetFormulier = () => {
-    setFormulier(LEEG_FORMULIER);
-    setBewerkenId(null);
-  };
-
-  const openBewerken = (product: Product) => {
+  const openBewerken = async (product: Product) => {
     setFormulier({
       naam: product.naam,
       omschrijving: product.omschrijving ?? "",
@@ -93,7 +95,18 @@ export default function ProductenPage() {
       btwPercentage: String(product.btwPercentage),
     });
     setBewerkenId(product.id);
+    setPrijsHistorie([]);
     setModalOpen(true);
+    try {
+      const historie = await window.api.producten.prijsHistorie(product.id);
+      setPrijsHistorie(Array.isArray(historie) ? (historie as PrijsHistorieRegel[]) : []);
+    } catch { /* stil falen */ }
+  };
+
+  const resetFormulier = () => {
+    setFormulier(LEEG_FORMULIER);
+    setBewerkenId(null);
+    setPrijsHistorie([]);
   };
 
   const slaOp = async () => {
@@ -311,6 +324,21 @@ export default function ProductenPage() {
               </select>
             </div>
           </div>
+          {bewerkenId && prijsHistorie.length > 0 && (
+            <div className="px-6 pb-4">
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Prijsgeschiedenis</p>
+              <div className="space-y-1 max-h-36 overflow-y-auto">
+                {prijsHistorie.map((r) => (
+                  <div key={r.id} className="flex justify-between text-xs text-gray-500 bg-gray-50 rounded px-3 py-1.5">
+                    <span>{formatBedrag(r.prijs)}</span>
+                    <span className="text-gray-400">
+                      {new Date(r.aangemaakt).toLocaleDateString("nl-NL", { day: "2-digit", month: "short", year: "numeric" })}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <ModalFooter>
             <ModalClose asChild>
               <Button variant="outline">Annuleren</Button>

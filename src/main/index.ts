@@ -221,6 +221,16 @@ function runMigratie(dbPath: string): void {
   kolomToevoegen('FactuurRegel', 'reiskostenBegindatum', 'DATETIME')
   kolomToevoegen('FactuurRegel', 'reiskostenEinddatum', 'DATETIME')
 
+  // ProductPrijsHistorie — nieuwe tabel voor prijsrevisies
+  db.exec(`CREATE TABLE IF NOT EXISTS "ProductPrijsHistorie" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "productId" TEXT NOT NULL,
+    "prijs" REAL NOT NULL,
+    "aangemaakt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "ProductPrijsHistorie_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+  )`)
+  try { db.exec('CREATE INDEX IF NOT EXISTS "ProductPrijsHistorie_productId_idx" ON "ProductPrijsHistorie"("productId")') } catch {}
+
   // Offerte — nieuwe kolommen
   kolomToevoegen('Offerte', 'totaalKorting', 'REAL NOT NULL DEFAULT 0')
   kolomToevoegen('Offerte', 'totaalKortingBedrag', 'REAL NOT NULL DEFAULT 0')
@@ -3386,7 +3396,22 @@ function setupIpcHandlers() {
   })
 
   ipcMain.handle('producten:update', async (_, id: string, data: Record<string, unknown>) => {
+    const huidig = await prisma.product.findUnique({ where: { id }, select: { prijs: true } })
+    if (huidig && data.prijs !== undefined && (data.prijs as number) !== huidig.prijs) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (prisma as any).productPrijsHistorie.create({
+        data: { productId: id, prijs: huidig.prijs }
+      })
+    }
     return prisma.product.update({ where: { id }, data: data as Parameters<typeof prisma.product.update>[0]['data'] })
+  })
+
+  ipcMain.handle('producten:prijsHistorie', async (_, productId: string) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (prisma as any).productPrijsHistorie.findMany({
+      where: { productId },
+      orderBy: { aangemaakt: 'desc' },
+    })
   })
 
   ipcMain.handle('producten:delete', async (_, id: string) => {
