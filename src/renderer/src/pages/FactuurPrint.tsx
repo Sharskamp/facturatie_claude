@@ -323,11 +323,10 @@ export default function FactuurPrintPage() {
             <tr key={regel.id} className="border-b border-gray-100">
               <td className="py-3 text-gray-900">
                 {regel.omschrijving}
-                {regel.eenheid && (
-                  <span className="text-gray-400 text-sm ml-1">/ {regel.eenheid}</span>
-                )}
               </td>
-              <td className="py-3 text-center text-gray-700">{regel.aantal}</td>
+              <td className="py-3 text-center text-gray-700">
+                {regel.aantal}{regel.eenheid && <span className="text-gray-400 text-sm ml-1">{regel.eenheid}</span>}
+              </td>
               <td className="py-3 text-right text-gray-700">{formatBedrag(regel.prijs)}</td>
               {heeftBtw && (
                 <td className="py-3 text-right text-gray-500 text-sm">{regel.btwPercentage}%</td>
