@@ -665,7 +665,10 @@ export default function InkomenPagina() {
               }`}
             >
               <span className={`inline-block w-8 h-4 rounded-full relative transition-colors ${verbergSpaarrekeningen ? 'bg-white/30' : 'bg-gray-200'}`}>
-                <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform ${verbergSpaarrekeningen ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                <span
+                  className="absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-all duration-200"
+                  style={{ left: verbergSpaarrekeningen ? '1rem' : '0.125rem' }}
+                />
               </span>
               Spaarrekeningen verbergen
             </button>
