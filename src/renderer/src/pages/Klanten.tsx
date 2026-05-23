@@ -15,6 +15,8 @@ import {
   Download,
   CheckCircle2,
   AlertCircle,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -155,6 +157,7 @@ export default function KlantenPage() {
   const [fout, setFout] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
+  const [gearchiveerdeOpen, setGearchiveerdeOpen] = useState(false);
 
   // CSV import state
   const [csvModalOpen, setCsvModalOpen] = useState(false);
@@ -469,33 +472,21 @@ export default function KlantenPage() {
                 </p>
               </div>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Naam</TableHead>
-                    <TableHead>Bedrijf</TableHead>
-                    <TableHead>E-mail</TableHead>
-                    <TableHead>Telefoon</TableHead>
-                    <TableHead className="text-center">Facturen</TableHead>
-                    <TableHead className="text-right">Acties</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {klanten.map((klant) => (
+              <>
+              {(() => {
+                const actieveKlanten = klanten.filter(k => k.actief);
+                const gearchiveerdKlanten = klanten.filter(k => !k.actief);
+
+                const renderRijen = (lijst: Klant[]) => lijst.map((klant) => (
                     <TableRow
                       key={klant.id}
-                      className={`cursor-pointer ${!klant.actief ? "opacity-60 bg-gray-50" : ""}`}
+                      className="cursor-pointer"
                       onClick={() => navigate(`/klanten/${klant.id}`)}
                       onContextMenu={(e) => handleContextMenu(e, klant)}
                     >
                       <TableCell className="font-medium text-gray-900 max-w-[160px]">
                         <div className="flex items-center gap-2 min-w-0">
                           <span className="truncate">{klant.naam}</span>
-                          {!klant.actief && (
-                            <span className="text-xs bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded font-normal shrink-0">
-                              Gearchiveerd
-                            </span>
-                          )}
                         </div>
                       </TableCell>
                       <TableCell className="text-gray-500 max-w-[140px] truncate">
@@ -552,9 +543,52 @@ export default function KlantenPage() {
                         </div>
                       </TableCell>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  ));
+
+                return (
+                  <>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Naam</TableHead>
+                          <TableHead>Bedrijf</TableHead>
+                          <TableHead>E-mail</TableHead>
+                          <TableHead>Telefoon</TableHead>
+                          <TableHead className="text-center">Facturen</TableHead>
+                          <TableHead className="text-right">Acties</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {renderRijen(actieveKlanten)}
+                      </TableBody>
+                    </Table>
+                    {gearchiveerdKlanten.length > 0 && (
+                      <div className="border-t border-gray-100">
+                        <button
+                          type="button"
+                          onClick={() => setGearchiveerdeOpen(v => !v)}
+                          className="w-full flex items-center gap-2 px-4 py-3 text-sm text-gray-500 hover:bg-gray-50 transition-colors"
+                        >
+                          {gearchiveerdeOpen
+                            ? <ChevronUp className="h-4 w-4" />
+                            : <ChevronDown className="h-4 w-4" />
+                          }
+                          <Archive className="h-4 w-4" />
+                          Gearchiveerde klanten ({gearchiveerdKlanten.length})
+                        </button>
+                        {gearchiveerdeOpen && (
+                          <Table>
+                            <TableBody>
+                              {renderRijen(gearchiveerdKlanten)}
+                            </TableBody>
+                          </Table>
+                        )}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+              </>
             )}
           </CardContent>
         </Card>

@@ -10,12 +10,13 @@ import {
   MessageSquare,
   Copy,
   CheckCircle2,
-  ExternalLink,
   FileDown,
   FileMinus,
   Bell,
   FolderOpen,
   Archive,
+  Calendar,
+  Clock,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -74,7 +75,7 @@ interface Factuur {
   taal?: string;
   totaalKorting?: number;
   totaalKortingBedrag?: number;
-  mollieBetaalLink?: string | null;
+  geplandVerzendOp?: string | null;
   bronBestandPad?: string | null;
   historisch?: boolean;
   regels: FactuurRegel[];
@@ -139,12 +140,14 @@ export default function FactuurDetailPage() {
   const [statusBijwerken, setStatusBijwerken] = useState(false);
   const [creditnotaLaden, setCreditnotaLaden] = useState(false);
   const [herinneringLaden, setHerinneringLaden] = useState(false);
-  const [mollieLaden, setMollieLaden] = useState(false);
-  const [checkLaden, setCheckLaden] = useState(false);
   const [melding, setMelding] = useState<{ type: "succes" | "fout"; tekst: string } | null>(null);
   const [auditLogs, setAuditLogs] = useState<Array<{id: string; actie: string; details?: string; aangemaakt: string}>>([]);
   const [emailPreviewHtml, setEmailPreviewHtml] = useState<string | null>(null);
   const [emailPreviewLaden, setEmailPreviewLaden] = useState(false);
+  const [geplandModalOpen, setGeplandModalOpen] = useState(false);
+  const [geplandDatum, setGeplandDatum] = useState("");
+  const [geplandTijd, setGeplandTijd] = useState("09:00");
+  const [geplandLaden, setGeplandLaden] = useState(false);
 
   const laadFactuur = useCallback(async () => {
     try {
@@ -387,70 +390,6 @@ export default function FactuurDetailPage() {
                 Bekijk bestand
               </Button>
             )}
-            {factuur.mollieBetaalLink ? (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  navigator.clipboard.writeText(factuur.mollieBetaalLink!).catch(() => {});
-                  toonMelding("succes", "iDEAL betaallink gekopieerd");
-                }}
-              >
-                <Copy className="h-4 w-4" />
-                Betaallink kopiëren
-              </Button>
-            ) : (
-              <Button
-                variant="outline"
-                size="sm"
-                loading={mollieLaden}
-                onClick={async () => {
-                  setMollieLaden(true);
-                  try {
-                    const res = await window.api.mollie.maakBetaalLink(id!);
-                    await laadFactuur();
-                    toonMelding("succes", "iDEAL betaallink aangemaakt");
-                    if (res.url) navigator.clipboard.writeText(res.url).catch(() => {});
-                  } catch (e: unknown) {
-                    const err = e as Error;
-                    toonMelding("fout", err.message || "Mollie betaallink mislukt");
-                  } finally {
-                    setMollieLaden(false);
-                  }
-                }}
-              >
-                <ExternalLink className="h-4 w-4" />
-                iDEAL betaallink
-              </Button>
-            )}
-            {factuur.mollieBetaalLink && factuur.status !== "BETAALD" && (
-              <Button
-                variant="outline"
-                size="sm"
-                loading={checkLaden}
-                onClick={async () => {
-                  setCheckLaden(true);
-                  try {
-                    const result = await window.api.mollie.checkBetalingStatus(id!);
-                    if (result.betaald === true) {
-                      toonMelding("succes", "Betaling ontvangen! Factuur gemarkeerd als betaald.");
-                      laadFactuur();
-                    } else if (result.fout) {
-                      toonMelding("fout", result.fout);
-                    } else {
-                      toonMelding("fout", "Nog geen betaling gevonden bij Mollie.");
-                    }
-                  } catch (e: unknown) {
-                    toonMelding("fout", e instanceof Error ? e.message : "Statuscontrole mislukt");
-                  } finally {
-                    setCheckLaden(false);
-                  }
-                }}
-              >
-                <CheckCircle2 className="h-4 w-4" />
-                Controleer betaalstatus
-              </Button>
-            )}
             {(factuur.status === "VERZONDEN" || factuur.status === "BETAALD") && (
               <Button
                 variant="outline"
@@ -484,6 +423,22 @@ export default function FactuurDetailPage() {
                   >
                     <CheckCircle2 className="h-4 w-4" />
                     Betaald
+                  </Button>
+                )}
+                {factuur.status === "CONCEPT" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const now = new Date();
+                      const morgen = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+                      setGeplandDatum(morgen.toISOString().slice(0, 10));
+                      setGeplandTijd("09:00");
+                      setGeplandModalOpen(true);
+                    }}
+                  >
+                    <Calendar className="h-4 w-4" />
+                    {factuur.geplandVerzendOp ? "Gepland" : "Plan verzending"}
                   </Button>
                 )}
                 <Button
@@ -609,6 +564,17 @@ export default function FactuurDetailPage() {
                       {formatDatumLang(factuur.vervaldatum)}
                     </span>
                   </div>
+                  {factuur.geplandVerzendOp && factuur.status === "CONCEPT" && (
+                    <div className="flex sm:justify-end gap-8">
+                      <span className="text-gray-400 font-medium flex items-center gap-1">
+                        <Clock className="h-3.5 w-3.5" />
+                        Geplande verzending
+                      </span>
+                      <span className="text-indigo-600 font-medium">
+                        {formatDatumLang(factuur.geplandVerzendOp)}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -1161,6 +1127,79 @@ export default function FactuurDetailPage() {
                 )}
               </Button>
             )}
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* Plan verzending modal */}
+      <Modal open={geplandModalOpen} onOpenChange={setGeplandModalOpen}>
+        <ModalContent className="max-w-sm">
+          <ModalHeader>
+            <ModalTitle>Verzending plannen</ModalTitle>
+          </ModalHeader>
+          <div className="px-6 py-4 space-y-4">
+            {factuur?.geplandVerzendOp && (
+              <div className="rounded-lg bg-indigo-50 border border-indigo-200 p-3 text-sm text-indigo-800 flex items-center gap-2">
+                <Clock className="h-4 w-4 shrink-0" />
+                Gepland op {formatDatumLang(factuur.geplandVerzendOp)}
+              </div>
+            )}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Datum</label>
+              <input
+                type="date"
+                value={geplandDatum}
+                onChange={(e) => setGeplandDatum(e.target.value)}
+                className="w-full h-9 rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Tijd</label>
+              <input
+                type="time"
+                value={geplandTijd}
+                onChange={(e) => setGeplandTijd(e.target.value)}
+                className="w-full h-9 rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+          </div>
+          <ModalFooter>
+            {factuur?.geplandVerzendOp && (
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  await window.api.facturen.planVerzending(id!, null);
+                  await laadFactuur();
+                  setGeplandModalOpen(false);
+                  toonMelding("succes", "Geplande verzending geannuleerd");
+                }}
+              >
+                Annuleer planning
+              </Button>
+            )}
+            <ModalClose asChild>
+              <Button variant="outline">Sluiten</Button>
+            </ModalClose>
+            <Button
+              loading={geplandLaden}
+              onClick={async () => {
+                if (!geplandDatum) return;
+                setGeplandLaden(true);
+                try {
+                  const iso = `${geplandDatum}T${geplandTijd}:00`;
+                  await window.api.facturen.planVerzending(id!, iso);
+                  await laadFactuur();
+                  setGeplandModalOpen(false);
+                  toonMelding("succes", `Verzending gepland op ${geplandDatum} om ${geplandTijd}`);
+                } catch (e) {
+                  toonMelding("fout", e instanceof Error ? e.message : "Plannen mislukt");
+                } finally {
+                  setGeplandLaden(false);
+                }
+              }}
+            >
+              Plannen
+            </Button>
           </ModalFooter>
         </ModalContent>
       </Modal>

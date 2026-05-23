@@ -203,6 +203,7 @@ function runMigratie(dbPath: string): void {
   try { db.exec(`UPDATE "Inkomen" SET "geboektAlsOmzet" = true WHERE "factuurId" IS NULL AND ("bron" IS NULL OR ("bron" != 'Bankimport' AND "bron" != 'Historisch'))`) } catch {}
 
   // Factuur — nieuwe kolommen
+  kolomToevoegen('Factuur', 'geplandVerzendOp', 'DATETIME')
   kolomToevoegen('Factuur', 'creditNotaVoorId', 'TEXT')
   kolomToevoegen('Factuur', 'totaalKorting', 'REAL NOT NULL DEFAULT 0')
   kolomToevoegen('Factuur', 'totaalKortingBedrag', 'REAL NOT NULL DEFAULT 0')
@@ -679,6 +680,77 @@ async function stuurHerinneringen(): Promise<{ verstuurd: number; fouten: number
   }
 
   return { verstuurd, fouten }
+}
+
+// ── Geplande factuurverzending ──
+async function verstuurGeplandeFacturen(): Promise<void> {
+  try {
+    const nu = new Date()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const geplande = await (prisma.factuur as any).findMany({
+      where: {
+        status: 'CONCEPT',
+        geplandVerzendOp: { not: null, lte: nu },
+      },
+      include: { klant: true }
+    }) as Array<Record<string, unknown>>
+    if (geplande.length === 0) return
+
+    const user = await prisma.user.findFirst()
+    if (!user?.emailSmtpHost || !user.emailSmtpUser) return
+
+    for (const factuur of geplande) {
+      try {
+        const klant = factuur.klant as Record<string, unknown>
+        if (!klant?.email) continue
+        const port = user.emailSmtpPort ?? 587
+        const secure = (user as Record<string, unknown>).emailSmtpSecure as boolean | undefined ?? (port === 465)
+        const smtpConfig = {
+          host: user.emailSmtpHost,
+          port,
+          secure,
+          user: user.emailSmtpUser,
+          pass: (user as Record<string, unknown>).emailSmtpPass as string ?? '',
+        }
+        const naam = klant.naam as string
+        const emailFactuurTekst = (user as Record<string, unknown>).emailFactuurTekst as string | null
+        const emailFactuurOnderwerp = (user as Record<string, unknown>).emailFactuurOnderwerp as string | null
+        const bedrijfsnaam = user.bedrijfsnaam ?? user.naam ?? ''
+        const nummer = factuur.nummer as string
+        const onderwerp = (emailFactuurOnderwerp ?? `Factuur {{nummer}} van {{bedrijfsnaam}}`)
+          .replace(/{{nummer}}/g, nummer)
+          .replace(/{{bedrijfsnaam}}/g, bedrijfsnaam)
+          .replace(/{{klantNaam}}/g, naam)
+        const tekst = emailFactuurTekst ?? `Beste {{naam}},\n\nHierbij ontvangt u factuur {{nummer}}.\n\nMet vriendelijke groet,\n{{bedrijfsnaam}}`
+        const berichtHtml = tekst
+          .replace(/{{naam}}/g, naam)
+          .replace(/{{nummer}}/g, nummer)
+          .replace(/{{bedrijfsnaam}}/g, bedrijfsnaam)
+          .split('\n').map((r: string) => `<p>${r}</p>`).join('')
+        const pdfBuffer = await genereerFactuurPdfBufferIntern(factuur.id as string)
+        const logoHtml = user.logoBase64 ? `<div style="text-align:center;margin-bottom:16px"><img src="${user.logoBase64}" style="max-height:60px"/></div>` : ''
+        const html = `${logoHtml}${berichtHtml}`
+        const emailBcc = (user as Record<string, unknown>).emailBcc as string | null
+        await verstuurEmail(smtpConfig, {
+          van: user.emailSmtpUser,
+          naar: klant.email as string,
+          bcc: emailBcc || undefined,
+          onderwerp,
+          html,
+          bijlagen: [{ bestandsnaam: `factuur-${nummer}.pdf`, inhoud: pdfBuffer, contentType: 'application/pdf' }],
+        })
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (prisma.factuur as any).update({
+          where: { id: factuur.id },
+          data: { status: 'VERZONDEN', verzondenOp: nu, geplandVerzendOp: null },
+        })
+      } catch (e) {
+        logSchrijven(`Fout bij geplande verzending factuur ${factuur.id}: ${e}`)
+      }
+    }
+  } catch (e) {
+    logSchrijven(`Fout bij verstuurGeplandeFacturen: ${e}`)
+  }
 }
 
 // ── IPC Handlers ──
@@ -1191,6 +1263,15 @@ function setupIpcHandlers() {
     const nieuweStatus = new Date(factuur.vervaldatum) < nu ? 'VERLOPEN' : 'VERZONDEN'
     await prisma.factuur.update({ where: { id }, data: { status: nieuweStatus, handmatigBetaald: false } })
     return { succes: true, nieuweStatus }
+  })
+
+  ipcMain.handle('facturen:planVerzending', async (_, id: string, geplandOp: string | null) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (prisma.factuur as any).update({
+      where: { id },
+      data: { geplandVerzendOp: geplandOp ? new Date(geplandOp) : null }
+    })
+    return { succes: true }
   })
 
   ipcMain.handle('facturen:deleteAll', async () => {
@@ -3465,58 +3546,6 @@ function setupIpcHandlers() {
     return { succes: true, pad: doelMap }
   })
 
-  ipcMain.handle('mollie:maakBetaalLink', async (_, factuurId: string) => {
-    const user = await prisma.user.findFirst()
-    if (!user?.mollieApiKey) throw new Error('Geen Mollie API-sleutel geconfigureerd in Instellingen')
-
-    const factuur = await prisma.factuur.findUnique({ where: { id: factuurId } })
-    if (!factuur) throw new Error('Factuur niet gevonden')
-
-    const response = await fetch('https://api.mollie.com/v2/payment-links', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${user.mollieApiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        amount: { currency: 'EUR', value: factuur.totaal.toFixed(2) },
-        description: `Factuur ${factuur.nummer}`,
-      }),
-    })
-
-    if (!response.ok) {
-      const fout = await response.json() as { detail?: string; message?: string }
-      throw new Error(fout.detail || fout.message || `Mollie API fout (${response.status})`)
-    }
-
-    const data = await response.json() as { id?: string; _links?: { paymentLink?: { href: string } } }
-    const betaalLink = data._links?.paymentLink?.href ?? ''
-    const paymentLinkId = data.id ?? ''
-
-    await prisma.factuur.update({ where: { id: factuurId }, data: { mollieBetaalLink: betaalLink, molliePaymentLinkId: paymentLinkId } })
-    return { url: betaalLink }
-  })
-
-  ipcMain.handle('mollie:checkBetalingStatus', async (_, factuurId: string) => {
-    const user = await prisma.user.findFirst()
-    if (!user?.mollieApiKey) return { fout: 'Geen Mollie API-sleutel geconfigureerd' }
-
-    const factuur = await prisma.factuur.findUnique({ where: { id: factuurId } })
-    if (!factuur?.molliePaymentLinkId) return { fout: 'Geen Mollie betaallink-ID gevonden. Maak eerst een betaallink aan.' }
-
-    const response = await fetch(`https://api.mollie.com/v2/payment-links/${factuur.molliePaymentLinkId}`, {
-      headers: { 'Authorization': `Bearer ${user.mollieApiKey}` }
-    })
-    if (!response.ok) return { fout: `Mollie API fout (${response.status})` }
-
-    const link = await response.json() as { paidAt?: string | null }
-    if (link.paidAt) {
-      await prisma.factuur.update({ where: { id: factuurId }, data: { status: 'BETAALD' } })
-      return { betaald: true }
-    }
-    return { betaald: false }
-  })
-
   // ── Crediteuren ──
   ipcMain.handle('crediteuren:list', async (_, params?: { status?: string }) => {
     return prisma.crediteur.findMany({
@@ -4147,6 +4176,8 @@ app.whenReady().then(async () => {
   // Maak terugkerende facturen aan bij opstarten
   maakTermijnFacturen().catch(e => console.error('Fout bij opstarten terugkerende facturen:', e))
   stuurHerinneringen().catch(e => console.error('Fout bij sturen herinneringen:', e))
+  verstuurGeplandeFacturen().catch(e => console.error('Fout bij geplande verzending:', e))
+  setInterval(() => verstuurGeplandeFacturen().catch(() => {}), 60_000)
   startBankWatcher().catch(() => {})
 
   // Notificatie voor vervallen facturen
