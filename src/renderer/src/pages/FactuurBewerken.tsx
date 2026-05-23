@@ -230,8 +230,8 @@ export default function FactuurBewerkenPage() {
 
         setFactuurNummer(factuur.nummer ?? factuur.id);
         setKlantId(factuur.klantId);
-        setDatum(factuur.datum.split("T")[0]);
-        setVervaldatum(factuur.vervaldatum.split("T")[0]);
+        setDatum(new Date(factuur.datum).toISOString().split("T")[0]);
+        setVervaldatum(new Date(factuur.vervaldatum).toISOString().split("T")[0]);
         setBtwVerlegd(factuur.btwVerlegd);
         setKortingPercentage(factuur.kortingPercentage);
         setNotities(factuur.notities ?? "");
