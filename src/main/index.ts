@@ -1453,27 +1453,54 @@ function setupIpcHandlers() {
       const eigenMaxMs = inkomen.koppelingen.reduce((max, k) => Math.max(max, new Date(k.aangemaakt).getTime()), 0)
       const isLaatste = inkomen.koppelingen.length > 0 && eigenMaxMs >= groepMaxMs
 
-      // Waterfall: vul facturen in koppelvolgorde (aangemaakt asc) en noteer het tekort
-      // bij de EERSTE factuur die niet volledig gedekt is door dit bedrag.
+      // Groep-waterfall: gebruik groepOntvangen (ALLE betalingen gecombineerd) als pool.
+      // Sorteer ALLE groepfacturen op vroegste koppeldatum en verwerk in volgorde.
+      // Toon saldo alleen bij de EERSTE factuur waar het geld opraakt (of het laatste als teveel).
+      // Als die factuur niet bij déze betaling hoort: fallback naar de laatste koppeling van deze betaling.
       const waterfallSaldo: Record<string, { openstaand: number; teveel: number }> = {}
       if (isLaatste && inkomen.koppelingen.length > 0) {
-        let remaining = inkomen.bedrag
-        for (let i = 0; i < inkomen.koppelingen.length; i++) {
-          const k = inkomen.koppelingen[i]
-          if (!k.factuur) { waterfallSaldo[k.factuurId] = { openstaand: 0, teveel: 0 }; continue }
-          const fTotaal = k.factuur.totaal
-          const isLast = i === inkomen.koppelingen.length - 1
-          if (remaining >= fTotaal - 0.005) {
-            remaining = Math.max(0, remaining - fTotaal)
-            waterfallSaldo[k.factuurId] = { openstaand: 0, teveel: isLast && remaining > 0.01 ? Math.round(remaining * 100) / 100 : 0 }
+        const groepOpenstaand = Math.max(0, groepTotaal - groepOntvangen)
+        const groepTeveel = Math.max(0, groepOntvangen - groepTotaal)
+
+        // Vroegste koppeldatum per factuur (over alle betalingen heen)
+        const vroegsteKoppelMs = (fId: string): number => {
+          const betalingen = factuurBetalingen.get(fId) ?? []
+          if (betalingen.length === 0) return Date.now()
+          return Math.min(...betalingen.map(b => new Date(b.aangemaakt).getTime()))
+        }
+
+        const gesorteerdeGroep = [...groepFactuurIds]
+          .map(fId => ({ fId, vroegste: vroegsteKoppelMs(fId), totaal: factuurTotalen.get(fId) ?? 0 }))
+          .sort((a, b) => a.vroegste - b.vroegste)
+
+        let remaining = groepOntvangen
+        let saldoFactuurId: string | null = null
+
+        for (let i = 0; i < gesorteerdeGroep.length; i++) {
+          const { fId, totaal } = gesorteerdeGroep[i]
+          const isLast = i === gesorteerdeGroep.length - 1
+          if (remaining >= totaal - 0.005) {
+            remaining = Math.max(0, remaining - totaal)
+            waterfallSaldo[fId] = { openstaand: 0, teveel: isLast && remaining > 0.01 ? Math.round(remaining * 100) / 100 : 0 }
+            if (isLast && remaining > 0.01) saldoFactuurId = fId
           } else {
-            waterfallSaldo[k.factuurId] = { openstaand: Math.round((fTotaal - remaining) * 100) / 100, teveel: 0 }
+            waterfallSaldo[fId] = { openstaand: Math.round((totaal - remaining) * 100) / 100, teveel: 0 }
+            saldoFactuurId = fId
             remaining = 0
-            for (let j = i + 1; j < inkomen.koppelingen.length; j++) {
-              waterfallSaldo[inkomen.koppelingen[j].factuurId] = { openstaand: 0, teveel: 0 }
+            for (let j = i + 1; j < gesorteerdeGroep.length; j++) {
+              waterfallSaldo[gesorteerdeGroep[j].fId] = { openstaand: 0, teveel: 0 }
             }
             break
           }
+        }
+
+        // Fallback: saldo valt op factuur die niet bij déze betaling hoort
+        // → toon groepssaldo op de laatste koppeling van deze betaling
+        const eigenFactuurIds = new Set(inkomen.koppelingen.map(k => k.factuurId))
+        if (saldoFactuurId && !eigenFactuurIds.has(saldoFactuurId) && (groepOpenstaand > 0.01 || groepTeveel > 0.01)) {
+          if (waterfallSaldo[saldoFactuurId]) waterfallSaldo[saldoFactuurId] = { openstaand: 0, teveel: 0 }
+          const lastKoppeling = inkomen.koppelingen[inkomen.koppelingen.length - 1]
+          waterfallSaldo[lastKoppeling.factuurId] = { openstaand: groepOpenstaand, teveel: groepTeveel }
         }
       }
 
