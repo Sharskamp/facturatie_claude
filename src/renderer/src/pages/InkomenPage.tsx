@@ -391,6 +391,16 @@ export default function InkomenPagina() {
     }
   };
 
+  const verwijderOmzetBoeking = async (id: string) => {
+    try {
+      await window.api.inkomen.update(id, { geboektAlsOmzet: false });
+      toonMelding("succes", "Omzetboeking verwijderd");
+      haalInkomensOp();
+    } catch {
+      toonMelding("fout", "Bijwerken mislukt");
+    }
+  };
+
   const openDetail = (item: Inkomen) => {
     setDetailItem(item);
     setDetailOpen(true);
@@ -801,7 +811,16 @@ export default function InkomenPagina() {
                               <Button variant="ghost" size="icon-sm" title="Ontkoppelen" onClick={() => ontkoppel(inkomen.id)}>
                                 <Unlink className="h-4 w-4 text-gray-400" />
                               </Button>
-                            ) : inkomen.bron === "Bankimport" && !inkomen.geboektAlsOmzet ? (
+                            ) : inkomen.bron === "Bankimport" && inkomen.geboektAlsOmzet ? (
+                              <>
+                                <Button variant="ghost" size="icon-sm" title="Verwijder omzetboeking" onClick={() => verwijderOmzetBoeking(inkomen.id)}>
+                                  <BookOpen className="h-4 w-4 text-orange-500" />
+                                </Button>
+                                <Button variant="ghost" size="icon-sm" title="Koppel aan factuur" onClick={() => openSmartKoppel(inkomen)}>
+                                  <Link className="h-4 w-4 text-indigo-500" />
+                                </Button>
+                              </>
+                            ) : inkomen.bron === "Bankimport" ? (
                               <>
                                 <Button variant="ghost" size="icon-sm" title="Koppel aan factuur" onClick={() => openSmartKoppel(inkomen)}>
                                   <Link className="h-4 w-4 text-indigo-500" />
@@ -1078,7 +1097,7 @@ export default function InkomenPagina() {
                       Ontkoppelen
                     </Button>
                   )}
-                  {!_heeftKoppeling && !_isSpaar && detailItem.bron === "Bankimport" && !_geboektAlsOmzet && (
+                  {!_heeftKoppeling && !_isSpaar && detailItem.bron === "Bankimport" && (
                     <Button
                       variant="outline"
                       onClick={() => {
@@ -1089,6 +1108,19 @@ export default function InkomenPagina() {
                       }}
                     >
                       Koppelen
+                    </Button>
+                  )}
+                  {!_heeftKoppeling && !_isSpaar && detailItem.bron === "Bankimport" && _geboektAlsOmzet && (
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        const item = detailItem;
+                        setDetailOpen(false);
+                        setDetailItem(null);
+                        verwijderOmzetBoeking(item.id);
+                      }}
+                    >
+                      Verwijder omzetboeking
                     </Button>
                   )}
                   {!_heeftKoppeling && !_isSpaar && detailItem.bron === "Bankimport" && !_geboektAlsOmzet && (

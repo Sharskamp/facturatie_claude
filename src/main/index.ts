@@ -729,17 +729,18 @@ function setupIpcHandlers() {
     const groepTotaal = groepFacturen.reduce((s, f) => s + f.totaal, 0)
     const groepOntvangen = groepKoppelingen.reduce((s, k) => s + k.bedrag, 0)
 
+    // Altijd eerst BETAALD resetten — bij elke koppelingswijziging herbereken je van scratch
+    const nu = new Date()
+    for (const f of groepFacturen) {
+      if (f.status === 'BETAALD') {
+        const nieuweStatus = new Date(f.vervaldatum) < nu ? 'VERLOPEN' : 'VERZONDEN'
+        await prisma.factuur.update({ where: { id: f.id }, data: { status: nieuweStatus, handmatigBetaald: false } })
+      }
+    }
+
+    // Daarna BETAALD zetten als groep volledig is voldaan
     if (groepOntvangen >= groepTotaal * 0.99) {
       await prisma.factuur.updateMany({ where: { id: { in: groepFactuurIds } }, data: { status: 'BETAALD' } })
-    } else {
-      // Reset automatisch ingestelde BETAALD terug naar VERZONDEN/VERLOPEN als groep niet volledig betaald is
-      const nu = new Date()
-      for (const f of groepFacturen) {
-        if (f.status === 'BETAALD' && !f.handmatigBetaald) {
-          const nieuweStatus = new Date(f.vervaldatum) < nu ? 'VERLOPEN' : 'VERZONDEN'
-          await prisma.factuur.update({ where: { id: f.id }, data: { status: nieuweStatus } })
-        }
-      }
     }
 
     return { groepFactuurIds, groepTotaal, groepOntvangen }
@@ -1448,27 +1449,51 @@ function setupIpcHandlers() {
         }
       }
 
-      const groepOpenstaand = Math.max(0, groepTotaal - groepOntvangen)
-      const groepTeveel = Math.max(0, groepOntvangen - groepTotaal)
-
       // Toon het saldo alleen bij de MEEST RECENT gekoppelde betaling van de groep
       const eigenMaxMs = inkomen.koppelingen.reduce((max, k) => Math.max(max, new Date(k.aangemaakt).getTime()), 0)
       const isLaatste = inkomen.koppelingen.length > 0 && eigenMaxMs >= groepMaxMs
 
+      // Waterfall: vul facturen in koppelvolgorde (aangemaakt asc) en noteer het tekort
+      // bij de EERSTE factuur die niet volledig gedekt is door dit bedrag.
+      const waterfallSaldo: Record<string, { openstaand: number; teveel: number }> = {}
+      if (isLaatste && inkomen.koppelingen.length > 0) {
+        let remaining = inkomen.bedrag
+        for (let i = 0; i < inkomen.koppelingen.length; i++) {
+          const k = inkomen.koppelingen[i]
+          if (!k.factuur) { waterfallSaldo[k.factuurId] = { openstaand: 0, teveel: 0 }; continue }
+          const fTotaal = k.factuur.totaal
+          const isLast = i === inkomen.koppelingen.length - 1
+          if (remaining >= fTotaal - 0.005) {
+            remaining = Math.max(0, remaining - fTotaal)
+            waterfallSaldo[k.factuurId] = { openstaand: 0, teveel: isLast && remaining > 0.01 ? Math.round(remaining * 100) / 100 : 0 }
+          } else {
+            waterfallSaldo[k.factuurId] = { openstaand: Math.round((fTotaal - remaining) * 100) / 100, teveel: 0 }
+            remaining = 0
+            for (let j = i + 1; j < inkomen.koppelingen.length; j++) {
+              waterfallSaldo[inkomen.koppelingen[j].factuurId] = { openstaand: 0, teveel: 0 }
+            }
+            break
+          }
+        }
+      }
+
       return {
         ...inkomen,
-        koppelingen: inkomen.koppelingen.map(k => ({
-          ...k,
-          factuur: k.factuur ? {
-            id: k.factuur.id,
-            nummer: k.factuur.nummer,
-            totaal: k.factuur.totaal,
-            status: k.factuur.status,
-            reedsBetaald: groepOntvangen,
-            openstaand: isLaatste ? groepOpenstaand : 0,
-            teveel: isLaatste ? groepTeveel : 0,
-          } : null,
-        })),
+        koppelingen: inkomen.koppelingen.map(k => {
+          const saldo = waterfallSaldo[k.factuurId] ?? { openstaand: 0, teveel: 0 }
+          return {
+            ...k,
+            factuur: k.factuur ? {
+              id: k.factuur.id,
+              nummer: k.factuur.nummer,
+              totaal: k.factuur.totaal,
+              status: k.factuur.status,
+              reedsBetaald: groepOntvangen,
+              openstaand: saldo.openstaand,
+              teveel: saldo.teveel,
+            } : null,
+          }
+        }),
       }
     })
   })
