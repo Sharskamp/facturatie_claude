@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld('api', {
     onbetaaldeMeldingen: () => ipcRenderer.invoke('facturen:onbetaaldeMeldingen'),
     openBronBestand: (id: string) => ipcRenderer.invoke('facturen:openBronBestand', id),
     verwijderBetaaldStatus: (id: string) => ipcRenderer.invoke('facturen:verwijderBetaaldStatus', id),
+    planVerzending: (id: string, geplandOp: string | null) => ipcRenderer.invoke('facturen:planVerzending', id, geplandOp),
   },
   offertes: {
     list: (params?: unknown) => ipcRenderer.invoke('offertes:list', params),
@@ -157,10 +158,6 @@ contextBridge.exposeInMainWorld('api', {
     exporteerExcel: (jaar: number) => ipcRenderer.invoke('app:exporteerExcel', jaar),
     exportPdfArchief: (jaar: number) => ipcRenderer.invoke('app:exportPdfArchief', jaar),
     installUpdate: () => ipcRenderer.invoke('app:installUpdate'),
-  },
-  mollie: {
-    maakBetaalLink: (factuurId: string) => ipcRenderer.invoke('mollie:maakBetaalLink', factuurId),
-    checkBetalingStatus: (factuurId: string) => ipcRenderer.invoke('mollie:checkBetalingStatus', factuurId),
   },
   factuurSjablonen: {
     list: () => ipcRenderer.invoke('factuurSjablonen:list'),

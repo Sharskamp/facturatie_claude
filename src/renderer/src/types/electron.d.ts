@@ -30,6 +30,7 @@ interface ElectronAPI {
     stuurHerinneringen: () => Promise<unknown>
     stuurHerinnering: (id: string) => Promise<{ succes: boolean }>
     openBronBestand: (id: string) => Promise<{ succes: boolean; fout?: string }>
+    planVerzending: (id: string, geplandOp: string | null) => Promise<{ succes: boolean }>
   }
   offertes: {
     list: (params?: { status?: string }) => Promise<unknown[]>
@@ -139,10 +140,6 @@ interface ElectronAPI {
     exporteerExcel: (jaar: number) => Promise<{ succes?: boolean; geannuleerd?: boolean; pad?: string; fout?: string }>
     exportPdfArchief: (jaar: number) => Promise<{ succes?: boolean; geannuleerd?: boolean; aangemaakt?: number; pad?: string; fout?: string }>
     installUpdate: () => Promise<void>
-  }
-  mollie: {
-    maakBetaalLink: (factuurId: string) => Promise<{ url: string }>
-    checkBetalingStatus: (factuurId: string) => Promise<{ betaald?: boolean; fout?: string }>
   }
   updates: {
     onBeschikbaar: (cb: () => void) => void

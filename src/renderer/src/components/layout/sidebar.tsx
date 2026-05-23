@@ -42,7 +42,7 @@ const navigatie = [
   { naam: "Producten", href: "/producten", icoon: Package, uitleg: "Beheer een productcatalogus met vaste prijzen en BTW-tarieven voor sneller factureren." },
   { naam: "Vaste activa", href: "/vaste-activa", icoon: Cpu, uitleg: "Registreer bedrijfsmiddelen (laptop, auto) en volg de jaarlijkse afschrijvingen." },
   { naam: "Rapporten", href: "/rapporten", icoon: BarChart3, uitleg: "Bekijk winst & verlies, BTW-overzicht per kwartaal en jaaroverzichten voor de belastingaangifte." },
-  { naam: "Instellingen", href: "/instellingen", icoon: Settings, uitleg: "Stel je bedrijfsgegevens, e-mail (SMTP), BTW-nummers, Mollie-koppeling en meer in." },
+  { naam: "Instellingen", href: "/instellingen", icoon: Settings, uitleg: "Stel je bedrijfsgegevens, e-mail (SMTP), BTW-nummers en meer in." },
 ];
 
 const ALTIJD_ZICHTBAAR = new Set(["/", "/instellingen"]);

@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { FactuurLayoutPreview } from "@/components/facturen/FactuurLayoutPreview";
 import {
   Building2,
   FileText,
@@ -123,7 +122,6 @@ interface Instellingen {
   bankAfschriftenMap?: string;
   // Geavanceerd
   pdfMapPad?: string;
-  mollieApiKey?: string;
   logoBase64?: string;
   korWaarschuwing?: boolean;
   factuurVolgNummer?: number;
@@ -286,7 +284,6 @@ export default function InstellingenPagina() {
   const [emailTestStatus, setEmailTestStatus] = useState<"idle" | "laden" | "succes" | "fout">("idle");
   const [googleLaden, setGoogleLaden] = useState(false);
   const [autoStart, setAutoStart] = useState(false);
-  const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [exportJaar, setExportJaar] = useState(new Date().getFullYear());
   const [pdfArchiefLaden, setPdfArchiefLaden] = useState(false);
   const [exportMelding, setExportMelding] = useState<string | null>(null);
@@ -296,9 +293,6 @@ export default function InstellingenPagina() {
   const [uitgavenVeldenLijst, setUitgavenVeldenLijst] = useState<string[]>(() => ALLE_UITGAVEN_VELDEN.map(v => v.id));
   const isGeladen = useRef(false);
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const previewContainerRef = useRef<HTMLDivElement>(null);
-  const [previewSchaal, setPreviewSchaal] = useState(0.65);
-
   const haalInstellingenOp = useCallback(async () => {
     try {
       const data = await window.api.instellingen.get();
@@ -342,19 +336,6 @@ export default function InstellingenPagina() {
   useEffect(() => {
     window.api.app.getAutoStart().then(setAutoStart).catch(() => {});
   }, []);
-
-  useEffect(() => {
-    if (actieveTab !== "layout") return;
-    const el = previewContainerRef.current;
-    if (!el) return;
-    const observer = new ResizeObserver(([entry]) => {
-      const { width } = entry.contentRect;
-      const scale = (width - 32) / 794;
-      setPreviewSchaal(Math.max(0.35, Math.min(1.2, scale)));
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [actieveTab]);
 
   const toonMelding = (type: "succes" | "fout", tekst: string) => {
     setMelding({ type, tekst });
@@ -789,291 +770,87 @@ export default function InstellingenPagina() {
         )}
 
         {/* ── Factuurlayout ── */}
-        {actieveTab === "layout" && (() => {
-          const DEFAULT_SECTIES = ["koptekst", "bedrijf", "klant", "factuurInfo", "regels", "totalen", "betaling", "voettekst"];
-          const SECTIE_LABELS: Record<string, string> = {
-            koptekst: "Koptekst (vrije tekst)", bedrijf: "Bedrijfsgegevens", klant: "Klantgegevens",
-            factuurInfo: "Factuurnummer & datum", regels: "Regeloverzicht", totalen: "Totalen",
-            betaling: "Betalingsgegevens", voettekst: "Voettekst (vrije tekst)",
-          };
-          const SECTIE_VELDEN: Record<string, string> = {
-            bedrijf: "Naam, adres, BTW-nr, KvK-nr, e-mail",
-            klant: "Klantnaam, contactpersoon, adres, BTW-nr",
-            factuurInfo: "Factuurnummer, datum, vervaldatum, referentie",
-            regels: "Omschrijving, aantal, prijs, BTW, totaal",
-            totalen: "Subtotaal, BTW-bedrag, totaal te betalen",
-            betaling: "IBAN, tenaamstelling, kenmerk, QR-code",
-          };
-          const secties: string[] = (() => {
-            try { const p = JSON.parse(instellingen.layoutSectieVolgorde ?? "[]"); return Array.isArray(p) && p.length ? p : DEFAULT_SECTIES; }
-            catch { return DEFAULT_SECTIES; }
-          })();
-          const verplaatsSectie = (i: number, d: -1 | 1) => {
-            const nieuw = [...secties]; const doel = i + d;
-            if (doel < 0 || doel >= nieuw.length) return;
-            [nieuw[i], nieuw[doel]] = [nieuw[doel], nieuw[i]];
-            const json = JSON.stringify(nieuw);
-            updateVeld("layoutSectieVolgorde", json); slaOp({ layoutSectieVolgorde: json });
-          };
-          const Toggle = ({ veld, label }: { veld: string; label: string }) => {
-            const aan = (instellingen as Record<string, unknown>)[veld] !== false;
-            return (
-              <div className="flex items-center justify-between rounded-lg border border-gray-100 p-2.5">
-                <span className="text-sm text-gray-700">{label}</span>
-                <button type="button" onClick={() => { updateVeld(veld as keyof Instellingen, !aan as never); slaOp({ [veld]: !aan }); }} className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${aan ? "bg-indigo-600" : "bg-gray-200"}`}>
-                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${aan ? "translate-x-6" : "translate-x-1"}`} />
-                </button>
-              </div>
-            );
-          };
-
-          return (
-            <div className="flex gap-6" style={{ height: "calc(100vh - 210px)" }}>
-              {/* Links: scrollbaar instellingenpaneel */}
-              <div className="w-[300px] shrink-0 overflow-y-auto space-y-4 pr-1"
-                style={{ scrollbarWidth: "thin" }}
-              >
-
-                {/* Kleur & typografie */}
-                <Card>
-                  <CardHeader className="pb-3"><CardTitle className="text-base">Kleur &amp; typografie</CardTitle></CardHeader>
-                  <CardContent className="space-y-3">
-                    <div className="flex items-center gap-3">
-                      <input type="color" value={instellingen.layoutPrimairKleur ?? "#4f46e5"} onChange={(e) => updateVeld("layoutPrimairKleur", e.target.value)} onBlur={() => slaOp({ layoutPrimairKleur: instellingen.layoutPrimairKleur })} className="h-9 w-16 rounded border border-gray-300 cursor-pointer" />
-                      <span className="text-sm text-gray-500 flex-1">{instellingen.layoutPrimairKleur ?? "#4f46e5"}</span>
+        {actieveTab === "layout" && (
+          <div className="space-y-6 max-w-4xl">
+            <Card>
+              <CardHeader>
+                <CardTitle>Factuurtemplate (HTML/CSS)</CardTitle>
+                <CardDescription>Maak een volledig eigen factuurlayout met HTML en CSS. Gebruik {"{{"}variabele{"}}"}  placeholders voor dynamische waarden. Laat leeg voor de standaard opmaak.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <textarea
+                  rows={30}
+                  className="w-full font-mono text-xs rounded-md border border-gray-200 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  placeholder="Laat leeg om de standaard opmaak te gebruiken..."
+                  value={instellingen.factuurHtmlTemplate ?? ""}
+                  onChange={(e) => updateVeld("factuurHtmlTemplate", e.target.value)}
+                  onBlur={() => slaOp({ factuurHtmlTemplate: instellingen.factuurHtmlTemplate })}
+                  style={{ minHeight: "500px" }}
+                />
+                <details className="rounded-lg border border-gray-100 bg-gray-50">
+                  <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-gray-600 select-none">Beschikbare variabelen</summary>
+                  <div className="px-3 pb-3 pt-1 grid grid-cols-2 gap-4 text-xs text-gray-600">
+                    <div>
+                      <p className="font-semibold text-gray-700 mb-1">Bedrijf</p>
+                      <ul className="space-y-0.5 font-mono text-gray-500">
+                        <li>{"{{bedrijfsnaam}}"}</li>
+                        <li>{"{{bedrijfAdres}}"}</li>
+                        <li>{"{{bedrijfPostcode}}"}</li>
+                        <li>{"{{bedrijfStad}}"}</li>
+                        <li>{"{{bedrijfEmail}}"}</li>
+                        <li>{"{{bedrijfTelefoon}}"}</li>
+                        <li>{"{{bedrijfWebsite}}"}</li>
+                        <li>{"{{kvkNummer}}"}</li>
+                        <li>{"{{btwNummer}}"}</li>
+                        <li>{"{{iban}}"}</li>
+                        <li>{"{{logo}}"}</li>
+                      </ul>
                     </div>
-                    <select value={instellingen.layoutLettertype ?? "Arial, sans-serif"} onChange={(e) => { updateVeld("layoutLettertype", e.target.value); slaOp({ layoutLettertype: e.target.value }); }} className="w-full h-9 rounded-lg border border-gray-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                      <option value="Arial, sans-serif">Arial</option>
-                      <option value="'Times New Roman', serif">Times New Roman</option>
-                      <option value="'Georgia', serif">Georgia</option>
-                      <option value="'Helvetica Neue', Helvetica, sans-serif">Helvetica</option>
-                      <option value="'Calibri', sans-serif">Calibri</option>
-                    </select>
-                    <div className="flex items-center gap-3">
-                      <input type="range" min="11" max="16" step="1" value={parseInt(instellingen.layoutLetterGrootte ?? "14")} onChange={(e) => updateVeld("layoutLetterGrootte", e.target.value)} onMouseUp={() => slaOp({ layoutLetterGrootte: instellingen.layoutLetterGrootte })} className="flex-1" />
-                      <span className="text-sm text-gray-500 w-12">{instellingen.layoutLetterGrootte ?? "14"}px</span>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* Indeling */}
-                <Card>
-                  <CardHeader className="pb-3"><CardTitle className="text-base">Indeling &amp; logo</CardTitle></CardHeader>
-                  <CardContent className="space-y-3">
-                    <div className="grid grid-cols-3 gap-2">
-                      {(["krap", "normaal", "ruim"] as const).map((v) => (
-                        <button key={v} type="button" onClick={() => { updateVeld("layoutMarges", v); slaOp({ layoutMarges: v }); }} className={`py-2 rounded-lg border text-sm capitalize transition-colors ${(instellingen.layoutMarges ?? "normaal") === v ? "border-indigo-500 bg-indigo-50 text-indigo-700 font-medium" : "border-gray-200 text-gray-600 hover:border-gray-300"}`}>{v}</button>
-                      ))}
-                    </div>
-                    <div className="grid grid-cols-3 gap-2">
-                      {([["links", "Logo links"], ["midden", "Logo midden"], ["rechts", "Logo rechts"]] as const).map(([v, l]) => (
-                        <button key={v} type="button" onClick={() => { updateVeld("layoutLogoPositie", v); slaOp({ layoutLogoPositie: v }); }} className={`py-2 rounded-lg border text-xs transition-colors ${(instellingen.layoutLogoPositie ?? "links") === v ? "border-indigo-500 bg-indigo-50 text-indigo-700 font-medium" : "border-gray-200 text-gray-600 hover:border-gray-300"}`}>{l}</button>
-                      ))}
-                    </div>
-                    <div className="grid grid-cols-3 gap-2">
-                      {([["small", "Klein"], ["medium", "Normaal"], ["large", "Groot"]] as const).map(([v, l]) => (
-                        <button key={v} type="button" onClick={() => { updateVeld("layoutLogoGrootte", v); slaOp({ layoutLogoGrootte: v }); }} className={`py-2 rounded-lg border text-xs transition-colors ${(instellingen.layoutLogoGrootte ?? "medium") === v ? "border-indigo-500 bg-indigo-50 text-indigo-700 font-medium" : "border-gray-200 text-gray-600 hover:border-gray-300"}`}>{l}</button>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* Blokken & volgorde */}
-                <Card>
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-base">Blokken &amp; volgorde</CardTitle>
-                    <CardDescription className="text-xs">Sleep blokken om de volgorde te wijzigen, of gebruik de pijltjes. Koptekst en voettekst zijn vrij in te vullen.</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-1">
-                    {secties.map((sectie, i) => {
-                      const isKop = sectie === "koptekst";
-                      const isVoet = sectie === "voettekst";
-                      const heeftTekst = isKop || isVoet;
-                      const veldInfo = SECTIE_VELDEN[sectie];
-                      const isDragging = dragIndex === i;
-                      const isDragTarget = dragIndex !== null && dragIndex !== i;
-                      return (
-                        <div
-                          key={sectie}
-                          draggable
-                          onDragStart={() => setDragIndex(i)}
-                          onDragOver={(e) => { e.preventDefault(); }}
-                          onDrop={() => {
-                            if (dragIndex === null || dragIndex === i) return;
-                            const nieuw = [...secties];
-                            const [verwijderd] = nieuw.splice(dragIndex, 1);
-                            nieuw.splice(i, 0, verwijderd);
-                            const json = JSON.stringify(nieuw);
-                            updateVeld("layoutSectieVolgorde", json);
-                            slaOp({ layoutSectieVolgorde: json });
-                            setDragIndex(null);
-                          }}
-                          onDragEnd={() => setDragIndex(null)}
-                          className={`rounded-lg border overflow-hidden transition-all ${
-                            isDragging
-                              ? "opacity-50 border-indigo-300 bg-indigo-50"
-                              : isDragTarget
-                              ? "border-indigo-200 bg-gray-50"
-                              : "border-gray-100 bg-gray-50"
-                          } cursor-grab active:cursor-grabbing`}
-                        >
-                          <div className="flex items-center gap-2 px-3 py-2">
-                            {/* Drag handle */}
-                            <span className="text-gray-300 select-none text-base leading-none" style={{ cursor: "grab" }}>⠿</span>
-                            <div className="flex-1 min-w-0">
-                              <span className="text-sm text-gray-700 font-medium">{SECTIE_LABELS[sectie] ?? sectie}</span>
-                              {veldInfo && (
-                                <p className="text-xs text-gray-400 mt-0.5 truncate">{veldInfo}</p>
-                              )}
-                            </div>
-                            <div className="flex gap-1 shrink-0">
-                              <button type="button" onClick={() => verplaatsSectie(i, -1)} disabled={i === 0} className="p-1 rounded hover:bg-white disabled:opacity-30 text-gray-400"><ChevronUp className="h-3.5 w-3.5" /></button>
-                              <button type="button" onClick={() => verplaatsSectie(i, 1)} disabled={i === secties.length - 1} className="p-1 rounded hover:bg-white disabled:opacity-30 text-gray-400"><ChevronDown className="h-3.5 w-3.5" /></button>
-                            </div>
-                          </div>
-                          {heeftTekst && (
-                            <div className="px-3 pb-3">
-                              <textarea rows={2} value={(isKop ? instellingen.layoutKoptekst : instellingen.layoutVoettekst) ?? ""} onChange={(e) => updateVeld(isKop ? "layoutKoptekst" : "layoutVoettekst", e.target.value)} onBlur={() => slaOp(isKop ? { layoutKoptekst: instellingen.layoutKoptekst } : { layoutVoettekst: instellingen.layoutVoettekst })} placeholder={isKop ? "Tekst bovenaan de factuur... (laat leeg om te verbergen)" : "Bijv. betalingsvoorwaarden, bedankt voor uw opdracht..."} className="w-full text-xs rounded-md border border-gray-200 bg-white px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </CardContent>
-                </Card>
-
-                {/* Velden tonen/verbergen */}
-                <Card>
-                  <CardHeader className="pb-3"><CardTitle className="text-base">Velden tonen / verbergen</CardTitle></CardHeader>
-                  <CardContent className="space-y-1">
-                    {!instellingen.korActief && <Toggle veld="layoutToonBtwNummer" label="BTW-nummer" />}
-                    <Toggle veld="layoutToonKvkNummer" label="KvK-nummer" />
-                    <Toggle veld="layoutToonIban" label="IBAN in betalingsblok" />
-                    <Toggle veld="layoutToonQrCode" label="SEPA betaal-QR-code" />
-                    <Toggle veld="onbetaaldeFactuurMelding" label="Popup bij vervallen facturen" />
-                  </CardContent>
-                </Card>
-
-                {/* Volledig maatwerk HTML-template */}
-                <Card>
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-base">Volledig maatwerk factuurtemplate (HTML/CSS)</CardTitle>
-                    <CardDescription className="text-xs">Gebruik eigen HTML/CSS in plaats van de standaard opmaak. Gebruik {"{{"}<span>variabele</span>{"}}"} placeholders.</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <textarea
-                      rows={20}
-                      className="w-full font-mono text-xs rounded-md border border-gray-200 bg-white px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                      placeholder="Laat leeg om de standaard opmaak te gebruiken..."
-                      value={instellingen.factuurHtmlTemplate ?? ""}
-                      onChange={(e) => updateVeld("factuurHtmlTemplate", e.target.value)}
-                      onBlur={() => slaOp({ factuurHtmlTemplate: instellingen.factuurHtmlTemplate })}
-                    />
-                    <details className="rounded-lg border border-gray-100 bg-gray-50">
-                      <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-gray-600 select-none">Beschikbare variabelen</summary>
-                      <div className="px-3 pb-3 pt-1 space-y-2 text-xs text-gray-600">
-                        <div>
-                          <p className="font-semibold text-gray-700 mb-1">Bedrijf</p>
-                          <ul className="space-y-0.5 font-mono text-gray-500">
-                            <li>{"{{bedrijfsnaam}}"}</li>
-                            <li>{"{{bedrijfAdres}}"}</li>
-                            <li>{"{{bedrijfPostcode}}"}</li>
-                            <li>{"{{bedrijfStad}}"}</li>
-                            <li>{"{{bedrijfEmail}}"}</li>
-                            <li>{"{{bedrijfTelefoon}}"}</li>
-                            <li>{"{{bedrijfWebsite}}"}</li>
-                            <li>{"{{kvkNummer}}"}</li>
-                            <li>{"{{btwNummer}}"}</li>
-                            <li>{"{{iban}}"}</li>
-                            <li>{"{{logo}}"}</li>
-                          </ul>
-                        </div>
-                        <div>
-                          <p className="font-semibold text-gray-700 mb-1">Factuur</p>
-                          <ul className="space-y-0.5 font-mono text-gray-500">
-                            <li>{"{{factuurNummer}}"}</li>
-                            <li>{"{{factuurDatum}}"}</li>
-                            <li>{"{{vervaldatum}}"}</li>
-                            <li>{"{{notities}}"}</li>
-                            <li>{"{{betalingsCondities}}"}</li>
-                          </ul>
-                        </div>
-                        <div>
-                          <p className="font-semibold text-gray-700 mb-1">Klant</p>
-                          <ul className="space-y-0.5 font-mono text-gray-500">
-                            <li>{"{{klantNaam}}"}</li>
-                            <li>{"{{klantBedrijf}}"}</li>
-                            <li>{"{{klantAdres}}"}</li>
-                            <li>{"{{klantPostcode}}"}</li>
-                            <li>{"{{klantStad}}"}</li>
-                            <li>{"{{klantBtwNummer}}"}</li>
-                          </ul>
-                        </div>
-                        <div>
-                          <p className="font-semibold text-gray-700 mb-1">Totalen</p>
-                          <ul className="space-y-0.5 font-mono text-gray-500">
-                            <li>{"{{subtotaal}}"}</li>
-                            <li>{"{{kortingBedrag}}"}</li>
-                            <li>{"{{btwBedrag}}"}</li>
-                            <li>{"{{totaalBedrag}}"}</li>
-                          </ul>
-                        </div>
-                        <div>
-                          <p className="font-semibold text-gray-700 mb-1">Regels &amp; logo</p>
-                          <ul className="space-y-0.5 font-mono text-gray-500">
-                            <li>{"{{regelsHtml}}"} <span className="font-sans text-gray-400">(pre-rendered HTML tabel)</span></li>
-                            <li>{"{{logo}}"} <span className="font-sans text-gray-400">({"<img src=\"...\">"}  of leeg)</span></li>
-                          </ul>
-                        </div>
-                      </div>
-                    </details>
-                    <div className="flex items-center gap-2 justify-end pt-1">
-                      <button
-                        type="button"
-                        className="text-xs text-gray-500 hover:text-gray-700 underline"
-                        onClick={() => updateVeld("factuurHtmlTemplate", "")}
-                      >
-                        Reset naar standaard
-                      </button>
-                      <Button onClick={() => slaOp({ factuurHtmlTemplate: instellingen.factuurHtmlTemplate })} loading={opslaan}>
-                        Opslaan
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-
-              </div>
-
-              {/* Rechts: groot paginavullend voorbeeld */}
-              <div className="flex-1 flex flex-col min-w-0">
-                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3 shrink-0">
-                  Live voorbeeld — wijzigingen zie je direct
-                </p>
-                <div
-                  ref={previewContainerRef}
-                  className="flex-1 overflow-y-auto rounded-xl bg-gray-100 dark:bg-gray-800 px-4 py-6"
-                  style={{ boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.08)" }}
-                >
-                  <div
-                    style={{
-                      width: `${Math.round(794 * previewSchaal)}px`,
-                      height: `${Math.round(1123 * previewSchaal)}px`,
-                      overflow: "hidden",
-                      borderRadius: "4px",
-                      boxShadow: "0 8px 40px rgba(0,0,0,0.18)",
-                      margin: "0 auto",
-                      flexShrink: 0,
-                    }}
-                  >
-                    <div style={{ width: "794px", transformOrigin: "top left", transform: `scale(${previewSchaal})` }}>
-                      <FactuurLayoutPreview inst={instellingen} />
+                    <div>
+                      <p className="font-semibold text-gray-700 mb-1">Factuur</p>
+                      <ul className="space-y-0.5 font-mono text-gray-500">
+                        <li>{"{{factuurNummer}}"}</li>
+                        <li>{"{{factuurDatum}}"}</li>
+                        <li>{"{{vervaldatum}}"}</li>
+                        <li>{"{{notities}}"}</li>
+                        <li>{"{{betalingsCondities}}"}</li>
+                      </ul>
+                      <p className="font-semibold text-gray-700 mb-1 mt-3">Klant</p>
+                      <ul className="space-y-0.5 font-mono text-gray-500">
+                        <li>{"{{klantNaam}}"}</li>
+                        <li>{"{{klantBedrijf}}"}</li>
+                        <li>{"{{klantAdres}}"}</li>
+                        <li>{"{{klantPostcode}}"}</li>
+                        <li>{"{{klantStad}}"}</li>
+                        <li>{"{{klantBtwNummer}}"}</li>
+                      </ul>
+                      <p className="font-semibold text-gray-700 mb-1 mt-3">Totalen</p>
+                      <ul className="space-y-0.5 font-mono text-gray-500">
+                        <li>{"{{subtotaal}}"}</li>
+                        <li>{"{{kortingBedrag}}"}</li>
+                        <li>{"{{btwBedrag}}"}</li>
+                        <li>{"{{totaalBedrag}}"}</li>
+                        <li>{"{{regelsHtml}}"} <span className="font-sans text-gray-400">(HTML tabel)</span></li>
+                      </ul>
                     </div>
                   </div>
+                </details>
+                <div className="flex items-center gap-2 justify-end">
+                  <button
+                    type="button"
+                    className="text-xs text-gray-500 hover:text-gray-700 underline"
+                    onClick={() => { updateVeld("factuurHtmlTemplate", ""); slaOp({ factuurHtmlTemplate: "" }); }}
+                  >
+                    Reset naar standaard
+                  </button>
+                  <Button onClick={() => slaOp({ factuurHtmlTemplate: instellingen.factuurHtmlTemplate })} loading={opslaan}>
+                    Opslaan
+                  </Button>
                 </div>
-              </div>
-            </div>
-          );
-        })()}
+              </CardContent>
+            </Card>
+          </div>
+        )}
 
         {/* ── Email / SMTP ── */}
         {actieveTab === "email" && (
@@ -1801,37 +1578,6 @@ export default function InstellingenPagina() {
                     onBlur={() => slaOp({ factuurVolgNummer: instellingen.factuurVolgNummer })}
                     placeholder="1"
                   />
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Mollie API-sleutel */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Betaalintegratie</CardTitle>
-                <CardDescription>iDEAL betaallinks via Mollie</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div>
-                  <Input
-                    label="Mollie API-sleutel"
-                    type="password"
-                    value={instellingen.mollieApiKey ?? ""}
-                    onChange={(e) => updateVeld("mollieApiKey", e.target.value)}
-                    onBlur={() => slaOp({ mollieApiKey: instellingen.mollieApiKey })}
-                    placeholder="live_..."
-                  />
-                  <p className="text-xs text-gray-400 mt-1">
-                    Voor iDEAL betaallinks op facturen (optioneel). Maak een API-sleutel aan op{" "}
-                    <button
-                      type="button"
-                      className="underline"
-                      onClick={() => window.api.shell.openExternal("https://mollie.com/")}
-                    >
-                      mollie.com
-                    </button>
-                    .
-                  </p>
                 </div>
               </CardContent>
             </Card>

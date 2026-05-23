@@ -501,7 +501,7 @@ function RegelRij({ regel, index, korActief, producten, onChange, onVerwijder }:
   onVerwijder: (i: number) => void;
 }) {
   const [productOpen, setProductOpen] = useState(false);
-  const [dropdownNaarBoven, setDropdownNaarBoven] = useState(false);
+  const [dropdownPos, setDropdownPos] = useState<{ top?: number; bottom?: number; left: number; width: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const kiesProduct = (p: Product) => {
@@ -515,7 +515,12 @@ function RegelRij({ regel, index, korActief, producten, onChange, onVerwijder }:
   const toggleProductOpen = () => {
     if (!productOpen && containerRef.current) {
       const rect = containerRef.current.getBoundingClientRect();
-      setDropdownNaarBoven(window.innerHeight - rect.bottom < 220);
+      const spaceBelow = window.innerHeight - rect.bottom;
+      if (spaceBelow < 220) {
+        setDropdownPos({ bottom: window.innerHeight - rect.top, left: rect.left, width: Math.max(rect.width, 200) });
+      } else {
+        setDropdownPos({ top: rect.bottom, left: rect.left, width: Math.max(rect.width, 200) });
+      }
     }
     setProductOpen(v => !v);
   };
@@ -539,10 +544,18 @@ function RegelRij({ regel, index, korActief, producten, onChange, onVerwijder }:
             >
               <Plus className="h-3 w-3" />
             </button>
-            {productOpen && (
+            {productOpen && dropdownPos && (
               <>
                 <div className="fixed inset-0 z-10" onClick={() => setProductOpen(false)} />
-                <div className={`absolute left-0 z-20 bg-white rounded-lg shadow-xl border border-gray-200 py-1 min-w-[200px] max-h-48 overflow-y-auto ${dropdownNaarBoven ? 'bottom-7' : 'top-7'}`}>
+                <div
+                  className="fixed z-50 bg-white rounded-lg shadow-xl border border-gray-200 py-1 max-h-48 overflow-y-auto"
+                  style={{
+                    top: dropdownPos.top !== undefined ? dropdownPos.top : undefined,
+                    bottom: dropdownPos.bottom !== undefined ? dropdownPos.bottom : undefined,
+                    left: dropdownPos.left,
+                    minWidth: dropdownPos.width,
+                  }}
+                >
                   {producten.map(p => (
                     <button
                       key={p.id}

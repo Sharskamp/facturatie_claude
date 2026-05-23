@@ -30,7 +30,6 @@ interface Factuur {
   betalingsCondities?: string;
   btwVerlegd: boolean;
   taal?: string;
-  mollieBetaalLink?: string;
   regels: FactuurRegel[];
   klant: {
     naam: string;
@@ -150,7 +149,6 @@ export default function FactuurPrintPage() {
   const LOGO_H_MAP: Record<string, string> = { small: "40px", medium: "64px", large: "96px" };
   const logoHoogte = LOGO_H_MAP[instellingen.layoutLogoGrootte ?? "medium"] ?? "64px";
   const toonIban = instellingen.layoutToonIban !== false;
-  const toonQrCode = instellingen.layoutToonQrCode !== false;
   const toonKvk = instellingen.layoutToonKvkNummer !== false;
   const toonBtwNummer = instellingen.layoutToonBtwNummer !== false;
   const koptekst = instellingen.layoutKoptekst;
@@ -378,7 +376,7 @@ export default function FactuurPrintPage() {
         {factuur.betalingsCondities && (
           <p className="text-gray-600 text-sm mt-1">{factuur.betalingsCondities}</p>
         )}
-        {qrDataUrl && toonQrCode && (
+        {qrDataUrl && (
           <div className="mt-4 flex items-center gap-4">
             <img src={qrDataUrl} alt="SEPA betaal QR" className="w-28 h-28" />
             <div className="text-xs text-gray-500">
@@ -386,21 +384,6 @@ export default function FactuurPrintPage() {
               <p>Scan met je bank-app om</p>
               <p>direct te betalen</p>
             </div>
-          </div>
-        )}
-        {factuur.mollieBetaalLink && (
-          <div className="mt-3">
-            <p className="text-sm text-gray-600">
-              {labels.payOnline}:{" "}
-              <a
-                href={factuur.mollieBetaalLink}
-                className="text-indigo-600 underline break-all"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                {factuur.mollieBetaalLink}
-              </a>
-            </p>
           </div>
         )}
       </div>
