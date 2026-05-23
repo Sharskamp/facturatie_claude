@@ -553,7 +553,8 @@ async function stuurHerinneringen(): Promise<{ verstuurd: number; fouten: number
 
   let verstuurd = 0
   let fouten = 0
-  const smtpConfig = { host: user.emailSmtpHost, port: user.emailSmtpPort ?? 587, secure: user.emailSmtpSecure, user: user.emailSmtpUser!, pass: user.emailSmtpPass ?? '' }
+  const _smtpPoort1 = user.emailSmtpPort ?? 587
+  const smtpConfig = { host: user.emailSmtpHost, port: _smtpPoort1, secure: _smtpPoort1 === 465 ? true : _smtpPoort1 === 587 ? false : user.emailSmtpSecure, user: user.emailSmtpUser!, pass: user.emailSmtpPass ?? '' }
 
   for (const [, facturen] of perKlant) {
     const klant = facturen[0].klant
@@ -1236,13 +1237,17 @@ function setupIpcHandlers() {
         ?? `Factuur ${factuur.nummer} - ${bedrijfsnaam}`
       const emailBcc = (user as Record<string, unknown>).emailBcc as string | null
 
+      const _factuurPoort = user.emailSmtpPort ?? 587
       try {
         await verstuurEmail(
-          { host: user.emailSmtpHost, port: user.emailSmtpPort ?? 587, secure: user.emailSmtpSecure, user: user.emailSmtpUser, pass: user.emailSmtpPass ?? '' },
+          { host: user.emailSmtpHost, port: _factuurPoort, secure: _factuurPoort === 465 ? true : _factuurPoort === 587 ? false : user.emailSmtpSecure, user: user.emailSmtpUser, pass: user.emailSmtpPass ?? '' },
           { van: `${bedrijfsnaam} <${user.emailSmtpUser}>`, naar: payload.naarEmail ?? factuur.klant.email ?? '', bcc: emailBcc || undefined, onderwerp: factuurOnderwerp, html: emailHtml }
         )
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : 'Onbekende fout'
+        if (msg.includes('WRONG_VERSION') || msg.includes('SSL')) {
+          throw new Error(`SSL/TLS mismatch. Gebruik poort 465 met SSL aan, of poort 587 met SSL uit (STARTTLS). Details: ${msg}`)
+        }
         if (msg.includes('ETIMEDOUT') || msg.includes('connect')) {
           const poort = user.emailSmtpPort ?? 587
           throw new Error(`Verbinding met SMTP-server mislukt (${user.emailSmtpHost}:${poort}). Controleer de host, poort en firewall. Poort 25 wordt vaak geblokkeerd — gebruik poort 587 (STARTTLS) of 465 (SSL). Details: ${msg}`)
@@ -1452,8 +1457,9 @@ function setupIpcHandlers() {
 </body></html>`
 
     const emailBccOfferte = (user as Record<string, unknown>).emailBcc as string | null
+    const _offertePoort = user.emailSmtpPort ?? 587
     await verstuurEmail(
-      { host: user.emailSmtpHost, port: user.emailSmtpPort ?? 587, secure: user.emailSmtpSecure, user: user.emailSmtpUser, pass: user.emailSmtpPass ?? '' },
+      { host: user.emailSmtpHost, port: _offertePoort, secure: _offertePoort === 465 ? true : _offertePoort === 587 ? false : user.emailSmtpSecure, user: user.emailSmtpUser, pass: user.emailSmtpPass ?? '' },
       { naar: payload.email, van: `"${bedrijfsnaam}" <${user.emailSmtpUser}>`, bcc: emailBccOfferte || undefined, onderwerp, html }
     )
 
@@ -2247,7 +2253,8 @@ function setupIpcHandlers() {
     if (klantIds.length === 0) throw new Error('Geen klanten gekoppeld aan deze afspraak.')
 
     const klanten = await prisma.klant.findMany({ where: { id: { in: klantIds }, email: { not: null } } })
-    const smtpConfig = { host: user.emailSmtpHost, port: user.emailSmtpPort ?? 587, secure: user.emailSmtpSecure, user: user.emailSmtpUser!, pass: user.emailSmtpPass ?? '' }
+    const _smtpPoort2 = user.emailSmtpPort ?? 587
+    const smtpConfig = { host: user.emailSmtpHost, port: _smtpPoort2, secure: _smtpPoort2 === 465 ? true : _smtpPoort2 === 587 ? false : user.emailSmtpSecure, user: user.emailSmtpUser!, pass: user.emailSmtpPass ?? '' }
 
     // Haal Google Calendar event op voor details
     const accessToken = await refreshTokenIfNeeded(user)
@@ -4209,8 +4216,9 @@ Gebruik null voor velden die je niet kunt vinden. Retourneer ALLEEN JSON.`
 ${dagenTeLasten > 0 ? `<tr><td style="padding:4px 8px"><strong>Dagen te laat:</strong></td><td>${dagenTeLasten} dagen</td></tr>` : ''}
 </table><p>Met vriendelijke groet,<br>${user.naam}${user.bedrijfsnaam ? '<br>' + user.bedrijfsnaam : ''}</p>`
     const emailBccHerinnering = (user as Record<string, unknown>).emailBcc as string | null
+    const _herinneringPoort = user.emailSmtpPort ?? 587
     await verstuurEmail(
-      { host: user.emailSmtpHost, port: user.emailSmtpPort ?? 587, secure: user.emailSmtpSecure, user: user.emailSmtpUser, pass: user.emailSmtpPass ?? '' },
+      { host: user.emailSmtpHost, port: _herinneringPoort, secure: _herinneringPoort === 465 ? true : _herinneringPoort === 587 ? false : user.emailSmtpSecure, user: user.emailSmtpUser, pass: user.emailSmtpPass ?? '' },
       { van: user.emailSmtpUser, naar: factuur.klant.email, bcc: emailBccHerinnering || undefined, onderwerp: `Betalingsherinnering - Factuur ${factuur.nummer}`, html }
     )
     await prisma.factuur.update({ where: { id }, data: { herinneringVerzondenOp: nu } })
