@@ -12,7 +12,6 @@ import { verstuurEmail, maakFactuurEmailHtml } from '../lib/email'
 import { haalAgendaAfspraken, haalKalenderLijst, maakGoogleAfspraak, wijzigGoogleAfspraak, verwijderGoogleAfspraak, maakGoogleAuthUrl, wisselCodeVoorTokens, vernieuwAccessToken } from '../lib/google-calendar'
 import { autoUpdater } from 'electron-updater'
 import * as os from 'os'
-import { scanBestandLokaal } from '../lib/lokale-ocr'
 
 app.setName('Streamline Facturatie')
 
@@ -663,7 +662,7 @@ async function stuurHerinneringen(): Promise<{ verstuurd: number; fouten: number
 
     const eigenOnderwerp = (user as Record<string, unknown>).emailHerinneringOnderwerp as string | null
     const onderwerp = eigenOnderwerp
-      ? eigenOnderwerp.replace('{{factuurnummer}}', facturenMetSaldo.map(f => f.nummer).join(', '))
+      ? eigenOnderwerp.replace(/{{factuurnummer}}/g, facturenMetSaldo.map(f => f.nummer).join(', '))
       : `Betalingsherinnering - ${facturenMetSaldo.length === 1 ? `Factuur ${facturenMetSaldo[0].nummer}` : `${facturenMetSaldo.length} openstaande facturen`}`
 
     try {
@@ -1285,7 +1284,7 @@ function setupIpcHandlers() {
       if (user.logoBase64) emailHtml += `<div style="text-align:center;margin-top:24px;padding-top:16px;border-top:1px solid #e5e7eb"><img src="${user.logoBase64}" alt="Logo" style="max-height:60px;max-width:200px" /></div>`
 
       const factuurOnderwerp = ((user as Record<string, unknown>).emailFactuurOnderwerp as string | null)
-        ?.replace('{{nummer}}', factuur.nummer).replace('{{bedrijf}}', bedrijfsnaam)
+        ?.replace(/{{nummer}}/g, factuur.nummer).replace(/{{bedrijf}}/g, bedrijfsnaam)
         ?? `Factuur ${factuur.nummer} - ${bedrijfsnaam}`
       const emailBcc = (user as Record<string, unknown>).emailBcc as string | null
 
@@ -1526,7 +1525,7 @@ function setupIpcHandlers() {
     const totaalStr = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR' }).format(offerte.totaal)
 
     const onderwerp = payload.onderwerp ?? `Offerte ${offerte.nummer} van ${bedrijfsnaam}`
-    const aanheefTekst = (user as any).emailAanhef?.replace('{{naam}}', klantNaam) ?? `Geachte ${klantNaam},`
+    const aanheefTekst = (user as any).emailAanhef?.replace(/{{naam}}/g, klantNaam) ?? `Geachte ${klantNaam},`
     const afsluitingTekst = (user as any).emailAfsluitingsTekst ?? 'Met vriendelijke groet,'
 
     const berichtHtml = payload.bericht
@@ -2393,7 +2392,7 @@ function setupIpcHandlers() {
           .replace(/{{locatie}}/g, afspraakDetails.locatie ?? '')
           .split('\n').map(l => `<p>${l}</p>`).join('')
       } else {
-        const aanhef = (user.emailAanhef ?? 'Geachte {{naam}},').replace('{{naam}}', klant.naam)
+        const aanhef = (user.emailAanhef ?? 'Geachte {{naam}},').replace(/{{naam}}/g, klant.naam)
         const afsluiting = `${user.emailAfsluitingsTekst ?? 'Met vriendelijke groet,'}<br>${user.naam}${user.bedrijfsnaam ? '<br>' + user.bedrijfsnaam : ''}`
         html = `
           <p>${aanhef}</p>
@@ -3265,223 +3264,6 @@ function setupIpcHandlers() {
 
   // ── Betalingsherinneringen sturen ──
   ipcMain.handle('facturen:stuurHerinneringen', async () => stuurHerinneringen())
-
-  ipcMain.handle('uitgaven:scanBon', async (_, { bonPad, lokaal }: { bonPad: string; lokaal?: boolean }) => {
-    const user = await prisma.user.findFirst()
-    const model = user?.aiModel ?? 'claude'
-    const eigenBedrijfsnaam = user?.bedrijfsnaam ?? undefined
-    const eigenEmail = user?.email ?? undefined
-
-    // Lokale OCR pad (geen API nodig)
-    if (lokaal) {
-      const result = await scanBestandLokaal(bonPad, { eigenBedrijfsnaam, eigenEmail })
-      if (result.error) return result
-      return {
-        bedrag: result.totaal ?? null,
-        leverancier: result.klantNaam ?? null,
-        datum: result.datum ?? null,
-        omschrijving: result.omschrijving ?? null,
-      }
-    }
-
-    const ext = bonPad.split('.').pop()?.toLowerCase() ?? ''
-    // PDF nu ook ondersteunen via lokale OCR als fallback
-    if (ext === 'pdf') {
-      const result = await scanBestandLokaal(bonPad, { eigenBedrijfsnaam })
-      if (result.error) return result
-      return {
-        bedrag: result.totaal ?? null,
-        leverancier: result.klantNaam ?? null,
-        datum: result.datum ?? null,
-      }
-    }
-
-    let mediaType: string
-    if (ext === 'jpg' || ext === 'jpeg') {
-      mediaType = 'image/jpeg'
-    } else if (ext === 'png') {
-      mediaType = 'image/png'
-    } else if (ext === 'webp') {
-      mediaType = 'image/webp'
-    } else {
-      return { error: `Onbekend bestandstype: .${ext}. Gebruik JPG, PNG of WEBP.` }
-    }
-
-    const base64 = fs.readFileSync(bonPad).toString('base64')
-    const prompt = 'Dit is een kassabon of factuur. Extraheer: 1) totaalbedrag (alleen getal, geen €-teken, punt als decimaalscheidingsteken), 2) naam van de winkel/leverancier, 3) datum (formaat YYYY-MM-DD). Reageer ALLEEN met JSON: {"bedrag": 12.50, "leverancier": "Albert Heijn", "datum": "2025-03-15"}. Als je een waarde niet kunt vinden, gebruik null.'
-
-    const parseResultaat = (tekst: string) => {
-      const schoon = tekst.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
-      const parsed = JSON.parse(schoon) as { bedrag?: number | null; leverancier?: string | null; datum?: string | null }
-      return { bedrag: parsed.bedrag ?? null, leverancier: parsed.leverancier ?? null, datum: parsed.datum ?? null }
-    }
-
-    try {
-      if (model === 'openai') {
-        if (!user?.openaiApiKey) return { error: 'Geen OpenAI API sleutel ingesteld. Ga naar Instellingen > AI.' }
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${user.openaiApiKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            model: 'gpt-4o-mini',
-            max_tokens: 256,
-            messages: [{
-              role: 'user',
-              content: [
-                { type: 'image_url', image_url: { url: `data:${mediaType};base64,${base64}`, detail: 'low' } },
-                { type: 'text', text: prompt }
-              ]
-            }]
-          })
-        })
-        if (!response.ok) {
-          const fout = await response.text()
-          return { error: `OpenAI fout (${response.status}): ${fout.slice(0, 200)}` }
-        }
-        const data = await response.json() as { choices: Array<{ message: { content: string } }> }
-        return parseResultaat(data.choices?.[0]?.message?.content ?? '{}')
-      } else {
-        // Claude (standaard)
-        if (!user?.anthropicApiKey) return { error: 'Geen Anthropic API sleutel ingesteld. Ga naar Instellingen > AI.' }
-        const response = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: {
-            'x-api-key': user.anthropicApiKey,
-            'anthropic-version': '2023-06-01',
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'claude-haiku-4-5-20251001',
-            max_tokens: 256,
-            system: 'Je bent een assistent die bonnen uitleest. Reageer alleen met het gevraagde JSON-formaat, niets anders.',
-            messages: [{
-              role: 'user',
-              content: [
-                { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
-                { type: 'text', text: prompt }
-              ]
-            }]
-          })
-        })
-        if (!response.ok) {
-          const fout = await response.text()
-          return { error: `Claude fout (${response.status}): ${fout.slice(0, 200)}` }
-        }
-        const apiResp = await response.json() as { content: Array<{ text: string }> }
-        return parseResultaat(apiResp.content?.[0]?.text ?? '{}')
-      }
-    } catch (e: unknown) {
-      return { error: e instanceof Error ? e.message : 'Onbekende fout bij scannen' }
-    }
-  })
-
-  // ── Kies meerdere PDF/afbeelding bestanden voor bulk import ──
-  ipcMain.handle('facturen:kiesBestanden', async () => {
-    const venster = BrowserWindow.getFocusedWindow() ?? mainWindow
-    const result = await dialog.showOpenDialog(venster!, {
-      filters: [{ name: 'Facturen (PDF/afbeelding)', extensions: ['pdf', 'jpg', 'jpeg', 'png', 'webp'] }],
-      properties: ['openFile', 'multiSelections'],
-    })
-    if (result.canceled || result.filePaths.length === 0) return []
-    return result.filePaths
-  })
-
-  // ── Factuur PDF/afbeelding scannen met AI ──
-  ipcMain.handle('facturen:scanPdf', async (_, { pad }: { pad: string }) => {
-    const user = await prisma.user.findFirst()
-    if (!user?.anthropicApiKey) return { error: 'Geen Anthropic API sleutel ingesteld. Ga naar Instellingen > AI.' }
-
-    const ext = pad.split('.').pop()?.toLowerCase() ?? ''
-    const base64 = fs.readFileSync(pad).toString('base64')
-
-    type ContentBlock =
-      | { type: 'document'; source: { type: 'base64'; media_type: 'application/pdf'; data: string } }
-      | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
-      | { type: 'text'; text: string }
-
-    let mediaBlock: ContentBlock
-    if (ext === 'pdf') {
-      mediaBlock = { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } }
-    } else if (ext === 'jpg' || ext === 'jpeg') {
-      mediaBlock = { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: base64 } }
-    } else if (ext === 'png') {
-      mediaBlock = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: base64 } }
-    } else if (ext === 'webp') {
-      mediaBlock = { type: 'image', source: { type: 'base64', media_type: 'image/webp', data: base64 } }
-    } else {
-      return { error: `Bestandstype .${ext} wordt niet ondersteund. Gebruik PDF, JPG, PNG of WEBP.` }
-    }
-
-    const prompt = `Dit is een factuur. Extraheer de volgende gegevens en retourneer ALLEEN geldige JSON zonder uitleg:
-{
-  "nummer": "factuurnummer als string",
-  "klantNaam": "naam van de klant (bedrijf of persoon) aan wie de factuur gericht is",
-  "klantEmail": "e-mailadres van de klant indien zichtbaar, anders null",
-  "klantAdres": "adres van de klant indien zichtbaar, anders null",
-  "datum": "factuurdatum in YYYY-MM-DD formaat",
-  "vervaldatum": "vervaldatum in YYYY-MM-DD formaat, anders null",
-  "subtotaal": getal zonder valuta,
-  "btwBedrag": getal zonder valuta,
-  "totaal": totaalbedrag als getal zonder valuta,
-  "status": "BETAALD of VERZONDEN",
-  "notities": "eventuele notities of referentie, anders null"
-}
-Gebruik null voor velden die je niet kunt vinden. Retourneer ALLEEN JSON.`
-
-    try {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'x-api-key': user.anthropicApiKey,
-          'anthropic-version': '2023-06-01',
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 512,
-          system: 'Je bent een assistent die facturen uitleest. Reageer ALLEEN met het gevraagde JSON-object, niets anders.',
-          messages: [{ role: 'user', content: [mediaBlock, { type: 'text', text: prompt }] }]
-        })
-      })
-      if (!response.ok) {
-        const fout = await response.text()
-        return { error: `Claude fout (${response.status}): ${fout.slice(0, 200)}` }
-      }
-      const apiResp = await response.json() as { content: Array<{ text: string }> }
-      const tekst = apiResp.content?.[0]?.text ?? '{}'
-      const schoon = tekst.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
-      const parsed = JSON.parse(schoon) as {
-        nummer?: string | null; klantNaam?: string | null; klantEmail?: string | null;
-        klantAdres?: string | null; datum?: string | null; vervaldatum?: string | null;
-        subtotaal?: number | null; btwBedrag?: number | null; totaal?: number | null;
-        status?: string | null; notities?: string | null;
-      }
-      return {
-        nummer: parsed.nummer ?? null,
-        klantNaam: parsed.klantNaam ?? null,
-        klantEmail: parsed.klantEmail ?? null,
-        klantAdres: parsed.klantAdres ?? null,
-        datum: parsed.datum ?? null,
-        vervaldatum: parsed.vervaldatum ?? null,
-        subtotaal: parsed.subtotaal ?? null,
-        btwBedrag: parsed.btwBedrag ?? null,
-        totaal: parsed.totaal ?? null,
-        status: parsed.status ?? 'BETAALD',
-        notities: parsed.notities ?? null,
-      }
-    } catch (e: unknown) {
-      return { error: e instanceof Error ? e.message : 'Onbekende fout bij scannen' }
-    }
-  })
-
-  // ── Factuur/bon scannen zonder cloud AI (lokale OCR) ──
-  ipcMain.handle('facturen:scanPdfLokaal', async (_, { pad }: { pad: string }) => {
-    const user = await prisma.user.findFirst()
-    return scanBestandLokaal(pad, {
-      eigenBedrijfsnaam: user?.bedrijfsnaam ?? undefined,
-      eigenEmail: user?.email ?? undefined,
-    })
-  })
 
   // ── Vaste Activa ──
   ipcMain.handle('vasteActiva:list', async () => {

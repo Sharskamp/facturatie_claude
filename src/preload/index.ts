@@ -38,9 +38,6 @@ contextBridge.exposeInMainWorld('api', {
     stuurHerinnering: (id: string) => ipcRenderer.invoke('facturen:stuurHerinnering', id),
     importeerHistorisch: (data: unknown) => ipcRenderer.invoke('facturen:importeerHistorisch', data),
     onbetaaldeMeldingen: () => ipcRenderer.invoke('facturen:onbetaaldeMeldingen'),
-    scanPdf: (data: { pad: string }) => ipcRenderer.invoke('facturen:scanPdf', data),
-    scanPdfLokaal: (data: { pad: string }) => ipcRenderer.invoke('facturen:scanPdfLokaal', data),
-    kiesBestanden: () => ipcRenderer.invoke('facturen:kiesBestanden'),
     openBronBestand: (id: string) => ipcRenderer.invoke('facturen:openBronBestand', id),
     verwijderBetaaldStatus: (id: string) => ipcRenderer.invoke('facturen:verwijderBetaaldStatus', id),
   },
@@ -67,8 +64,6 @@ contextBridge.exposeInMainWorld('api', {
     deleteAll: () => ipcRenderer.invoke('uitgaven:deleteAll'),
     uploadBon: (data: unknown) => ipcRenderer.invoke('uitgaven:uploadBon', data),
     openBon: (data: unknown) => ipcRenderer.invoke('uitgaven:openBon', data),
-    scanBon: (data: { bonPad: string; lokaal?: boolean }) => ipcRenderer.invoke('uitgaven:scanBon', data),
-    kiesBon: () => ipcRenderer.invoke('uitgaven:kiesBon'),
   },
   categorien: {
     list: () => ipcRenderer.invoke('categorien:list'),

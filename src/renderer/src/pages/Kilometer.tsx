@@ -71,6 +71,42 @@ const LEEG_FORMULIER = {
   notities: "",
 };
 
+interface VasteRit {
+  id: string;
+  van: string;
+  naar: string;
+  omschrijving: string;
+}
+
+const VASTE_RITTEN_KEY = "km_vaste_ritten";
+
+function laadVasteRitten(): VasteRit[] {
+  try { return JSON.parse(localStorage.getItem(VASTE_RITTEN_KEY) ?? "[]"); } catch { return []; }
+}
+function slaVasteRittenOp(r: VasteRit[]) {
+  localStorage.setItem(VASTE_RITTEN_KEY, JSON.stringify(r));
+}
+
+async function geocodeer(adres: string): Promise<{ lat: number; lon: number } | null> {
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(adres)}&format=json&limit=1`, { headers: { "User-Agent": "AdminPro/1.0" } });
+    const data = await r.json() as Array<{ lat: string; lon: string }>;
+    if (!data[0]) return null;
+    return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
+  } catch { return null; }
+}
+
+async function berekenAfstand(van: string, naar: string): Promise<number | null> {
+  const [p1, p2] = await Promise.all([geocodeer(van), geocodeer(naar)]);
+  if (!p1 || !p2) return null;
+  try {
+    const r = await fetch(`https://router.project-osrm.org/route/v1/driving/${p1.lon},${p1.lat};${p2.lon},${p2.lat}?overview=false`);
+    const data = await r.json() as { routes?: Array<{ distance: number }> };
+    if (!data.routes?.[0]) return null;
+    return Math.round((data.routes[0].distance / 1000) * 10) / 10;
+  } catch { return null; }
+}
+
 export default function KilometerPagina() {
   const navigate = useNavigate();
   const [ritten, setRitten] = useState<Rit[]>([]);
@@ -86,6 +122,8 @@ export default function KilometerPagina() {
   const [klanten, setKlanten] = useState<Klant[]>([]);
   const [geselecteerdeKlantId, setGeselecteerdeKlantId] = useState<string>("");
   const [doorbelasten, setDoorbelasten] = useState(false);
+  const [vasteRitten, setVasteRitten] = useState<VasteRit[]>(() => laadVasteRitten());
+  const [afstandLaden, setAfstandLaden] = useState(false);
 
   useEffect(() => {
     window.api.instellingen.get().then((data: any) => {
@@ -153,6 +191,36 @@ export default function KilometerPagina() {
   const resetFormulier = () => {
     setFormulier(LEEG_FORMULIER);
     setBewerkenId(null);
+  };
+
+  const slaVasteRitOp = () => {
+    if (!formulier.van || !formulier.naar) return;
+    const nieuw: VasteRit = { id: crypto.randomUUID(), van: formulier.van, naar: formulier.naar, omschrijving: formulier.omschrijving };
+    const bijgewerkt = [...vasteRitten, nieuw];
+    setVasteRitten(bijgewerkt);
+    slaVasteRittenOp(bijgewerkt);
+  };
+
+  const verwijderVasteRit = (id: string) => {
+    const bijgewerkt = vasteRitten.filter(r => r.id !== id);
+    setVasteRitten(bijgewerkt);
+    slaVasteRittenOp(bijgewerkt);
+  };
+
+  const selecteerVasteRit = (rit: VasteRit) => {
+    setFormulier(f => ({ ...f, van: rit.van, naar: rit.naar, omschrijving: rit.omschrijving || f.omschrijving }));
+  };
+
+  const berekenKm = async () => {
+    if (!formulier.van || !formulier.naar) return;
+    setAfstandLaden(true);
+    const km = await berekenAfstand(formulier.van, formulier.naar);
+    setAfstandLaden(false);
+    if (km !== null) {
+      setFormulier(f => ({ ...f, kilometers: String(km) }));
+    } else {
+      toonMelding("fout", "Afstand kon niet worden berekend. Controleer de adressen.");
+    }
   };
 
   const openBewerken = (rit: Rit) => {
@@ -533,6 +601,25 @@ export default function KilometerPagina() {
             <ModalTitle>{bewerkenId ? "Rit bewerken" : "Nieuwe rit"}</ModalTitle>
           </ModalHeader>
           <div className="space-y-4">
+            {/* Vaste ritten */}
+            {vasteRitten.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-gray-500 mb-1.5">Vaste ritten</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {vasteRitten.map(r => (
+                    <div key={r.id} className="flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 pl-3 pr-1 py-1">
+                      <button type="button" onClick={() => selecteerVasteRit(r)} className="text-xs text-indigo-700 font-medium hover:text-indigo-900">
+                        {r.omschrijving || `${r.van} → ${r.naar}`}
+                      </button>
+                      <button type="button" onClick={() => verwijderVasteRit(r.id)} className="ml-1 h-4 w-4 flex items-center justify-center rounded-full text-indigo-400 hover:bg-indigo-200 hover:text-indigo-700">
+                        <span className="text-[10px]">✕</span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-4">
               <Input
                 label="Datum *"
@@ -540,15 +627,31 @@ export default function KilometerPagina() {
                 value={formulier.datum}
                 onChange={(e) => setFormulier({ ...formulier, datum: e.target.value })}
               />
-              <Input
-                label="Kilometers *"
-                type="number"
-                step="0.1"
-                min="0"
-                value={formulier.kilometers}
-                onChange={(e) => setFormulier({ ...formulier, kilometers: e.target.value })}
-                placeholder="bijv. 25.5"
-              />
+              <div>
+                <div className="flex items-end gap-2">
+                  <div className="flex-1">
+                    <Input
+                      label="Kilometers *"
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      value={formulier.kilometers}
+                      onChange={(e) => setFormulier({ ...formulier, kilometers: e.target.value })}
+                      placeholder="bijv. 25.5"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={berekenKm}
+                    disabled={afstandLaden || !formulier.van || !formulier.naar}
+                    className="h-9 px-2 text-xs rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 disabled:opacity-40 whitespace-nowrap flex items-center gap-1"
+                    title="Bereken kilometers via routeplanner"
+                  >
+                    {afstandLaden ? <Loader2 className="h-3 w-3 animate-spin" /> : <MapPin className="h-3 w-3" />}
+                    Bereken
+                  </button>
+                </div>
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <Input
@@ -564,6 +667,15 @@ export default function KilometerPagina() {
                 placeholder="Bestemming"
               />
             </div>
+            {formulier.van && formulier.naar && (
+              <button
+                type="button"
+                onClick={slaVasteRitOp}
+                className="text-xs text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
+              >
+                <span>+</span> Sla op als vaste rit
+              </button>
+            )}
             <Input
               label="Omschrijving *"
               value={formulier.omschrijving}
