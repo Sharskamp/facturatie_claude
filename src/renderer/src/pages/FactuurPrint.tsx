@@ -209,6 +209,7 @@ export default function FactuurPrintPage() {
   );
 
   const heeftKorting = factuur.regels.some((r) => r.kortingPercentage > 0);
+  const heeftBtw = !korActief && !factuur.btwVerlegd && Object.keys(btwGroepen).length > 0;
 
   const sectieBlokkken: Record<string, JSX.Element | null> = {
     koptekst: koptekst ? (
@@ -295,7 +296,7 @@ export default function FactuurPrintPage() {
             <th className="text-right py-2 text-xs font-semibold uppercase tracking-wider text-gray-500 w-24">
               {labels.price}
             </th>
-            {!factuur.btwVerlegd && !korActief && (
+            {heeftBtw && (
               <th className="text-right py-2 text-xs font-semibold uppercase tracking-wider text-gray-500 w-16">
                 {labels.tax}
               </th>
@@ -321,7 +322,7 @@ export default function FactuurPrintPage() {
               </td>
               <td className="py-3 text-center text-gray-700">{regel.aantal}</td>
               <td className="py-3 text-right text-gray-700">{formatBedrag(regel.prijs)}</td>
-              {!factuur.btwVerlegd && !korActief && (
+              {heeftBtw && (
                 <td className="py-3 text-right text-gray-500 text-sm">{regel.btwPercentage}%</td>
               )}
               {heeftKorting && (
