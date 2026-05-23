@@ -644,18 +644,22 @@ async function stuurHerinneringen(): Promise<{ verstuurd: number; fouten: number
 
     // Gebruik aangepast sjabloon of standaard
     const eigenTekst = (user as Record<string, unknown>).emailHerinneringTekst as string | null
-    const intro = eigenTekst
-      ? eigenTekst
-          .replace('{{naam}}', klant.naam)
-          .replace('{{openstaand}}', `€ ${totaalOpenstaand.toFixed(2).replace('.', ',')}`)
-          .split('\n').map(r => `<p>${r}</p>`).join('')
-      : `<p>Geachte ${klant.naam},</p>
-         <p>Wij attenderen u op onderstaande openstaande facturen. Wij verzoeken u vriendelijk deze zo spoedig mogelijk te voldoen.</p>`
-
-    const html = `${intro}${tabelHtml}
-      <p>Totaal openstaand: <strong>€ ${totaalOpenstaand.toFixed(2).replace('.', ',')}</strong></p>
-      <p>Heeft u reeds betaald? Dan kunt u dit bericht als niet verzonden beschouwen.</p>
-      <p>Met vriendelijke groet,<br>${user.naam}${user.bedrijfsnaam ? '<br>' + user.bedrijfsnaam : ''}</p>`
+    let html: string
+    if (eigenTekst) {
+      const body = eigenTekst
+        .replace(/{{naam}}/g, klant.naam)
+        .replace(/{{openstaand}}/g, `€ ${totaalOpenstaand.toFixed(2).replace('.', ',')}`)
+        .split('\n').map(r => `<p>${r}</p>`).join('')
+      html = `${body}${tabelHtml}<p>Totaal openstaand: <strong>€ ${totaalOpenstaand.toFixed(2).replace('.', ',')}</strong></p>`
+    } else {
+      html = `<p>Geachte ${klant.naam},</p>
+         <p>Wij attenderen u op onderstaande openstaande facturen. Wij verzoeken u vriendelijk deze zo spoedig mogelijk te voldoen.</p>
+         ${tabelHtml}
+         <p>Totaal openstaand: <strong>€ ${totaalOpenstaand.toFixed(2).replace('.', ',')}</strong></p>
+         <p>Heeft u reeds betaald? Dan kunt u dit bericht als niet verzonden beschouwen.</p>
+         <p>Met vriendelijke groet,<br>${user.naam}${user.bedrijfsnaam ? '<br>' + user.bedrijfsnaam : ''}</p>`
+    }
+    if (user.logoBase64) html += `<div style="text-align:center;margin-top:24px;padding-top:16px;border-top:1px solid #e5e7eb"><img src="${user.logoBase64}" alt="Logo" style="max-height:60px;max-width:200px" /></div>`
 
     const eigenOnderwerp = (user as Record<string, unknown>).emailHerinneringOnderwerp as string | null
     const onderwerp = eigenOnderwerp
@@ -1256,16 +1260,13 @@ function setupIpcHandlers() {
       let emailHtml: string
       const emailFactuurTekst = (user as Record<string, unknown>).emailFactuurTekst as string | null
       if (emailFactuurTekst) {
-        const aanhef = (user.emailAanhef ?? 'Geachte {{naam}},').replace('{{naam}}', factuur.klant.naam)
-        const bodyLines = emailFactuurTekst
-          .replace('{{naam}}', factuur.klant.naam)
-          .replace('{{bedrijf}}', bedrijfsnaam)
-          .replace('{{nummer}}', factuur.nummer)
-          .replace('{{totaal}}', formatBedrag(factuur.totaal))
-          .replace('{{vervaldatum}}', formatDatum(factuur.vervaldatum))
+        emailHtml = emailFactuurTekst
+          .replace(/{{naam}}/g, factuur.klant.naam)
+          .replace(/{{bedrijf}}/g, bedrijfsnaam)
+          .replace(/{{nummer}}/g, factuur.nummer)
+          .replace(/{{totaal}}/g, formatBedrag(factuur.totaal))
+          .replace(/{{vervaldatum}}/g, formatDatum(factuur.vervaldatum))
           .split('\n').map(l => `<p>${l}</p>`).join('')
-        const afsluiting = user.emailAfsluitingsTekst ?? 'Met vriendelijke groet,'
-        emailHtml = `<p>${aanhef}</p>${bodyLines}<p>${afsluiting}<br><strong>${bedrijfsnaam}</strong></p>`
         if (factuur.mollieBetaalLink) {
           emailHtml += `<div style="text-align:center;margin:24px 0"><a href="${factuur.mollieBetaalLink}" style="background:#16a34a;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold">Direct betalen via iDEAL</a></div>`
         }
@@ -1281,6 +1282,7 @@ function setupIpcHandlers() {
           mollieBetaalLink: factuur.mollieBetaalLink,
         })
       }
+      if (user.logoBase64) emailHtml += `<div style="text-align:center;margin-top:24px;padding-top:16px;border-top:1px solid #e5e7eb"><img src="${user.logoBase64}" alt="Logo" style="max-height:60px;max-width:200px" /></div>`
 
       const factuurOnderwerp = ((user as Record<string, unknown>).emailFactuurOnderwerp as string | null)
         ?.replace('{{nummer}}', factuur.nummer).replace('{{bedrijf}}', bedrijfsnaam)
@@ -1348,14 +1350,18 @@ function setupIpcHandlers() {
     const emailFactuurTekst = (user as Record<string, unknown>).emailFactuurTekst as string | null
     let emailHtml: string
     if (emailFactuurTekst) {
-      const aanhef = (user.emailAanhef ?? 'Geachte {{naam}},').replace('{{naam}}', factuur.klant.naam)
-      const bodyLines = emailFactuurTekst.replace('{{naam}}', factuur.klant.naam).replace('{{bedrijf}}', bedrijfsnaam).replace('{{nummer}}', factuur.nummer).replace('{{totaal}}', formatBedrag(factuur.totaal)).replace('{{vervaldatum}}', formatDatum(factuur.vervaldatum)).split('\n').map(l => `<p>${l}</p>`).join('')
-      const afsluiting = user.emailAfsluitingsTekst ?? 'Met vriendelijke groet,'
-      emailHtml = `<p>${aanhef}</p>${bodyLines}<p>${afsluiting}<br><strong>${bedrijfsnaam}</strong></p>`
+      emailHtml = emailFactuurTekst
+        .replace(/{{naam}}/g, factuur.klant.naam)
+        .replace(/{{bedrijf}}/g, bedrijfsnaam)
+        .replace(/{{nummer}}/g, factuur.nummer)
+        .replace(/{{totaal}}/g, formatBedrag(factuur.totaal))
+        .replace(/{{vervaldatum}}/g, formatDatum(factuur.vervaldatum))
+        .split('\n').map(l => `<p>${l}</p>`).join('')
       if (factuur.mollieBetaalLink) emailHtml += `<div style="text-align:center;margin:24px 0"><a href="${factuur.mollieBetaalLink}" style="background:#16a34a;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold">Direct betalen via iDEAL</a></div>`
     } else {
       emailHtml = maakFactuurEmailHtml({ klantNaam: factuur.klant.naam, bedrijfsnaam, factuurNummer: factuur.nummer, totaal: formatBedrag(factuur.totaal), vervaldatum: formatDatum(factuur.vervaldatum), factuurUrl: '', notities: bericht, mollieBetaalLink: factuur.mollieBetaalLink })
     }
+    if (user.logoBase64) emailHtml += `<div style="text-align:center;margin-top:24px;padding-top:16px;border-top:1px solid #e5e7eb"><img src="${user.logoBase64}" alt="Logo" style="max-height:60px;max-width:200px" /></div>`
     return emailHtml
   })
 
@@ -2373,24 +2379,22 @@ function setupIpcHandlers() {
 
     const emailBevestigingOnderwerp = (user as Record<string, unknown>).emailBevestigingOnderwerp as string | null
     const emailBevestigingTekst = (user as Record<string, unknown>).emailBevestigingTekst as string | null
-    const emailBcc = (user as Record<string, unknown>).emailBcc as string | null
 
     let verstuurd = 0
     for (const klant of klanten) {
       if (!klant.email) continue
-      const aanhef = (user.emailAanhef ?? 'Geachte {{naam}},').replace('{{naam}}', klant.naam)
-      const afsluiting = `${user.emailAfsluitingsTekst ?? 'Met vriendelijke groet,'}<br>${user.naam}${user.bedrijfsnaam ? '<br>' + user.bedrijfsnaam : ''}`
 
       let html: string
       if (emailBevestigingTekst) {
-        const bodyLines = emailBevestigingTekst
+        html = emailBevestigingTekst
           .replace(/{{naam}}/g, klant.naam)
           .replace(/{{onderwerp}}/g, afspraakDetails.samenvatting ?? '')
           .replace(/{{datum}}/g, datumStr)
           .replace(/{{locatie}}/g, afspraakDetails.locatie ?? '')
           .split('\n').map(l => `<p>${l}</p>`).join('')
-        html = `<p>${aanhef}</p>${bodyLines}<p>${afsluiting}</p>`
       } else {
+        const aanhef = (user.emailAanhef ?? 'Geachte {{naam}},').replace('{{naam}}', klant.naam)
+        const afsluiting = `${user.emailAfsluitingsTekst ?? 'Met vriendelijke groet,'}<br>${user.naam}${user.bedrijfsnaam ? '<br>' + user.bedrijfsnaam : ''}`
         html = `
           <p>${aanhef}</p>
           <p>Hierbij bevestigen wij uw afspraak:</p>
@@ -2402,6 +2406,7 @@ function setupIpcHandlers() {
           <p>${afsluiting}</p>
         `
       }
+      if (user.logoBase64) html += `<div style="text-align:center;margin-top:24px;padding-top:16px;border-top:1px solid #e5e7eb"><img src="${user.logoBase64}" alt="Logo" style="max-height:60px;max-width:200px" /></div>`
 
       const onderwerp = emailBevestigingOnderwerp
         ? emailBevestigingOnderwerp.replace(/{{onderwerp}}/g, afspraakDetails.samenvatting ?? '').replace(/{{naam}}/g, klant.naam)
@@ -2415,7 +2420,7 @@ function setupIpcHandlers() {
       }] : []
 
       try {
-        await verstuurEmail(smtpConfig, { van: user.emailSmtpUser!, naar: klant.email, bcc: emailBcc || undefined, onderwerp, html, bijlagen: icsBijlagen })
+        await verstuurEmail(smtpConfig, { van: user.emailSmtpUser!, naar: klant.email, onderwerp, html, bijlagen: icsBijlagen })
         verstuurd++
       } catch {}
     }
