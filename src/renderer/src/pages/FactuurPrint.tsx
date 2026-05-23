@@ -27,6 +27,7 @@ interface Factuur {
   kortingPercentage: number;
   btwBedrag: number;
   totaal: number;
+  totaalKortingBedrag: number;
   notities?: string;
   betalingsCondities?: string;
   btwVerlegd: boolean;
