@@ -216,6 +216,11 @@ function runMigratie(dbPath: string): void {
   kolomToevoegen('Factuur', 'handmatigBetaald', 'BOOLEAN NOT NULL DEFAULT false')
   kolomToevoegen('Factuur', 'bronBestandPad', 'TEXT')
 
+  // FactuurRegel — nieuwe kolommen
+  kolomToevoegen('FactuurRegel', 'isReiskosten', 'BOOLEAN NOT NULL DEFAULT false')
+  kolomToevoegen('FactuurRegel', 'reiskostenBegindatum', 'DATETIME')
+  kolomToevoegen('FactuurRegel', 'reiskostenEinddatum', 'DATETIME')
+
   // Offerte — nieuwe kolommen
   kolomToevoegen('Offerte', 'totaalKorting', 'REAL NOT NULL DEFAULT 0')
   kolomToevoegen('Offerte', 'totaalKortingBedrag', 'REAL NOT NULL DEFAULT 0')
