@@ -95,6 +95,8 @@ interface Instellingen {
   emailSmtpSecure?: boolean;
   emailSmtpUser?: string;
   emailSmtpPass?: string;
+  emailSmtpPassIngesteld?: boolean;
+  emailBcc?: string;
   // Google
   googleGekoppeld?: boolean;
   googleEmail?: string;
@@ -112,8 +114,11 @@ interface Instellingen {
   emailAanhef?: string;
   emailAfsluitingsTekst?: string;
   emailFactuurOnderwerp?: string;
+  emailFactuurTekst?: string;
   emailHerinneringOnderwerp?: string;
   emailHerinneringTekst?: string;
+  emailBevestigingOnderwerp?: string;
+  emailBevestigingTekst?: string;
   agendaHerinneringActief?: boolean;
   agendaHerinneringModus?: string;
   agendaHerinneringVoorafUren?: number;
@@ -282,6 +287,7 @@ export default function InstellingenPagina() {
   const [laden, setLaden] = useState(true);
   const [opslaan, setOpslaan] = useState(false);
   const [googleSecretInput, setGoogleSecretInput] = useState("");
+  const [smtpPassInput, setSmtpPassInput] = useState("");
   const [melding, setMelding] = useState<{ type: "succes" | "fout"; tekst: string } | null>(null);
   const [emailTestStatus, setEmailTestStatus] = useState<"idle" | "laden" | "succes" | "fout">("idle");
   const [googleLaden, setGoogleLaden] = useState(false);
@@ -385,7 +391,7 @@ export default function InstellingenPagina() {
         port: instellingen.emailSmtpPort ?? 587,
         secure: instellingen.emailSmtpSecure ?? false,
         user: instellingen.emailSmtpUser ?? "",
-        pass: instellingen.emailSmtpPass ?? "",
+        pass: smtpPassInput || undefined,
         naar: instellingen.email ?? "",
       });
       setEmailTestStatus("succes");
@@ -1146,15 +1152,41 @@ export default function InstellingenPagina() {
                     onBlur={() => slaOp({ emailSmtpUser: instellingen.emailSmtpUser })}
                     placeholder="jij@gmail.com"
                   />
-                  <Input
-                    label="Wachtwoord / App-wachtwoord"
-                    type="password"
-                    value={instellingen.emailSmtpPass ?? ""}
-                    onChange={(e) => updateVeld("emailSmtpPass", e.target.value)}
-                    onBlur={() => slaOp({ emailSmtpPass: instellingen.emailSmtpPass })}
-                    placeholder="••••••••••••"
-                  />
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Wachtwoord / App-wachtwoord</label>
+                    <Input
+                      type="password"
+                      value={smtpPassInput}
+                      onChange={(e) => setSmtpPassInput(e.target.value)}
+                      onBlur={async () => {
+                        if (smtpPassInput.trim()) {
+                          try {
+                            await window.api.instellingen.update({ emailSmtpPass: smtpPassInput.trim() } as Record<string, unknown>);
+                            setSmtpPassInput("");
+                            updateVeld("emailSmtpPassIngesteld", true);
+                            toonMelding("succes", "Wachtwoord opgeslagen");
+                          } catch {
+                            toonMelding("fout", "Wachtwoord opslaan mislukt");
+                          }
+                        }
+                      }}
+                      placeholder={instellingen.emailSmtpPassIngesteld ? "●●●●●●●● (opgeslagen — laat leeg om te bewaren)" : "App-wachtwoord invoeren"}
+                    />
+                    {instellingen.emailSmtpPassIngesteld && !smtpPassInput && (
+                      <p className="mt-1 text-xs text-green-600">✓ Wachtwoord is opgeslagen. Typ een nieuw wachtwoord om te wijzigen.</p>
+                    )}
+                  </div>
                 </div>
+
+                <Input
+                  label="Vaste BCC-ontvanger (optioneel)"
+                  type="email"
+                  value={instellingen.emailBcc ?? ""}
+                  onChange={(e) => updateVeld("emailBcc", e.target.value)}
+                  onBlur={() => slaOp({ emailBcc: instellingen.emailBcc })}
+                  placeholder="bcc@jouwbedrijf.nl"
+                  helperText="Dit adres ontvangt altijd een kopie van alle uitgaande e-mails."
+                />
 
                 <div className="flex flex-wrap gap-3 justify-end pt-2">
                   <Button
@@ -1237,6 +1269,36 @@ export default function InstellingenPagina() {
 
             <Card>
               <CardHeader>
+                <CardTitle>Factuur e-mail sjabloon</CardTitle>
+                <CardDescription>Stel de volledige e-mailtekst in voor het versturen van facturen. Laat leeg voor de standaard opmaak.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    E-mailtekst factuur
+                  </label>
+                  <textarea
+                    rows={6}
+                    value={instellingen.emailFactuurTekst ?? ''}
+                    onChange={(e) => updateVeld('emailFactuurTekst', e.target.value)}
+                    placeholder={`Hierbij ontvangt u factuur {{nummer}} met een totaalbedrag van {{totaal}}.\n\nU kunt deze betalen vóór {{vervaldatum}}.\n\nHartelijk dank voor uw vertrouwen.`}
+                    className="flex w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 shadow-sm placeholder:text-gray-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:border-transparent resize-none"
+                  />
+                  <p className="mt-1 text-xs text-gray-400">Variabelen: {'{{naam}}'}, {'{{nummer}}'}, {'{{totaal}}'}, {'{{vervaldatum}}'}, {'{{bedrijf}}'}. De aanhef en afsluitingstekst worden automatisch toegevoegd.</p>
+                </div>
+                <Button
+                  onClick={() => slaOp({ emailFactuurTekst: instellingen.emailFactuurTekst })}
+                  disabled={opslaan}
+                  className="gap-2"
+                >
+                  {opslaan && <Loader2 className="h-4 w-4 animate-spin" />}
+                  Sjabloon opslaan
+                </Button>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
                 <CardTitle>Betalingsherinnering sjabloon</CardTitle>
                 <CardDescription>Stel de e-mailtekst in voor betalingsherinneringen</CardDescription>
               </CardHeader>
@@ -1269,6 +1331,49 @@ export default function InstellingenPagina() {
                 </div>
                 <Button
                   onClick={() => slaOp({ emailHerinneringOnderwerp: instellingen.emailHerinneringOnderwerp, emailHerinneringTekst: instellingen.emailHerinneringTekst })}
+                  disabled={opslaan}
+                  className="gap-2"
+                >
+                  {opslaan && <Loader2 className="h-4 w-4 animate-spin" />}
+                  Sjabloon opslaan
+                </Button>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Afspraakbevestiging sjabloon</CardTitle>
+                <CardDescription>Stel de e-mailtekst in voor afspraakbevestigingen vanuit de agenda</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Onderwerp bevestiging
+                  </label>
+                  <input
+                    type="text"
+                    value={instellingen.emailBevestigingOnderwerp ?? ''}
+                    onChange={(e) => updateVeld('emailBevestigingOnderwerp', e.target.value)}
+                    placeholder="Afspraakbevestiging – {{onderwerp}}"
+                    className="flex h-9 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-1 text-sm text-gray-900 dark:text-gray-100 shadow-sm placeholder:text-gray-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:border-transparent"
+                  />
+                  <p className="mt-1 text-xs text-gray-400">Variabelen: {'{{onderwerp}}'} (afspraaknaam), {'{{naam}}'} (klantnaam)</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Tekst bevestiging
+                  </label>
+                  <textarea
+                    rows={5}
+                    value={instellingen.emailBevestigingTekst ?? ''}
+                    onChange={(e) => updateVeld('emailBevestigingTekst', e.target.value)}
+                    placeholder={`Hierbij bevestigen wij uw afspraak: {{onderwerp}}\n\nDatum & tijd: {{datum}}\nLocatie: {{locatie}}\n\nWij zien u graag verschijnen.`}
+                    className="flex w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 shadow-sm placeholder:text-gray-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:border-transparent resize-none"
+                  />
+                  <p className="mt-1 text-xs text-gray-400">Variabelen: {'{{naam}}'}, {'{{onderwerp}}'}, {'{{datum}}'}, {'{{locatie}}'}. Laat leeg voor de standaardtekst.</p>
+                </div>
+                <Button
+                  onClick={() => slaOp({ emailBevestigingOnderwerp: instellingen.emailBevestigingOnderwerp, emailBevestigingTekst: instellingen.emailBevestigingTekst })}
                   disabled={opslaan}
                   className="gap-2"
                 >

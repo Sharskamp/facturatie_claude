@@ -184,6 +184,26 @@ export async function wijzigGoogleAfspraak(
   }
 }
 
+export async function verwijderGoogleAfspraak(
+  accessToken: string,
+  calendarId: string,
+  eventId: string
+): Promise<void> {
+  const response = await fetch(
+    `${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }
+  )
+  if (!response.ok && response.status !== 410) {
+    const errBody = await response.text().catch(() => "")
+    let detail = errBody
+    try { detail = JSON.parse(errBody)?.error?.message ?? errBody } catch {}
+    throw new Error(`Afspraak verwijderen mislukt ${response.status}: ${detail}`)
+  }
+}
+
 export async function maakGoogleAfspraak(
   accessToken: string,
   calendarId: string,
