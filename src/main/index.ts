@@ -502,6 +502,9 @@ async function genereerFactuurPdfBufferIntern(factuurId: string): Promise<Buffer
     const regelsHtml = `<table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:4px 8px;border-bottom:1px solid #ddd">Omschrijving</th><th style="text-align:center;padding:4px 8px;border-bottom:1px solid #ddd">Aantal</th><th style="text-align:right;padding:4px 8px;border-bottom:1px solid #ddd">Prijs</th><th style="text-align:right;padding:4px 8px;border-bottom:1px solid #ddd">Totaal</th></tr></thead><tbody>${f.regels.map(r => `<tr><td style="padding:4px 8px;border-bottom:1px solid #eee">${r.omschrijving}${r.eenheid ? ` / ${r.eenheid}` : ''}</td><td style="text-align:center;padding:4px 8px;border-bottom:1px solid #eee">${r.aantal}</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid #eee">€${r.prijs.toFixed(2)}</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid #eee">€${r.totaal.toFixed(2)}</td></tr>`).join('')}</tbody></table>`
     const logoHtml = user.logoBase64 ? `<img src="${user.logoBase64}" style="max-height:80px" />` : ''
     const qrHtml = await maakEpcQrHtml(user.iban, user.bedrijfsnaam ?? user.naam ?? '', f.totaal, f.nummer)
+    const grossSubtotaalPdf = f.regels.reduce((acc, r) => acc + r.prijs * r.aantal, 0)
+    const regelKortingPdf = f.regels.reduce((acc, r) => acc + r.prijs * r.aantal * ((r.kortingPercentage ?? 0) / 100), 0)
+    const effectieveKortingPdf = regelKortingPdf + f.kortingBedrag + ((f as unknown as { totaalKortingBedrag: number }).totaalKortingBedrag ?? 0)
     const vars: Record<string, string> = {
       bedrijfsnaam: user.bedrijfsnaam ?? user.naam ?? '',
       bedrijfAdres: user.adres ?? '',
@@ -525,11 +528,11 @@ async function genereerFactuurPdfBufferIntern(factuurId: string): Promise<Buffer
       klantPostcode: f.klant.postcode ?? '',
       klantStad: f.klant.stad ?? '',
       klantBtwNummer: f.klant.btwNummer ?? '',
-      subtotaal: `€${f.subtotaal.toFixed(2)}`,
-      kortingBedrag: `€${f.kortingBedrag.toFixed(2)}`,
+      subtotaal: `€${grossSubtotaalPdf.toFixed(2)}`,
+      kortingBedrag: `€${effectieveKortingPdf.toFixed(2)}`,
       btwBedrag: `€${f.btwBedrag.toFixed(2)}`,
       totaalBedrag: `€${f.totaal.toFixed(2)}`,
-      kortingClass: f.kortingBedrag > 0 ? '' : 'hidden',
+      kortingClass: effectieveKortingPdf > 0.005 ? '' : 'hidden',
       btwClass: f.btwBedrag > 0 ? '' : 'hidden',
       regelsHtml,
       betaalQrCode: qrHtml,
@@ -2671,6 +2674,9 @@ function setupIpcHandlers() {
         const regelsHtml = `<table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:4px 8px;border-bottom:1px solid #ddd">Omschrijving</th><th style="text-align:center;padding:4px 8px;border-bottom:1px solid #ddd">Aantal</th><th style="text-align:right;padding:4px 8px;border-bottom:1px solid #ddd">Prijs</th><th style="text-align:right;padding:4px 8px;border-bottom:1px solid #ddd">Totaal</th></tr></thead><tbody>${f.regels.map(r => `<tr><td style="padding:4px 8px;border-bottom:1px solid #eee">${r.omschrijving}${r.eenheid ? ` / ${r.eenheid}` : ''}</td><td style="text-align:center;padding:4px 8px;border-bottom:1px solid #eee">${r.aantal}</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid #eee">€${r.prijs.toFixed(2)}</td><td style="text-align:right;padding:4px 8px;border-bottom:1px solid #eee">€${r.totaal.toFixed(2)}</td></tr>`).join('')}</tbody></table>`
         const logoHtml = user.logoBase64 ? `<img src="${user.logoBase64}" style="max-height:80px" />` : ''
         const qrHtml = await maakEpcQrHtml(user.iban, user.bedrijfsnaam ?? user.naam ?? '', f.totaal, f.nummer)
+        const grossSubtotaalEmail = f.regels.reduce((acc, r) => acc + r.prijs * r.aantal, 0)
+        const regelKortingEmail = f.regels.reduce((acc, r) => acc + r.prijs * r.aantal * ((r.kortingPercentage ?? 0) / 100), 0)
+        const effectieveKortingEmail = regelKortingEmail + f.kortingBedrag + ((f as unknown as { totaalKortingBedrag: number }).totaalKortingBedrag ?? 0)
         const vars: Record<string, string> = {
           bedrijfsnaam: user.bedrijfsnaam ?? user.naam ?? '',
           bedrijfAdres: user.adres ?? '',
@@ -2694,11 +2700,11 @@ function setupIpcHandlers() {
           klantPostcode: f.klant.postcode ?? '',
           klantStad: f.klant.stad ?? '',
           klantBtwNummer: f.klant.btwNummer ?? '',
-          subtotaal: `€${f.subtotaal.toFixed(2)}`,
-          kortingBedrag: `€${f.kortingBedrag.toFixed(2)}`,
+          subtotaal: `€${grossSubtotaalEmail.toFixed(2)}`,
+          kortingBedrag: `€${effectieveKortingEmail.toFixed(2)}`,
           btwBedrag: `€${f.btwBedrag.toFixed(2)}`,
           totaalBedrag: `€${f.totaal.toFixed(2)}`,
-          kortingClass: f.kortingBedrag > 0 ? '' : 'hidden',
+          kortingClass: effectieveKortingEmail > 0.005 ? '' : 'hidden',
           btwClass: f.btwBedrag > 0 ? '' : 'hidden',
           regelsHtml,
           betaalQrCode: qrHtml,

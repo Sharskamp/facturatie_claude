@@ -45,6 +45,7 @@ export interface FactuurHtmlFactuur {
   kortingBedrag: number;
   btwBedrag: number;
   totaal: number;
+  totaalKortingBedrag?: number;
   notities?: string | null;
   betalingsCondities?: string | null;
   regels: FactuurHtmlRegel[];
@@ -60,6 +61,10 @@ export async function bouwFactuurHtml({
 }) {
   const template = instellingen.factuurHtmlTemplate?.trim();
   if (!template) return "";
+
+  const grossSubtotaal = factuur.regels.reduce((acc, r) => acc + r.prijs * r.aantal, 0);
+  const regelKortingTotaal = factuur.regels.reduce((acc, r) => acc + r.prijs * r.aantal * (r.kortingPercentage ?? 0) / 100, 0);
+  const effectieveKorting = regelKortingTotaal + factuur.kortingBedrag + (factuur.totaalKortingBedrag ?? 0);
 
   const toonRegelKorting = factuur.regels.some((regel) => (regel.kortingPercentage ?? 0) > 0);
   const regelsHtml = toonRegelKorting
@@ -100,11 +105,11 @@ export async function bouwFactuurHtml({
     klantPostcode: factuur.klant.postcode ?? "",
     klantStad: factuur.klant.stad ?? "",
     klantBtwNummer: factuur.klant.btwNummer ?? "",
-    subtotaal: formatBedrag(factuur.subtotaal),
-    kortingBedrag: formatBedrag(factuur.kortingBedrag),
+    subtotaal: formatBedrag(grossSubtotaal),
+    kortingBedrag: formatBedrag(effectieveKorting),
     btwBedrag: formatBedrag(factuur.btwBedrag),
     totaalBedrag: formatBedrag(factuur.totaal),
-    kortingClass: factuur.kortingBedrag > 0 ? "" : "hidden",
+    kortingClass: effectieveKorting > 0.005 ? "" : "hidden",
     btwClass: factuur.btwBedrag > 0 ? "" : "hidden",
     betaalQrCodeClass: betaalQrCode ? "" : "hidden",
     korClass: instellingen.korActief ? "" : "hidden",
