@@ -861,7 +861,7 @@ export default function FactuurDetailPage() {
                   <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
                     <div
                       className={`h-full rounded-full transition-all ${
-                        (factuur.teveel ?? 0) > 0.01 ? "bg-red-500" :
+                        (factuur.teveel ?? 0) > 0.01 ? "bg-blue-500" :
                         (factuur.openstaand ?? 0) < 0.01 ? "bg-green-500" : "bg-amber-400"
                       }`}
                       style={{ width: `${Math.min(100, ((factuur.reedsBetaald ?? 0) / (factuur.groepTotaal ?? factuur.totaal)) * 100)}%` }}
