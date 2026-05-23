@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('api', {
     deleteAll: () => ipcRenderer.invoke('facturen:deleteAll'),
     duplicate: (id: string) => ipcRenderer.invoke('facturen:duplicate', id),
     verstuur: (id: string, data: unknown) => ipcRenderer.invoke('facturen:verstuur', id, data),
+    previewEmail: (id: string, bericht?: string) => ipcRenderer.invoke('facturen:previewEmail', id, bericht),
     downloadPdf: (id: string) => ipcRenderer.invoke('facturen:downloadPdf', id),
     maakTermijnFacturen: () => ipcRenderer.invoke('facturen:maakTermijnFacturen'),
     maakCreditnota: (id: string) => ipcRenderer.invoke('facturen:maakCreditnota', id),

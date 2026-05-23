@@ -148,6 +148,62 @@ function navigeer(weergave: Weergave, datum: Date, richting: -1 | 1): Date {
   return d;
 }
 
+// ── LocatieInput met Nominatim autocomplete ───────────────────────────────────
+
+function LocatieInput({ value, onChange, className }: { value: string; onChange: (v: string) => void; className?: string }) {
+  const [suggesties, setSuggesties] = useState<string[]>([]);
+  const [open, setOpen] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleChange = (v: string) => {
+    onChange(v);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (v.length < 3) { setSuggesties([]); setOpen(false); return; }
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const resp = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(v)}&format=json&limit=5&accept-language=nl`, { headers: { 'User-Agent': 'AdminPro/1.0' } });
+        if (!resp.ok) return;
+        const data = await resp.json() as Array<{ display_name: string }>;
+        const namen = data.map(d => d.display_name);
+        setSuggesties(namen);
+        setOpen(namen.length > 0);
+      } catch {}
+    }, 400);
+  };
+
+  const kies = (s: string) => { onChange(s); setSuggesties([]); setOpen(false); };
+
+  return (
+    <div className="relative">
+      <input
+        type="text"
+        value={value}
+        onChange={e => handleChange(e.target.value)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onFocus={() => { if (suggesties.length > 0) setOpen(true); }}
+        placeholder="Adres of naam"
+        className={className ?? "w-full h-9 rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"}
+      />
+      {open && suggesties.length > 0 && (
+        <ul className="absolute left-0 top-full z-50 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-xl max-h-48 overflow-y-auto">
+          {suggesties.map((s, i) => (
+            <li key={i}>
+              <button
+                type="button"
+                onMouseDown={() => kies(s)}
+                className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-indigo-50 truncate"
+                title={s}
+              >
+                {s}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 // ── MiniKalender ──────────────────────────────────────────────────────────────
 
 function MiniKalender({ geselecteerdeDatum, onDagKlik }: {
@@ -445,6 +501,8 @@ function RegelRij({ regel, index, korActief, producten, onChange, onVerwijder }:
   onVerwijder: (i: number) => void;
 }) {
   const [productOpen, setProductOpen] = useState(false);
+  const [dropdownNaarBoven, setDropdownNaarBoven] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const kiesProduct = (p: Product) => {
     onChange(index, "omschrijving", p.naam);
@@ -454,9 +512,17 @@ function RegelRij({ regel, index, korActief, producten, onChange, onVerwijder }:
     setProductOpen(false);
   };
 
+  const toggleProductOpen = () => {
+    if (!productOpen && containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      setDropdownNaarBoven(window.innerHeight - rect.bottom < 220);
+    }
+    setProductOpen(v => !v);
+  };
+
   return (
     <div className="grid gap-1 px-2 py-1.5 border-t border-gray-100" style={{ gridTemplateColumns: korActief ? "3fr 1fr 1fr 1fr auto auto" : "3fr 1fr 1fr 1fr 1fr auto auto" }}>
-      <div className="relative">
+      <div className="relative" ref={containerRef}>
         <input
           value={regel.omschrijving}
           onChange={e => onChange(index, "omschrijving", e.target.value)}
@@ -467,7 +533,7 @@ function RegelRij({ regel, index, korActief, producten, onChange, onVerwijder }:
           <>
             <button
               type="button"
-              onClick={() => setProductOpen(v => !v)}
+              onClick={toggleProductOpen}
               className="absolute right-1 top-1 h-5 w-5 flex items-center justify-center rounded text-gray-400 hover:text-indigo-600 hover:bg-indigo-50"
               title="Kies uit catalogus"
             >
@@ -476,7 +542,7 @@ function RegelRij({ regel, index, korActief, producten, onChange, onVerwijder }:
             {productOpen && (
               <>
                 <div className="fixed inset-0 z-10" onClick={() => setProductOpen(false)} />
-                <div className="absolute left-0 top-7 z-20 bg-white rounded-lg shadow-xl border border-gray-200 py-1 min-w-[200px] max-h-48 overflow-y-auto">
+                <div className={`absolute left-0 z-20 bg-white rounded-lg shadow-xl border border-gray-200 py-1 min-w-[200px] max-h-48 overflow-y-auto ${dropdownNaarBoven ? 'bottom-7' : 'top-7'}`}>
                   {producten.map(p => (
                     <button
                       key={p.id}
@@ -750,8 +816,7 @@ function BewerkenAfspraakModal({ afspraak, klanten, producten, korActief, kalend
                 <KlantSelector klanten={klanten} klantIds={klantIds} setKlantIds={setKlantIds} />
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">Locatie</label>
-                  <input type="text" value={locatie} onChange={e => setLocatie(e.target.value)} placeholder="Adres of naam"
-                    className="w-full h-9 rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                  <LocatieInput value={locatie} onChange={setLocatie} />
                 </div>
               </div>
 
