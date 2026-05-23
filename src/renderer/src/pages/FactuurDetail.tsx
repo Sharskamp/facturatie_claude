@@ -10,6 +10,7 @@ import {
   MessageSquare,
   Copy,
   CheckCircle2,
+  ExternalLink,
   FileDown,
   FileMinus,
   Bell,
