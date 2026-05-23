@@ -96,6 +96,9 @@ export default function NieuweFactuurPage() {
   // KOR
   const [korActief, setKorActief] = useState(false);
 
+  // Reiskosten
+  const [kmVergoeding, setKmVergoeding] = useState(0.23);
+
   // Productcatalogus
   const [producten, setProducten] = useState<Product[]>([]);
 
@@ -123,6 +126,9 @@ export default function NieuweFactuurPage() {
       }
       if (inst.standaardBetaalTermijn) {
         setVervaldatum(vervaldatumString(inst.standaardBetaalTermijn as number));
+      }
+      if (inst.kmVergoeding != null) {
+        setKmVergoeding(inst.kmVergoeding as number);
       }
     }).catch(() => {});
   }, [laadKlanten]);
@@ -190,6 +196,23 @@ export default function NieuweFactuurPage() {
 
   function voegRegelToe() {
     setRegels((prev) => [...prev, { ...LEEG_REGEL(), btwPercentage: korActief ? 0 : 21 }]);
+  }
+
+  function voegReiskostenToe() {
+    setRegels((prev) => [
+      ...prev,
+      {
+        ...LEEG_REGEL(),
+        omschrijving: "Reiskosten",
+        aantal: 0,
+        eenheid: "km",
+        prijs: kmVergoeding,
+        btwPercentage: korActief ? 0 : 21,
+        isReiskosten: true,
+        reiskostenBegindatum: "",
+        reiskostenEinddatum: "",
+      },
+    ]);
   }
 
   function verwijderRegel(id: string) {
@@ -414,9 +437,11 @@ export default function NieuweFactuurPage() {
               korActief={korActief}
               producten={producten}
               foutenVelden={foutenVelden}
+              kmVergoeding={kmVergoeding}
               onRegelUpdate={updateRegel}
               onRegelVerwijder={verwijderRegel}
               onRegelToevoegen={voegRegelToe}
+              onReiskostenToevoegen={voegReiskostenToe}
             />
           </CardContent>
         </Card>

@@ -1200,6 +1200,9 @@ function setupIpcHandlers() {
       btwPercentage: number
       kortingPercentage?: number
       eenheid?: string
+      isReiskosten?: boolean
+      reiskostenBegindatum?: string | null
+      reiskostenEinddatum?: string | null
     }>
   }) => {
     const user = await prisma.user.findFirst()
@@ -1219,7 +1222,15 @@ function setupIpcHandlers() {
       const btw = payload.btwVerlegd ? 0 : (netto * regel.btwPercentage) / 100
       subtotaal += netto
       btwBedrag += btw
-      return { ...regel, kortingPercentage: regel.kortingPercentage ?? 0, totaal: netto + btw, volgorde: index }
+      return {
+        ...regel,
+        kortingPercentage: regel.kortingPercentage ?? 0,
+        totaal: netto + btw,
+        volgorde: index,
+        isReiskosten: regel.isReiskosten ?? false,
+        reiskostenBegindatum: regel.reiskostenBegindatum ? new Date(regel.reiskostenBegindatum) : null,
+        reiskostenEinddatum: regel.reiskostenEinddatum ? new Date(regel.reiskostenEinddatum) : null,
+      }
     })
 
     const kortingBedrag = (subtotaal * (payload.kortingPercentage ?? 0)) / 100
@@ -1274,7 +1285,16 @@ function setupIpcHandlers() {
         const btw = data.btwVerlegd ? 0 : (netto * (regel.btwPercentage as number)) / 100
         subtotaal += netto
         btwBedrag += btw
-        return { ...regel, totaal: netto + btw, volgorde: index }
+        const bdStr = regel.reiskostenBegindatum as string | null | undefined
+        const edStr = regel.reiskostenEinddatum as string | null | undefined
+        return {
+          ...regel,
+          totaal: netto + btw,
+          volgorde: index,
+          isReiskosten: (regel.isReiskosten as boolean | undefined) ?? false,
+          reiskostenBegindatum: bdStr ? new Date(bdStr) : null,
+          reiskostenEinddatum: edStr ? new Date(edStr) : null,
+        }
       })
 
       const kortingBedrag = (subtotaal * ((data.kortingPercentage as number) ?? 0)) / 100

@@ -45,6 +45,9 @@ interface FactuurRegel {
   prijs: number;
   btwPercentage: number;
   kortingPercentage: number;
+  isReiskosten?: boolean;
+  reiskostenBegindatum?: string | Date | null;
+  reiskostenEinddatum?: string | Date | null;
 }
 
 interface Factuur {
@@ -92,6 +95,7 @@ export default function FactuurBewerkenPage() {
   const [klantLaden, setKlantLaden] = useState(true);
   const [factuurLaden, setFactuurLaden] = useState(true);
   const [korActief, setKorActief] = useState(false);
+  const [kmVergoeding, setKmVergoeding] = useState(0.23);
   const [factuurNummer, setFactuurNummer] = useState<string>("");
   const [nietBewerkbaar, setNietBewerkbaar] = useState(false);
   const [opslaan, setOpslaan] = useState(false);
@@ -210,8 +214,9 @@ export default function FactuurBewerkenPage() {
   }, []);
 
   useEffect(() => {
-    window.api.instellingen.get().then((inst: { korActief?: boolean }) => {
+    window.api.instellingen.get().then((inst: { korActief?: boolean; kmVergoeding?: number }) => {
       setKorActief(inst?.korActief ?? false);
+      setKmVergoeding(inst?.kmVergoeding ?? 0.23);
     }).catch(() => {});
   }, []);
 
@@ -246,6 +251,13 @@ export default function FactuurBewerkenPage() {
             prijs: r.prijs,
             btwPercentage: r.btwPercentage,
             kortingPercentage: r.kortingPercentage,
+            isReiskosten: r.isReiskosten ?? false,
+            reiskostenBegindatum: r.reiskostenBegindatum
+              ? new Date(r.reiskostenBegindatum).toISOString().split("T")[0]
+              : "",
+            reiskostenEinddatum: r.reiskostenEinddatum
+              ? new Date(r.reiskostenEinddatum).toISOString().split("T")[0]
+              : "",
           }))
         );
         if (factuur.totaalKortingBedrag > 0) {
@@ -323,6 +335,23 @@ export default function FactuurBewerkenPage() {
 
   function voegRegelToe() {
     setRegels((prev) => [...prev, LEEG_REGEL()]);
+  }
+
+  function voegReiskostenToe() {
+    setRegels((prev) => [
+      ...prev,
+      {
+        ...LEEG_REGEL(),
+        omschrijving: "Reiskosten",
+        aantal: 0,
+        eenheid: "km",
+        prijs: kmVergoeding,
+        btwPercentage: korActief ? 0 : 21,
+        isReiskosten: true,
+        reiskostenBegindatum: "",
+        reiskostenEinddatum: "",
+      },
+    ]);
   }
 
   function verwijderRegel(regelId: string) {
@@ -642,9 +671,11 @@ export default function FactuurBewerkenPage() {
               korActief={korActief}
               producten={[]}
               foutenVelden={foutenVelden}
+              kmVergoeding={kmVergoeding}
               onRegelUpdate={updateRegel}
               onRegelVerwijder={verwijderRegel}
               onRegelToevoegen={voegRegelToe}
+              onReiskostenToevoegen={voegReiskostenToe}
             />
           </CardContent>
         </Card>

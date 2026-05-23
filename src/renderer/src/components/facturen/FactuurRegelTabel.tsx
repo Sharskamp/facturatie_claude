@@ -1,4 +1,4 @@
-import { Plus, Trash2 } from "lucide-react";
+import { Car, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatBedrag } from "@/lib/utils";
 
@@ -10,6 +10,9 @@ export interface Regel {
   prijs: number;
   btwPercentage: number;
   kortingPercentage: number;
+  isReiskosten?: boolean;
+  reiskostenBegindatum?: string;
+  reiskostenEinddatum?: string;
 }
 
 export interface Product {
@@ -27,9 +30,11 @@ export interface FactuurRegelTabelProps {
   korActief: boolean;
   producten: Product[];
   foutenVelden?: Record<string, string>;
+  kmVergoeding?: number;
   onRegelUpdate: <K extends keyof Regel>(id: string, veld: K, waarde: Regel[K]) => void;
   onRegelVerwijder: (id: string) => void;
   onRegelToevoegen: () => void;
+  onReiskostenToevoegen?: () => void;
 }
 
 const BTW_TARIEVEN = [0, 9, 21];
@@ -47,9 +52,11 @@ export function FactuurRegelTabel({
   korActief,
   producten,
   foutenVelden = {},
+  kmVergoeding = 0.23,
   onRegelUpdate,
   onRegelVerwijder,
   onRegelToevoegen,
+  onReiskostenToevoegen,
 }: FactuurRegelTabelProps) {
   return (
     <div className="space-y-3">
@@ -81,13 +88,19 @@ export function FactuurRegelTabel({
       {regels.map((regel, index) => {
         const netto = berekenRegelNetto(regel, btwVerlegd);
         return (
+          <div key={regel.id} className="rounded-lg border border-gray-100 overflow-hidden">
           <div
-            key={regel.id}
-            className={`grid grid-cols-1 gap-2 p-3 rounded-lg border border-gray-100 bg-gray-50/50 hover:bg-gray-50 transition-colors ${korActief ? "lg:grid-cols-[1fr_80px_100px_110px_80px_32px]" : "lg:grid-cols-[1fr_80px_100px_110px_80px_80px_32px]"}`}
+            className={`grid grid-cols-1 gap-2 p-3 bg-gray-50/50 hover:bg-gray-50 transition-colors ${regel.isReiskosten ? "border-b border-blue-100 bg-blue-50/30 hover:bg-blue-50/50" : ""} ${korActief ? "lg:grid-cols-[1fr_80px_100px_110px_80px_32px]" : "lg:grid-cols-[1fr_80px_100px_110px_80px_80px_32px]"}`}
           >
             {/* Omschrijving */}
             <div>
-              {producten.length > 0 && (
+              {regel.isReiskosten && (
+                <div className="flex items-center gap-1 mb-1">
+                  <Car className="h-3 w-3 text-blue-500" />
+                  <span className="text-xs font-medium text-blue-600">Reiskosten</span>
+                </div>
+              )}
+              {producten.length > 0 && !regel.isReiskosten && (
                 <select
                   className="flex h-8 w-full rounded-md border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-500 mb-1"
                   value=""
@@ -259,18 +272,63 @@ export function FactuurRegelTabel({
               </button>
             </div>
           </div>
+
+          {/* Reiskosten periode-velden (alleen voor reiskosten regels, niet zichtbaar op factuur) */}
+          {regel.isReiskosten && (
+            <div className="px-3 py-2 bg-blue-50/40 border-t border-blue-100 flex flex-wrap gap-4 items-center">
+              <span className="text-xs text-blue-500 font-medium flex items-center gap-1">
+                <Car className="h-3 w-3" /> Km-periode (intern)
+              </span>
+              <div className="flex flex-wrap gap-3">
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-gray-500 whitespace-nowrap">Van</label>
+                  <input
+                    type="date"
+                    value={regel.reiskostenBegindatum ?? ""}
+                    onChange={(e) => onRegelUpdate(regel.id, "reiskostenBegindatum", e.target.value)}
+                    className="h-7 rounded border border-gray-200 bg-white px-2 text-xs text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-gray-500 whitespace-nowrap">Tot</label>
+                  <input
+                    type="date"
+                    value={regel.reiskostenEinddatum ?? ""}
+                    onChange={(e) => onRegelUpdate(regel.id, "reiskostenEinddatum", e.target.value)}
+                    className="h-7 rounded border border-gray-200 bg-white px-2 text-xs text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  />
+                </div>
+              </div>
+              <span className="text-xs text-gray-400">Niet zichtbaar op factuur</span>
+            </div>
+          )}
+          </div>
         );
       })}
 
-      <Button
-        variant="outline"
-        size="sm"
-        className="w-full border-dashed"
-        onClick={onRegelToevoegen}
-      >
-        <Plus className="h-4 w-4" />
-        Regel toevoegen
-      </Button>
+      <div className="flex gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          className="flex-1 border-dashed"
+          onClick={onRegelToevoegen}
+        >
+          <Plus className="h-4 w-4" />
+          Regel toevoegen
+        </Button>
+        {onReiskostenToevoegen && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="border-dashed text-blue-600 border-blue-300 hover:bg-blue-50 hover:text-blue-700"
+            onClick={onReiskostenToevoegen}
+            title={`Reiskosten (€${kmVergoeding.toFixed(2)}/km)`}
+          >
+            <Car className="h-4 w-4" />
+            Reiskosten
+          </Button>
+        )}
+      </div>
     </div>
   );
 }

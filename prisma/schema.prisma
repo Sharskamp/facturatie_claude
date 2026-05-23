@@ -215,17 +215,20 @@ model Factuur {
 }
 
 model FactuurRegel {
-  id                String   @id @default(cuid())
-  factuurId         String
-  factuur           Factuur  @relation(fields: [factuurId], references: [id], onDelete: Cascade)
-  omschrijving      String
-  aantal            Float    @default(1)
-  eenheid           String?
-  prijs             Float
-  btwPercentage     Float    @default(21)
-  kortingPercentage Float    @default(0)
-  totaal            Float
-  volgorde          Int      @default(0)
+  id                   String    @id @default(cuid())
+  factuurId            String
+  factuur              Factuur   @relation(fields: [factuurId], references: [id], onDelete: Cascade)
+  omschrijving         String
+  aantal               Float     @default(1)
+  eenheid              String?
+  prijs                Float
+  btwPercentage        Float     @default(21)
+  kortingPercentage    Float     @default(0)
+  totaal               Float
+  volgorde             Int       @default(0)
+  isReiskosten         Boolean   @default(false)
+  reiskostenBegindatum DateTime?
+  reiskostenEinddatum  DateTime?
 }
 
 // status: CONCEPT | VERZONDEN | GEACCEPTEERD | AFGEWEZEN | VERLOPEN
