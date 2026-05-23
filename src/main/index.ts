@@ -505,6 +505,10 @@ async function genereerFactuurPdfBufferIntern(factuurId: string): Promise<Buffer
     const grossSubtotaalPdf = f.regels.reduce((acc, r) => acc + r.prijs * r.aantal, 0)
     const regelKortingPdf = f.regels.reduce((acc, r) => acc + r.prijs * r.aantal * ((r.kortingPercentage ?? 0) / 100), 0)
     const effectieveKortingPdf = regelKortingPdf + f.kortingBedrag + ((f as unknown as { totaalKortingBedrag: number }).totaalKortingBedrag ?? 0)
+    const effectiefPctPdf = grossSubtotaalPdf > 0.005 ? Math.round(effectieveKortingPdf / grossSubtotaalPdf * 1000) / 10 : 0
+    const kortingLabelPdf = effectiefPctPdf > 0
+      ? `Korting (${Number.isInteger(effectiefPctPdf) ? effectiefPctPdf : effectiefPctPdf.toFixed(1).replace('.', ',')}%)`
+      : 'Korting'
     const vars: Record<string, string> = {
       bedrijfsnaam: user.bedrijfsnaam ?? user.naam ?? '',
       bedrijfAdres: user.adres ?? '',
@@ -532,6 +536,7 @@ async function genereerFactuurPdfBufferIntern(factuurId: string): Promise<Buffer
       kortingBedrag: `€${effectieveKortingPdf.toFixed(2)}`,
       btwBedrag: `€${f.btwBedrag.toFixed(2)}`,
       totaalBedrag: `€${f.totaal.toFixed(2)}`,
+      kortingLabel: kortingLabelPdf,
       kortingClass: effectieveKortingPdf > 0.005 ? '' : 'hidden',
       btwClass: f.btwBedrag > 0 ? '' : 'hidden',
       regelsHtml,
@@ -2677,6 +2682,10 @@ function setupIpcHandlers() {
         const grossSubtotaalEmail = f.regels.reduce((acc, r) => acc + r.prijs * r.aantal, 0)
         const regelKortingEmail = f.regels.reduce((acc, r) => acc + r.prijs * r.aantal * ((r.kortingPercentage ?? 0) / 100), 0)
         const effectieveKortingEmail = regelKortingEmail + f.kortingBedrag + ((f as unknown as { totaalKortingBedrag: number }).totaalKortingBedrag ?? 0)
+        const effectiefPctEmail = grossSubtotaalEmail > 0.005 ? Math.round(effectieveKortingEmail / grossSubtotaalEmail * 1000) / 10 : 0
+        const kortingLabelEmail = effectiefPctEmail > 0
+          ? `Korting (${Number.isInteger(effectiefPctEmail) ? effectiefPctEmail : effectiefPctEmail.toFixed(1).replace('.', ',')}%)`
+          : 'Korting'
         const vars: Record<string, string> = {
           bedrijfsnaam: user.bedrijfsnaam ?? user.naam ?? '',
           bedrijfAdres: user.adres ?? '',
@@ -2704,6 +2713,7 @@ function setupIpcHandlers() {
           kortingBedrag: `€${effectieveKortingEmail.toFixed(2)}`,
           btwBedrag: `€${f.btwBedrag.toFixed(2)}`,
           totaalBedrag: `€${f.totaal.toFixed(2)}`,
+          kortingLabel: kortingLabelEmail,
           kortingClass: effectieveKortingEmail > 0.005 ? '' : 'hidden',
           btwClass: f.btwBedrag > 0 ? '' : 'hidden',
           regelsHtml,

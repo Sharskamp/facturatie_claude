@@ -264,16 +264,19 @@ export default function FactuurBewerkenPage() {
 
   // Totaalberekeningen
   const totalen = useMemo(() => {
+    let grossSubtotaal = 0;
     let subtotaalBruto = 0;
     const nettoPerTarief: Record<number, number> = {};
 
     for (const regel of regels) {
+      grossSubtotaal += regel.prijs * regel.aantal;
       const { netto } = berekenRegelTotalen(regel, btwVerlegd);
       subtotaalBruto += netto;
       if (!btwVerlegd) {
         nettoPerTarief[regel.btwPercentage] = (nettoPerTarief[regel.btwPercentage] ?? 0) + netto;
       }
     }
+    const regelKortingTotaal = grossSubtotaal - subtotaalBruto;
 
     let kortingBedrag = 0;
     if (totaalKortingActief) {
@@ -306,6 +309,8 @@ export default function FactuurBewerkenPage() {
     const totaalKortingBedrag = kortingBedrag;
 
     return {
+      grossSubtotaal,
+      regelKortingTotaal,
       subtotaalBruto,
       kortingBedrag,
       subtotaal: subtotaalNaKorting,

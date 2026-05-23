@@ -5,6 +5,8 @@ import { formatBedrag } from "@/lib/utils";
 
 export interface FactuurTotalenSidebarProps {
   totalen: {
+    grossSubtotaal: number;
+    regelKortingTotaal: number;
     subtotaalBruto: number;
     kortingBedrag: number;
     subtotaal: number;
@@ -163,8 +165,23 @@ export function FactuurTotalenSidebar({
         <div className="space-y-2.5">
           <div className="flex justify-between text-sm">
             <span className="text-gray-500">Subtotaal</span>
-            <span className="text-gray-900">{formatBedrag(totalen.subtotaalBruto)}</span>
+            <span className="text-gray-900">{formatBedrag(totalen.grossSubtotaal)}</span>
           </div>
+
+          {totalen.regelKortingTotaal > 0.005 && (() => {
+            const pct = totalen.grossSubtotaal > 0
+              ? Math.round(totalen.regelKortingTotaal / totalen.grossSubtotaal * 1000) / 10
+              : 0;
+            const pctStr = pct > 0
+              ? ` (${Number.isInteger(pct) ? pct : pct.toFixed(1).replace(".", ",")}%)`
+              : "";
+            return (
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-500">Regelkorting{pctStr}</span>
+                <span className="text-green-600">-{formatBedrag(totalen.regelKortingTotaal)}</span>
+              </div>
+            );
+          })()}
 
           {totalen.kortingBedrag > 0 && (
             <div className="flex justify-between text-sm">
@@ -177,7 +194,7 @@ export function FactuurTotalenSidebar({
             </div>
           )}
 
-          {totalen.kortingBedrag > 0 && (
+          {(totalen.regelKortingTotaal > 0.005 || totalen.kortingBedrag > 0) && (
             <div className="flex justify-between text-sm">
               <span className="text-gray-500">Netto</span>
               <span className="text-gray-900">{formatBedrag(totalen.subtotaal)}</span>
