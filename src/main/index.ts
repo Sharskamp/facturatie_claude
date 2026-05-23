@@ -9,7 +9,7 @@ import * as http from 'http'
 import * as net from 'net'
 import { DOMParser } from '@xmldom/xmldom'
 import { verstuurEmail, maakFactuurEmailHtml } from '../lib/email'
-import { haalAgendaAfspraken, haalKalenderLijst, maakGoogleAfspraak, maakGoogleAuthUrl, wisselCodeVoorTokens, vernieuwAccessToken } from '../lib/google-calendar'
+import { haalAgendaAfspraken, haalKalenderLijst, maakGoogleAfspraak, wijzigGoogleAfspraak, maakGoogleAuthUrl, wisselCodeVoorTokens, vernieuwAccessToken } from '../lib/google-calendar'
 import { autoUpdater } from 'electron-updater'
 import * as os from 'os'
 import { scanBestandLokaal } from '../lib/lokale-ocr'
@@ -164,10 +164,25 @@ function runMigratie(dbPath: string): void {
   kolomToevoegen('User', 'korIngangsDatum', 'TEXT')
   kolomToevoegen('User', 'uitgavenWeergaveVelden', "TEXT NOT NULL DEFAULT '[\"datum\",\"omschrijving\",\"leverancier\",\"categorie\",\"bedrag\",\"btw\",\"totaal\"]'")
   kolomToevoegen('User', 'spaarrekeningen', "TEXT NOT NULL DEFAULT '[]'")
+  // Email template uitbreidingen
+  kolomToevoegen('User', 'emailFactuurOnderwerp', 'TEXT')
+  kolomToevoegen('User', 'emailHerinneringOnderwerp', 'TEXT')
+  kolomToevoegen('User', 'emailHerinneringTekst', 'TEXT')
+  // Agenda afspraakherinneringen
+  kolomToevoegen('User', 'agendaHerinneringActief', 'BOOLEAN NOT NULL DEFAULT false')
+  kolomToevoegen('User', 'agendaHerinneringModus', "TEXT NOT NULL DEFAULT 'vooraf'")
+  kolomToevoegen('User', 'agendaHerinneringVoorafUren', 'INTEGER NOT NULL DEFAULT 2')
+  kolomToevoegen('User', 'agendaHerinneringDagen', 'INTEGER NOT NULL DEFAULT 1')
+  kolomToevoegen('User', 'agendaHerinneringTijd', "TEXT NOT NULL DEFAULT '09:00'")
 
   // Klant — nieuwe kolommen
   kolomToevoegen('Klant', 'betaalTermijn', 'INTEGER')
   kolomToevoegen('Klant', 'taal', "TEXT NOT NULL DEFAULT 'nl'")
+  kolomToevoegen('Klant', 'afspraakHerinneringActief', 'BOOLEAN')
+  kolomToevoegen('Klant', 'afspraakHerinneringModus', 'TEXT')
+  kolomToevoegen('Klant', 'afspraakHerinneringVoorafUren', 'INTEGER')
+  kolomToevoegen('Klant', 'afspraakHerinneringDagen', 'INTEGER')
+  kolomToevoegen('Klant', 'afspraakHerinneringTijd', 'TEXT')
 
   // Inkomen — nieuwe kolommen
   kolomToevoegen('Inkomen', 'geboektAlsOmzet', 'BOOLEAN NOT NULL DEFAULT false')
@@ -506,48 +521,97 @@ async function stuurHerinneringen(): Promise<{ verstuurd: number; fouten: number
   const drempelDatum = new Date(nu)
   drempelDatum.setDate(nu.getDate() - user.herinneringDagen)
 
-  // Find overdue invoices: VERZONDEN, past due, no reminder sent yet (or sent long ago)
-  const teHerinnerenFacturen = await prisma.factuur.findMany({
+  // Vind vervallen facturen: VERZONDEN of VERLOPEN, vervaldatum te laat, nog niet recent herinnerd
+  const kandidaten = await prisma.factuur.findMany({
     where: {
-      status: 'VERZONDEN',
+      status: { in: ['VERZONDEN', 'VERLOPEN'] },
       vervaldatum: { lt: drempelDatum },
       OR: [
         { herinneringVerzondenOp: null },
-        { herinneringVerzondenOp: { lt: new Date(nu.getTime() - 14 * 24 * 60 * 60 * 1000) } } // not in last 14 days
+        { herinneringVerzondenOp: { lt: new Date(nu.getTime() - 14 * 24 * 60 * 60 * 1000) } }
       ]
     },
-    include: { klant: true, regels: true }
+    include: {
+      klant: true,
+      betalingen: { select: { bedrag: true } },
+    }
   })
+
+  // Groepeer per klant: stuur één herinnering per klant met alle openstaande facturen
+  const perKlant = new Map<string, typeof kandidaten>()
+  for (const factuur of kandidaten) {
+    if (!factuur.klant.email) continue
+    const existing = perKlant.get(factuur.klantId) ?? []
+    existing.push(factuur)
+    perKlant.set(factuur.klantId, existing)
+  }
 
   let verstuurd = 0
   let fouten = 0
+  const smtpConfig = { host: user.emailSmtpHost, port: user.emailSmtpPort ?? 587, secure: user.emailSmtpSecure, user: user.emailSmtpUser!, pass: user.emailSmtpPass ?? '' }
 
-  for (const factuur of teHerinnerenFacturen) {
-    if (!factuur.klant.email) continue
+  for (const [, facturen] of perKlant) {
+    const klant = facturen[0].klant
+    if (!klant.email) continue
 
-    const dagenTeLasten = Math.floor((nu.getTime() - new Date(factuur.vervaldatum).getTime()) / (1000 * 60 * 60 * 24))
+    // Bereken openstaand per factuur
+    const facturenMetSaldo = facturen.map(f => {
+      const ontvangen = f.betalingen.reduce((s, b) => s + b.bedrag, 0)
+      const openstaand = Math.max(0, f.totaal - ontvangen)
+      return { ...f, openstaand }
+    }).filter(f => f.openstaand > 0.01)
 
-    const html = `
-      <p>Geachte ${factuur.klant.naam},</p>
-      <p>Wij hebben geconstateerd dat onderstaande factuur nog niet is voldaan.</p>
-      <table style="border-collapse:collapse;width:100%">
-        <tr><td style="padding:4px 8px"><strong>Factuurnummer:</strong></td><td>${factuur.nummer}</td></tr>
-        <tr><td style="padding:4px 8px"><strong>Factuurdatum:</strong></td><td>${new Date(factuur.datum).toLocaleDateString('nl-NL')}</td></tr>
-        <tr><td style="padding:4px 8px"><strong>Vervaldatum:</strong></td><td>${new Date(factuur.vervaldatum).toLocaleDateString('nl-NL')}</td></tr>
-        <tr><td style="padding:4px 8px"><strong>Openstaand bedrag:</strong></td><td><strong>€ ${factuur.totaal.toFixed(2).replace('.', ',')}</strong></td></tr>
-        <tr><td style="padding:4px 8px"><strong>Dagen te laat:</strong></td><td>${dagenTeLasten} dagen</td></tr>
-      </table>
-      <p>Wij verzoeken u vriendelijk het openstaande bedrag zo spoedig mogelijk te voldoen.</p>
-      <p>Heeft u deze factuur reeds betaald? Dan kunt u dit bericht als niet verzonden beschouwen.</p>
-      <p>Met vriendelijke groet,<br>${user.naam}${user.bedrijfsnaam ? '<br>' + user.bedrijfsnaam : ''}</p>
-    `
+    if (facturenMetSaldo.length === 0) continue
+
+    const totaalOpenstaand = facturenMetSaldo.reduce((s, f) => s + f.openstaand, 0)
+
+    // Factuurregels HTML
+    const facturenHtml = facturenMetSaldo.map(f => {
+      const dagenTeLasten = Math.floor((nu.getTime() - new Date(f.vervaldatum).getTime()) / (1000 * 60 * 60 * 24))
+      return `<tr>
+        <td style="padding:6px 10px;border-bottom:1px solid #eee">${f.nummer}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid #eee">${new Date(f.vervaldatum).toLocaleDateString('nl-NL')}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:right"><strong>€ ${f.openstaand.toFixed(2).replace('.', ',')}</strong></td>
+        <td style="padding:6px 10px;border-bottom:1px solid #eee;color:#b45309">${dagenTeLasten} dagen te laat</td>
+      </tr>`
+    }).join('')
+
+    const tabelHtml = `<table style="border-collapse:collapse;width:100%;margin:12px 0">
+      <thead><tr style="background:#f9fafb">
+        <th style="padding:6px 10px;text-align:left;font-size:12px;color:#6b7280">Factuur</th>
+        <th style="padding:6px 10px;text-align:left;font-size:12px;color:#6b7280">Vervaldatum</th>
+        <th style="padding:6px 10px;text-align:right;font-size:12px;color:#6b7280">Openstaand</th>
+        <th style="padding:6px 10px;text-align:left;font-size:12px;color:#6b7280">Status</th>
+      </tr></thead>
+      <tbody>${facturenHtml}</tbody>
+    </table>`
+
+    // Gebruik aangepast sjabloon of standaard
+    const eigenTekst = (user as Record<string, unknown>).emailHerinneringTekst as string | null
+    const intro = eigenTekst
+      ? eigenTekst
+          .replace('{{naam}}', klant.naam)
+          .replace('{{openstaand}}', `€ ${totaalOpenstaand.toFixed(2).replace('.', ',')}`)
+          .split('\n').map(r => `<p>${r}</p>`).join('')
+      : `<p>Geachte ${klant.naam},</p>
+         <p>Wij attenderen u op onderstaande openstaande facturen. Wij verzoeken u vriendelijk deze zo spoedig mogelijk te voldoen.</p>`
+
+    const html = `${intro}${tabelHtml}
+      <p>Totaal openstaand: <strong>€ ${totaalOpenstaand.toFixed(2).replace('.', ',')}</strong></p>
+      <p>Heeft u reeds betaald? Dan kunt u dit bericht als niet verzonden beschouwen.</p>
+      <p>Met vriendelijke groet,<br>${user.naam}${user.bedrijfsnaam ? '<br>' + user.bedrijfsnaam : ''}</p>`
+
+    const eigenOnderwerp = (user as Record<string, unknown>).emailHerinneringOnderwerp as string | null
+    const onderwerp = eigenOnderwerp
+      ? eigenOnderwerp.replace('{{factuurnummer}}', facturenMetSaldo.map(f => f.nummer).join(', '))
+      : `Betalingsherinnering - ${facturenMetSaldo.length === 1 ? `Factuur ${facturenMetSaldo[0].nummer}` : `${facturenMetSaldo.length} openstaande facturen`}`
 
     try {
-      await verstuurEmail(
-        { host: user.emailSmtpHost, port: user.emailSmtpPort ?? 587, secure: user.emailSmtpSecure, user: user.emailSmtpUser!, pass: user.emailSmtpPass ?? '' },
-        { van: user.emailSmtpUser!, naar: factuur.klant.email, onderwerp: `Betalingsherinnering - Factuur ${factuur.nummer}`, html }
-      )
-      await prisma.factuur.update({ where: { id: factuur.id }, data: { herinneringVerzondenOp: nu } })
+      await verstuurEmail(smtpConfig, { van: user.emailSmtpUser!, naar: klant.email, onderwerp, html })
+      // Markeer alle facturen als herinnerd
+      for (const f of facturenMetSaldo) {
+        await prisma.factuur.update({ where: { id: f.id }, data: { herinneringVerzondenOp: nu } })
+      }
       verstuurd++
     } catch {
       fouten++
@@ -1739,6 +1803,8 @@ function setupIpcHandlers() {
         korActief: true, korDrempel: true, korWaarschuwing: true,
         standaardBetaalTermijn: true, standaardBtwTarief: true,
         betalingsherinneringen: true, herinneringDagen: true,
+        emailFactuurOnderwerp: true, emailHerinneringOnderwerp: true, emailHerinneringTekst: true,
+        agendaHerinneringActief: true, agendaHerinneringModus: true, agendaHerinneringVoorafUren: true, agendaHerinneringDagen: true, agendaHerinneringTijd: true,
         googleRefreshToken: true, googleClientId: true, googleClientSecret: true, googlePrimaryCalendarId: true, kmVergoeding: true,
         anthropicApiKey: true, openaiApiKey: true, aiModel: true, factuurHtmlTemplate: true, offerteGeldigheidDagen: true,
         donkerModus: true, autoStart: true, pdfMapPad: true, mollieApiKey: true,
@@ -1771,6 +1837,8 @@ function setupIpcHandlers() {
       'factuurHtmlTemplate', 'offerteGeldigheidDagen',
       'donkerModus', 'autoStart', 'pdfMapPad',
       'emailAanhef', 'emailAfsluitingsTekst',
+      'emailFactuurOnderwerp', 'emailHerinneringOnderwerp', 'emailHerinneringTekst',
+      'agendaHerinneringActief', 'agendaHerinneringModus', 'agendaHerinneringVoorafUren', 'agendaHerinneringDagen', 'agendaHerinneringTijd',
       'googleClientId', 'googleClientSecret',
       'layoutPrimairKleur', 'layoutSecundairKleur', 'layoutLettertype',
       'layoutKoptekst', 'layoutVoettekst', 'layoutLogoPositie',
@@ -2052,6 +2120,147 @@ function setupIpcHandlers() {
     }
 
     return { succes: true, facturen: aangemaakteFacturen }
+  })
+
+  ipcMain.handle('agenda:haal-afspraak-data', async (_, eventId: string) => {
+    const data = await prisma.agendaAfspraakData.findUnique({ where: { eventId } }) as (Record<string, unknown> & { klantIds?: string; regels?: string; klantId?: string; locatie?: string }) | null
+    if (!data) return null
+    let klantIds: string[] = []
+    if (data.klantIds) { try { klantIds = JSON.parse(data.klantIds) } catch {} }
+    else if (data.klantId) klantIds = [data.klantId]
+    const regels = data.regels ? (() => { try { return JSON.parse(data.regels as string) } catch { return [] } })() : []
+    return { klantIds, regels, locatie: data.locatie ?? null }
+  })
+
+  ipcMain.handle('agenda:update-afspraak', async (_, eventId: string, data: {
+    klantIds?: string[]
+    locatie?: string
+    regels?: Array<{ omschrijving: string; aantal: number; eenheid?: string; prijs: number; btwPercentage: number }>
+    startDatumTijd?: string
+    eindDatumTijd?: string
+    geheledag?: boolean
+    calendarId?: string
+  }) => {
+    const user = await prisma.user.findFirst()
+    if (!user?.googleRefreshToken) throw new Error('Google Agenda niet gekoppeld.')
+    const accessToken = await refreshTokenIfNeeded(user)
+    if (!accessToken) throw new Error('Token vernieuwen mislukt.')
+
+    const calendarId = data.calendarId
+      || (user as Record<string, unknown>).googlePrimaryCalendarId as string | null
+      || 'primary'
+
+    const klantIds = data.klantIds ?? []
+    let titel: string | undefined
+    if (klantIds.length > 0) {
+      const klanten = await prisma.klant.findMany({ where: { id: { in: klantIds } } })
+      const namen = klantIds.map(id => klanten.find(k => k.id === id)).filter(Boolean).map(k => k!.bedrijf || k!.naam)
+      const delen = [...namen]
+      if (data.locatie) delen.push(data.locatie)
+      titel = delen.length > 0 ? delen.join(' – ') : 'Afspraak'
+    } else if (data.locatie) {
+      titel = data.locatie
+    }
+
+    await wijzigGoogleAfspraak(accessToken, calendarId, eventId, {
+      titel,
+      startDatumTijd: data.startDatumTijd,
+      eindDatumTijd: data.eindDatumTijd,
+      geheledag: data.geheledag,
+      locatie: data.locatie,
+    })
+
+    // Update lokale AfspraakData
+    await prisma.agendaAfspraakData.upsert({
+      where: { eventId },
+      create: {
+        id: require('crypto').randomUUID(),
+        eventId,
+        klantId: klantIds[0] ?? null,
+        klantIds: klantIds.length > 0 ? JSON.stringify(klantIds) : null,
+        locatie: data.locatie ?? null,
+        regels: data.regels ? JSON.stringify(data.regels) : null,
+      } as Parameters<typeof prisma.agendaAfspraakData.create>[0]['data'],
+      update: {
+        klantId: klantIds[0] ?? null,
+        klantIds: klantIds.length > 0 ? JSON.stringify(klantIds) : null,
+        locatie: data.locatie ?? null,
+        regels: data.regels ? JSON.stringify(data.regels) : null,
+      } as Parameters<typeof prisma.agendaAfspraakData.update>[0]['data'],
+    })
+
+    return { succes: true }
+  })
+
+  ipcMain.handle('agenda:stuur-bevestiging', async (_, eventId: string) => {
+    const user = await prisma.user.findFirst()
+    if (!user) throw new Error('Geen gebruiker')
+    if (!user.emailSmtpHost || !user.emailSmtpUser) throw new Error('SMTP niet geconfigureerd')
+
+    const afspraakData = await prisma.agendaAfspraakData.findUnique({ where: { eventId } }) as (Record<string, unknown> & { klantIds?: string; klantId?: string; locatie?: string }) | null
+    if (!afspraakData) throw new Error('Geen afspraakgegevens gevonden.')
+
+    let klantIds: string[] = []
+    if (afspraakData.klantIds) { try { klantIds = JSON.parse(afspraakData.klantIds) } catch {} }
+    else if (afspraakData.klantId) klantIds = [afspraakData.klantId]
+
+    if (klantIds.length === 0) throw new Error('Geen klanten gekoppeld aan deze afspraak.')
+
+    const klanten = await prisma.klant.findMany({ where: { id: { in: klantIds }, email: { not: null } } })
+    const smtpConfig = { host: user.emailSmtpHost, port: user.emailSmtpPort ?? 587, secure: user.emailSmtpSecure, user: user.emailSmtpUser!, pass: user.emailSmtpPass ?? '' }
+
+    // Haal Google Calendar event op voor details
+    const accessToken = await refreshTokenIfNeeded(user)
+    let afspraakDetails: { samenvatting?: string; start?: string; einde?: string; geheledag?: boolean; locatie?: string } = {}
+    if (accessToken) {
+      try {
+        const calendarId = (user as Record<string, unknown>).googlePrimaryCalendarId as string | null || 'primary'
+        const response = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`, {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        })
+        if (response.ok) {
+          const ev = await response.json()
+          const startObj = ev.start as Record<string, string>
+          const eindObj = ev.end as Record<string, string>
+          const geheledag = !!startObj?.date
+          afspraakDetails = {
+            samenvatting: ev.summary,
+            start: startObj?.dateTime ?? startObj?.date,
+            einde: eindObj?.dateTime ?? eindObj?.date,
+            geheledag,
+            locatie: ev.location ?? afspraakData.locatie,
+          }
+        }
+      } catch {}
+    }
+
+    const datumStr = afspraakDetails.start
+      ? afspraakDetails.geheledag
+        ? new Date(afspraakDetails.start).toLocaleDateString('nl-NL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+        : `${new Date(afspraakDetails.start).toLocaleDateString('nl-NL', { weekday: 'long', day: 'numeric', month: 'long' })} van ${new Date(afspraakDetails.start).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' })} tot ${new Date(afspraakDetails.einde!).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' })}`
+      : ''
+
+    let verstuurd = 0
+    for (const klant of klanten) {
+      if (!klant.email) continue
+      const aanhef = (user.emailAanhef ?? 'Geachte {{naam}},').replace('{{naam}}', klant.naam)
+      const html = `
+        <p>${aanhef}</p>
+        <p>Hierbij bevestigen wij uw afspraak:</p>
+        <table style="border-collapse:collapse;width:100%;margin:12px 0">
+          ${afspraakDetails.samenvatting ? `<tr><td style="padding:6px 10px;color:#6b7280;width:140px">Onderwerp</td><td style="padding:6px 10px"><strong>${afspraakDetails.samenvatting}</strong></td></tr>` : ''}
+          ${datumStr ? `<tr><td style="padding:6px 10px;color:#6b7280">Datum & tijd</td><td style="padding:6px 10px">${datumStr}</td></tr>` : ''}
+          ${afspraakDetails.locatie ? `<tr><td style="padding:6px 10px;color:#6b7280">Locatie</td><td style="padding:6px 10px">${afspraakDetails.locatie}</td></tr>` : ''}
+        </table>
+        <p>${user.emailAfsluitingsTekst ?? 'Met vriendelijke groet,'}<br>${user.naam}${user.bedrijfsnaam ? '<br>' + user.bedrijfsnaam : ''}</p>
+      `
+      try {
+        await verstuurEmail(smtpConfig, { van: user.emailSmtpUser!, naar: klant.email, onderwerp: `Afspraakbevestiging${afspraakDetails.samenvatting ? ' – ' + afspraakDetails.samenvatting : ''}`, html })
+        verstuurd++
+      } catch {}
+    }
+
+    return { succes: true, verstuurd }
   })
 
   // ── Ritten (Kilometerregistratie) ──
