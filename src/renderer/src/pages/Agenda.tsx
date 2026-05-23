@@ -500,34 +500,25 @@ function RegelRij({ regel, index, korActief, producten, onChange, onVerwijder }:
   onChange: (i: number, veld: keyof FactuurRegel, waarde: string | number) => void;
   onVerwijder: (i: number) => void;
 }) {
-  const [productOpen, setProductOpen] = useState(false);
-  const [dropdownPos, setDropdownPos] = useState<{ top?: number; bottom?: number; left: number; width: number } | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const [catalogusOpen, setCatalogusOpen] = useState(false);
+  const [zoek, setZoek] = useState("");
 
   const kiesProduct = (p: Product) => {
     onChange(index, "omschrijving", p.naam);
     onChange(index, "prijs", p.prijs);
     onChange(index, "eenheid", p.eenheid ?? "uur");
     if (!korActief) onChange(index, "btwPercentage", p.btwPercentage);
-    setProductOpen(false);
+    setCatalogusOpen(false);
+    setZoek("");
   };
 
-  const toggleProductOpen = () => {
-    if (!productOpen && containerRef.current) {
-      const rect = containerRef.current.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom;
-      if (spaceBelow < 220) {
-        setDropdownPos({ bottom: window.innerHeight - rect.top, left: rect.left, width: Math.max(rect.width, 200) });
-      } else {
-        setDropdownPos({ top: rect.bottom, left: rect.left, width: Math.max(rect.width, 200) });
-      }
-    }
-    setProductOpen(v => !v);
-  };
+  const gefilterd = zoek
+    ? producten.filter(p => p.naam.toLowerCase().includes(zoek.toLowerCase()))
+    : producten;
 
   return (
     <div className="grid gap-1 px-2 py-1.5 border-t border-gray-100" style={{ gridTemplateColumns: korActief ? "3fr 1fr 1fr 1fr auto auto" : "3fr 1fr 1fr 1fr 1fr auto auto" }}>
-      <div className="relative" ref={containerRef}>
+      <div className="relative">
         <input
           value={regel.omschrijving}
           onChange={e => onChange(index, "omschrijving", e.target.value)}
@@ -535,42 +526,14 @@ function RegelRij({ regel, index, korActief, producten, onChange, onVerwijder }:
           className={`h-7 w-full rounded border border-gray-200 px-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 ${producten.length > 0 ? "pr-7" : ""}`}
         />
         {producten.length > 0 && (
-          <>
-            <button
-              type="button"
-              onClick={toggleProductOpen}
-              className="absolute right-1 top-1 h-5 w-5 flex items-center justify-center rounded text-gray-400 hover:text-indigo-600 hover:bg-indigo-50"
-              title="Kies uit catalogus"
-            >
-              <Plus className="h-3 w-3" />
-            </button>
-            {productOpen && dropdownPos && (
-              <>
-                <div className="fixed inset-0 z-10" onClick={() => setProductOpen(false)} />
-                <div
-                  className="fixed z-50 bg-white rounded-lg shadow-xl border border-gray-200 py-1 max-h-48 overflow-y-auto"
-                  style={{
-                    top: dropdownPos.top !== undefined ? dropdownPos.top : undefined,
-                    bottom: dropdownPos.bottom !== undefined ? dropdownPos.bottom : undefined,
-                    left: dropdownPos.left,
-                    minWidth: dropdownPos.width,
-                  }}
-                >
-                  {producten.map(p => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => kiesProduct(p)}
-                      className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-indigo-50 flex items-center justify-between gap-2"
-                    >
-                      <span className="truncate">{p.naam}</span>
-                      <span className="text-gray-400 shrink-0">€{p.prijs.toFixed(2)}</span>
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </>
+          <button
+            type="button"
+            onClick={() => { setCatalogusOpen(true); setZoek(""); }}
+            className="absolute right-1 top-1 h-5 w-5 flex items-center justify-center rounded text-gray-400 hover:text-indigo-600 hover:bg-indigo-50"
+            title="Kies uit catalogus"
+          >
+            <Plus className="h-3 w-3" />
+          </button>
         )}
       </div>
       <input
@@ -606,6 +569,43 @@ function RegelRij({ regel, index, korActief, producten, onChange, onVerwijder }:
       <button onClick={() => onVerwijder(index)} className="text-red-400 hover:text-red-600 p-0.5">
         <Trash2 className="h-3.5 w-3.5" />
       </button>
+
+      {/* Catalogus popup */}
+      <Modal open={catalogusOpen} onOpenChange={v => { setCatalogusOpen(v); if (!v) setZoek(""); }}>
+        <ModalContent className="max-w-md">
+          <div className="px-4 pt-4 pb-2">
+            <ModalTitle>Kies uit catalogus</ModalTitle>
+            <input
+              autoFocus
+              type="text"
+              placeholder="Zoeken..."
+              value={zoek}
+              onChange={e => setZoek(e.target.value)}
+              className="mt-3 w-full h-9 rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+          <div className="overflow-y-auto px-2 pb-4" style={{ maxHeight: "60vh" }}>
+            {gefilterd.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-6">Geen producten gevonden</p>
+            ) : (
+              gefilterd.map(p => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => kiesProduct(p)}
+                  className="w-full text-left px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-indigo-50 flex items-center justify-between gap-3 transition-colors"
+                >
+                  <div className="min-w-0">
+                    <p className="font-medium truncate">{p.naam}</p>
+                    {p.eenheid && <p className="text-xs text-gray-400">{p.eenheid}</p>}
+                  </div>
+                  <span className="text-indigo-700 font-semibold shrink-0">€{p.prijs.toFixed(2)}</span>
+                </button>
+              ))
+            )}
+          </div>
+        </ModalContent>
+      </Modal>
     </div>
   );
 }
