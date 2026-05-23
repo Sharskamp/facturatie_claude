@@ -66,6 +66,9 @@ interface Factuur {
   vervaldatum: string;
   status: string;
   totaal: number;
+  reedsBetaald?: number;
+  openstaand?: number;
+  teveel?: number;
 }
 
 interface KlantNotitie {
@@ -525,6 +528,7 @@ export default function KlantDetailPage() {
                       <TableHead>Vervaldatum</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead className="text-right">Totaal</TableHead>
+                      <TableHead className="text-right">Saldo</TableHead>
                       <TableHead className="text-right">Actie</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -553,6 +557,17 @@ export default function KlantDetailPage() {
                         </TableCell>
                         <TableCell className="text-right font-semibold text-gray-900">
                           {formatBedrag(factuur.totaal)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {(factuur.reedsBetaald ?? 0) > 0.01 && (factuur.openstaand ?? 0) > 0.01 ? (
+                            <span className="font-semibold text-red-600 text-sm" title="Te weinig betaald">
+                              -{formatBedrag(factuur.openstaand ?? 0)}
+                            </span>
+                          ) : (factuur.teveel ?? 0) > 0.01 ? (
+                            <span className="font-semibold text-blue-600 text-sm" title="Te veel betaald">
+                              +{formatBedrag(factuur.teveel ?? 0)}
+                            </span>
+                          ) : null}
                         </TableCell>
                         <TableCell className="text-right">
                           <button
