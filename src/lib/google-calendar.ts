@@ -141,6 +141,49 @@ export async function haalAgendaAfspraken(
   });
 }
 
+export async function wijzigGoogleAfspraak(
+  accessToken: string,
+  calendarId: string,
+  eventId: string,
+  afspraak: {
+    titel?: string;
+    startDatumTijd?: string;
+    eindDatumTijd?: string;
+    geheledag?: boolean;
+    omschrijving?: string;
+    locatie?: string;
+  }
+): Promise<void> {
+  const body: Record<string, unknown> = {}
+  if (afspraak.titel !== undefined) body.summary = afspraak.titel
+  if (afspraak.locatie !== undefined) body.location = afspraak.locatie
+  if (afspraak.omschrijving !== undefined) body.description = afspraak.omschrijving
+  if (afspraak.startDatumTijd !== undefined) {
+    body.start = afspraak.geheledag
+      ? { date: afspraak.startDatumTijd.split("T")[0] }
+      : { dateTime: afspraak.startDatumTijd, timeZone: "Europe/Amsterdam" }
+  }
+  if (afspraak.eindDatumTijd !== undefined) {
+    body.end = afspraak.geheledag
+      ? { date: afspraak.eindDatumTijd.split("T")[0] }
+      : { dateTime: afspraak.eindDatumTijd, timeZone: "Europe/Amsterdam" }
+  }
+  const response = await fetch(
+    `${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+    {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }
+  )
+  if (!response.ok) {
+    const errBody = await response.text().catch(() => "")
+    let detail = errBody
+    try { detail = JSON.parse(errBody)?.error?.message ?? errBody } catch {}
+    throw new Error(`Afspraak bijwerken mislukt ${response.status}: ${detail}`)
+  }
+}
+
 export async function maakGoogleAfspraak(
   accessToken: string,
   calendarId: string,

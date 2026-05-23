@@ -51,6 +51,14 @@ model User {
   mollieApiKey          String?
   emailAanhef          String?
   emailAfsluitingsTekst String?
+  emailFactuurOnderwerp     String?
+  emailHerinneringOnderwerp String?
+  emailHerinneringTekst     String?
+  agendaHerinneringActief   Boolean @default(false)
+  agendaHerinneringModus    String  @default("vooraf")
+  agendaHerinneringVoorafUren Int   @default(2)
+  agendaHerinneringDagen    Int     @default(1)
+  agendaHerinneringTijd     String  @default("09:00")
   logoBase64            String?
   factuurNummerFormaat  String    @default("{PREFIX}{JAAR}-{NNNN}")
   korWaarschuwing       Boolean   @default(true)
@@ -144,6 +152,11 @@ model Klant {
   actief        Boolean   @default(true)
   betaalTermijn Int?
   taal          String    @default("nl")
+  afspraakHerinneringActief    Boolean?
+  afspraakHerinneringModus     String?
+  afspraakHerinneringVoorafUren Int?
+  afspraakHerinneringDagen     Int?
+  afspraakHerinneringTijd      String?
   facturen      Factuur[]
   offertes      Offerte[]
   klantNotities KlantNotitie[]

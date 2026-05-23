@@ -57,6 +57,11 @@ interface Klant {
   notities?: string | null;
   betaalTermijn?: number | null;
   taal?: string;
+  afspraakHerinneringActief?: boolean | null;
+  afspraakHerinneringModus?: string | null;
+  afspraakHerinneringVoorafUren?: number | null;
+  afspraakHerinneringDagen?: number | null;
+  afspraakHerinneringTijd?: string | null;
 }
 
 interface Factuur {
@@ -66,6 +71,9 @@ interface Factuur {
   vervaldatum: string;
   status: string;
   totaal: number;
+  reedsBetaald?: number;
+  openstaand?: number;
+  teveel?: number;
 }
 
 interface KlantNotitie {
@@ -88,6 +96,11 @@ const LEEG_FORMULIER: Partial<Klant> = {
   notities: "",
   betaalTermijn: undefined,
   taal: "nl",
+  afspraakHerinneringActief: undefined,
+  afspraakHerinneringModus: undefined,
+  afspraakHerinneringVoorafUren: undefined,
+  afspraakHerinneringDagen: undefined,
+  afspraakHerinneringTijd: undefined,
 };
 
 export default function KlantDetailPage() {
@@ -238,6 +251,11 @@ export default function KlantDetailPage() {
       notities: klant.notities ?? "",
       betaalTermijn: klant.betaalTermijn ?? undefined,
       taal: klant.taal ?? "nl",
+      afspraakHerinneringActief: klant.afspraakHerinneringActief ?? undefined,
+      afspraakHerinneringModus: klant.afspraakHerinneringModus ?? undefined,
+      afspraakHerinneringVoorafUren: klant.afspraakHerinneringVoorafUren ?? undefined,
+      afspraakHerinneringDagen: klant.afspraakHerinneringDagen ?? undefined,
+      afspraakHerinneringTijd: klant.afspraakHerinneringTijd ?? undefined,
     });
     setFout(null);
     setModalOpen(true);
@@ -525,6 +543,7 @@ export default function KlantDetailPage() {
                       <TableHead>Vervaldatum</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead className="text-right">Totaal</TableHead>
+                      <TableHead className="text-right">Saldo</TableHead>
                       <TableHead className="text-right">Actie</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -553,6 +572,17 @@ export default function KlantDetailPage() {
                         </TableCell>
                         <TableCell className="text-right font-semibold text-gray-900">
                           {formatBedrag(factuur.totaal)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {(factuur.reedsBetaald ?? 0) > 0.01 && (factuur.openstaand ?? 0) > 0.01 ? (
+                            <span className="font-semibold text-red-600 text-sm" title="Te weinig betaald">
+                              -{formatBedrag(factuur.openstaand ?? 0)}
+                            </span>
+                          ) : (factuur.teveel ?? 0) > 0.01 ? (
+                            <span className="font-semibold text-blue-600 text-sm" title="Te veel betaald">
+                              +{formatBedrag(factuur.teveel ?? 0)}
+                            </span>
+                          ) : null}
                         </TableCell>
                         <TableCell className="text-right">
                           <button
@@ -798,6 +828,79 @@ export default function KlantDetailPage() {
                 placeholder="Interne notities over deze klant..."
                 rows={3}
               />
+            </div>
+
+            {/* Afspraakherinnering */}
+            <div className="mt-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-700">Afspraakherinnering</p>
+                  <p className="text-xs text-gray-400 mt-0.5">Laat leeg voor globale instelling</p>
+                </div>
+                <select
+                  value={formulier.afspraakHerinneringActief === true ? "aan" : formulier.afspraakHerinneringActief === false ? "uit" : "globaal"}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setFormulier(prev => ({ ...prev, afspraakHerinneringActief: v === "aan" ? true : v === "uit" ? false : undefined }));
+                  }}
+                  className="h-8 rounded-md border border-gray-300 bg-white px-2 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                >
+                  <option value="globaal">Globale instelling</option>
+                  <option value="aan">Aan</option>
+                  <option value="uit">Uit</option>
+                </select>
+              </div>
+              {formulier.afspraakHerinneringActief === true && (
+                <div className="space-y-2 pl-2 border-l-2 border-indigo-100">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Modus</label>
+                    <select
+                      value={formulier.afspraakHerinneringModus ?? "vooraf"}
+                      onChange={(e) => setFormulier(prev => ({ ...prev, afspraakHerinneringModus: e.target.value }))}
+                      className="h-8 w-full rounded-md border border-gray-300 bg-white px-2 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    >
+                      <option value="vooraf">X uur voor de afspraak</option>
+                      <option value="vasteTijd">Op vaste tijd X dagen van te voren</option>
+                    </select>
+                  </div>
+                  {formulier.afspraakHerinneringModus === "vasteTijd" ? (
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Dagen voor</label>
+                        <input
+                          type="number"
+                          min="1"
+                          max="30"
+                          value={formulier.afspraakHerinneringDagen ?? 1}
+                          onChange={(e) => setFormulier(prev => ({ ...prev, afspraakHerinneringDagen: parseInt(e.target.value) || 1 }))}
+                          className="h-8 w-full rounded-md border border-gray-300 px-2 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Tijdstip</label>
+                        <input
+                          type="time"
+                          value={formulier.afspraakHerinneringTijd ?? "09:00"}
+                          onChange={(e) => setFormulier(prev => ({ ...prev, afspraakHerinneringTijd: e.target.value }))}
+                          className="h-8 w-full rounded-md border border-gray-300 px-2 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Uren voor afspraak</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="72"
+                        value={formulier.afspraakHerinneringVoorafUren ?? 2}
+                        onChange={(e) => setFormulier(prev => ({ ...prev, afspraakHerinneringVoorafUren: parseInt(e.target.value) || 1 }))}
+                        className="h-8 w-full rounded-md border border-gray-300 px-2 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 

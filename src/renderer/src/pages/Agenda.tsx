@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ChevronLeft, ChevronRight, Clock, MapPin, FileText,
-  Loader2, AlertCircle, X, Plus, Trash2,
+  Loader2, AlertCircle, X, Plus, Trash2, Mail, Edit3, Check,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -43,6 +43,15 @@ interface Klant {
   id: string;
   naam: string;
   bedrijf?: string | null;
+}
+
+interface Product {
+  id: string;
+  naam: string;
+  omschrijving?: string | null;
+  prijs: number;
+  eenheid?: string | null;
+  btwPercentage: number;
 }
 
 type Weergave = "dag" | "week" | "maand";
@@ -190,11 +199,12 @@ function MiniKalender({ geselecteerdeDatum, onDagKlik }: {
 
 // ── TijdGrid ──────────────────────────────────────────────────────────────────
 
-function TijdGrid({ dagen, afspraken, onTijdKlik, onAfspraakKlik }: {
+function TijdGrid({ dagen, afspraken, onTijdKlik, onAfspraakKlik, onAfspraakContextMenu }: {
   dagen: Date[];
   afspraken: Afspraak[];
   onTijdKlik: (datum: Date, uur: number) => void;
   onAfspraakKlik: (a: Afspraak) => void;
+  onAfspraakContextMenu?: (a: Afspraak, e: React.MouseEvent) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const vandaag = new Date();
@@ -246,6 +256,7 @@ function TijdGrid({ dagen, afspraken, onTijdKlik, onAfspraakKlik }: {
                     <button
                       key={a.id}
                       onClick={() => onAfspraakKlik(a)}
+                      onContextMenu={e => { e.preventDefault(); onAfspraakContextMenu?.(a, e); }}
                       className="w-full text-left text-[10px] px-1.5 py-0.5 rounded truncate font-medium"
                       style={getAfspraakStijl(a)}
                     >{a.samenvatting}</button>
@@ -322,6 +333,7 @@ function TijdGrid({ dagen, afspraken, onTijdKlik, onAfspraakKlik }: {
                     <button
                       key={a.id}
                       onClick={(e) => { e.stopPropagation(); onAfspraakKlik(a); }}
+                      onContextMenu={e => { e.preventDefault(); e.stopPropagation(); onAfspraakContextMenu?.(a, e); }}
                       className="absolute left-0.5 right-0.5 z-20 rounded overflow-hidden text-left leading-tight px-1 pt-0.5 text-[11px] font-medium"
                       style={{ top, height, ...getAfspraakStijl(a) }}
                       title={`${a.samenvatting}\n${formatTijd(a.start)} – ${formatTijd(a.einde)}`}
@@ -343,10 +355,11 @@ function TijdGrid({ dagen, afspraken, onTijdKlik, onAfspraakKlik }: {
 
 // ── MaandWeergave ─────────────────────────────────────────────────────────────
 
-function MaandWeergave({ jaar, maand, afspraken, onDagKlik, onAfspraakKlik }: {
+function MaandWeergave({ jaar, maand, afspraken, onDagKlik, onAfspraakKlik, onAfspraakContextMenu }: {
   jaar: number; maand: number; afspraken: Afspraak[];
   onDagKlik: (d: Date) => void;
   onAfspraakKlik: (a: Afspraak) => void;
+  onAfspraakContextMenu?: (a: Afspraak, e: React.MouseEvent) => void;
 }) {
   const vandaag = new Date();
   const dagen = getMaandDagen(jaar, maand);
@@ -397,6 +410,7 @@ function MaandWeergave({ jaar, maand, afspraken, onDagKlik, onAfspraakKlik }: {
                   <button
                     key={a.id}
                     onClick={(e) => { e.stopPropagation(); onAfspraakKlik(a); }}
+                    onContextMenu={e => { e.preventDefault(); e.stopPropagation(); onAfspraakContextMenu?.(a, e); }}
                     className="w-full text-left text-[10px] px-1.5 py-0.5 rounded truncate font-medium leading-tight"
                     style={getAfspraakStijl(a)}
                     title={a.samenvatting}
@@ -420,95 +434,386 @@ function MaandWeergave({ jaar, maand, afspraken, onDagKlik, onAfspraakKlik }: {
   );
 }
 
-// ── AfspraakDetail ────────────────────────────────────────────────────────────
+// ── BewerkenAfspraakModal ─────────────────────────────────────────────────────
 
-function AfspraakDetail({ afspraak, onSluit, onFacturenAangemaakt }: {
+function RegelRij({ regel, index, korActief, producten, onChange, onVerwijder }: {
+  regel: FactuurRegel;
+  index: number;
+  korActief: boolean;
+  producten: Product[];
+  onChange: (i: number, veld: keyof FactuurRegel, waarde: string | number) => void;
+  onVerwijder: (i: number) => void;
+}) {
+  const [productOpen, setProductOpen] = useState(false);
+
+  const kiesProduct = (p: Product) => {
+    onChange(index, "omschrijving", p.naam);
+    onChange(index, "prijs", p.prijs);
+    onChange(index, "eenheid", p.eenheid ?? "uur");
+    if (!korActief) onChange(index, "btwPercentage", p.btwPercentage);
+    setProductOpen(false);
+  };
+
+  return (
+    <div className="grid gap-1 px-2 py-1.5 border-t border-gray-100" style={{ gridTemplateColumns: korActief ? "3fr 1fr 1fr 1fr auto auto" : "3fr 1fr 1fr 1fr 1fr auto auto" }}>
+      <div className="relative">
+        <input
+          value={regel.omschrijving}
+          onChange={e => onChange(index, "omschrijving", e.target.value)}
+          placeholder="Omschrijving"
+          className="h-7 w-full rounded border border-gray-200 px-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400"
+        />
+        {producten.length > 0 && (
+          <div className="relative inline-block">
+            <button
+              type="button"
+              onClick={() => setProductOpen(v => !v)}
+              className="absolute right-1 top-1 h-5 w-5 flex items-center justify-center rounded text-gray-400 hover:text-indigo-600 hover:bg-indigo-50"
+              title="Kies uit catalogus"
+            >
+              <Plus className="h-3 w-3" />
+            </button>
+            {productOpen && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setProductOpen(false)} />
+                <div className="absolute left-0 top-7 z-20 bg-white rounded-lg shadow-xl border border-gray-200 py-1 min-w-[200px] max-h-48 overflow-y-auto">
+                  {producten.map(p => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => kiesProduct(p)}
+                      className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-indigo-50 flex items-center justify-between gap-2"
+                    >
+                      <span className="truncate">{p.naam}</span>
+                      <span className="text-gray-400 shrink-0">€{p.prijs.toFixed(2)}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+      <input
+        type="number"
+        value={regel.aantal}
+        onChange={e => onChange(index, "aantal", parseFloat(e.target.value) || 1)}
+        className="h-7 rounded border border-gray-200 px-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400"
+      />
+      <input
+        value={regel.eenheid}
+        onChange={e => onChange(index, "eenheid", e.target.value)}
+        placeholder="uur"
+        className="h-7 rounded border border-gray-200 px-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400"
+      />
+      <input
+        type="number"
+        step="0.01"
+        value={regel.prijs}
+        onChange={e => onChange(index, "prijs", parseFloat(e.target.value) || 0)}
+        className="h-7 rounded border border-gray-200 px-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400"
+      />
+      {!korActief && (
+        <select
+          value={regel.btwPercentage}
+          onChange={e => onChange(index, "btwPercentage", parseFloat(e.target.value))}
+          className="h-7 rounded border border-gray-200 px-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white"
+        >
+          <option value={0}>0%</option>
+          <option value={9}>9%</option>
+          <option value={21}>21%</option>
+        </select>
+      )}
+      <button onClick={() => onVerwijder(index)} className="text-red-400 hover:text-red-600 p-0.5">
+        <Trash2 className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
+function RegelEditor({ regels, korActief, producten, setRegels }: {
+  regels: FactuurRegel[];
+  korActief: boolean;
+  producten: Product[];
+  setRegels: React.Dispatch<React.SetStateAction<FactuurRegel[]>>;
+}) {
+  const voegToe = () => setRegels(r => [...r, { omschrijving: "", aantal: 1, eenheid: "uur", prijs: 0, btwPercentage: korActief ? 0 : 21 }]);
+  const verwijder = (i: number) => setRegels(r => r.filter((_, j) => j !== i));
+  const update = (i: number, veld: keyof FactuurRegel, waarde: string | number) =>
+    setRegels(r => r.map((regel, j) => j === i ? { ...regel, [veld]: waarde } : regel));
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <label className="text-xs font-medium text-gray-700">Factuurregels (optioneel)</label>
+        <button onClick={voegToe} className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 font-medium">
+          <Plus className="h-3 w-3" /> Regel toevoegen
+        </button>
+      </div>
+      {regels.length > 0 && (
+        <div className="border border-gray-200 rounded-lg overflow-hidden">
+          <div className="grid text-[10px] font-medium text-gray-500 uppercase bg-gray-50 px-2 py-1.5" style={{ gridTemplateColumns: korActief ? "3fr 1fr 1fr 1fr auto auto" : "3fr 1fr 1fr 1fr 1fr auto auto" }}>
+            <span>Omschrijving</span><span>Aantal</span><span>Eenheid</span><span>Prijs</span>
+            {!korActief && <span>BTW%</span>}
+            <span /><span />
+          </div>
+          {regels.map((regel, i) => (
+            <RegelRij key={i} regel={regel} index={i} korActief={korActief} producten={producten} onChange={update} onVerwijder={verwijder} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function KlantSelector({ klanten, klantIds, setKlantIds }: {
+  klanten: Klant[];
+  klantIds: string[];
+  setKlantIds: React.Dispatch<React.SetStateAction<string[]>>;
+}) {
+  const [zoek, setZoek] = useState("");
+  const gefilterd = useMemo(() => {
+    const q = zoek.toLowerCase();
+    return klanten.filter(k => !q || k.naam.toLowerCase().includes(q) || (k.bedrijf ?? "").toLowerCase().includes(q));
+  }, [klanten, zoek]);
+
+  return (
+    <div>
+      <label className="block text-xs font-medium text-gray-700 mb-1">
+        Klanten (optioneel)
+        {klantIds.length > 0 && (
+          <span className="ml-1.5 inline-flex items-center justify-center h-4 w-4 rounded-full bg-indigo-600 text-white text-[9px] font-bold">{klantIds.length}</span>
+        )}
+      </label>
+      <div className="border border-gray-300 rounded-lg overflow-hidden">
+        <input
+          type="text"
+          value={zoek}
+          onChange={e => setZoek(e.target.value)}
+          placeholder="Zoek klant..."
+          className="w-full h-8 px-3 text-xs border-b border-gray-200 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-indigo-400"
+        />
+        <div className="max-h-32 overflow-y-auto">
+          {gefilterd.length === 0 ? (
+            <p className="text-xs text-gray-400 px-3 py-2">Geen klanten gevonden</p>
+          ) : gefilterd.map(k => (
+            <label key={k.id} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={klantIds.includes(k.id)}
+                onChange={() => setKlantIds(ids => ids.includes(k.id) ? ids.filter(id => id !== k.id) : [...ids, k.id])}
+                className="w-3.5 h-3.5 rounded border-gray-300 text-indigo-600 shrink-0"
+              />
+              <span className="text-xs text-gray-800 truncate">{k.bedrijf ? `${k.bedrijf} (${k.naam})` : k.naam}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BewerkenAfspraakModal({ afspraak, klanten, producten, korActief, kalenders, primaryKalenderId, onSluit, onOpgeslagen, onFacturenAangemaakt }: {
   afspraak: Afspraak;
+  klanten: Klant[];
+  producten: Product[];
+  korActief: boolean;
+  kalenders: Kalender[];
+  primaryKalenderId: string;
   onSluit: () => void;
+  onOpgeslagen: () => void;
   onFacturenAangemaakt: (facturen: Array<{ id: string; nummer: string; klantNaam: string }>) => void;
 }) {
-  const [makenLaden, setMakenLaden] = useState(false);
+  const [initLaden, setInitLaden] = useState(true);
+  const [klantIds, setKlantIds] = useState<string[]>([]);
+  const [locatie, setLocatie] = useState(afspraak.locatie ?? "");
+  const [datum, setDatum] = useState(afspraak.start.split("T")[0]);
+  const [geheledag, setGeheledag] = useState(afspraak.geheledag);
+  const [startTijd, setStartTijd] = useState(afspraak.geheledag ? "09:00" : formatTijd(afspraak.start));
+  const [eindTijd, setEindTijd] = useState(afspraak.geheledag ? "10:00" : formatTijd(afspraak.einde));
+  const [kalenderId, setKalenderId] = useState(afspraak.kalenderId ?? primaryKalenderId ?? "primary");
+  const [regels, setRegels] = useState<FactuurRegel[]>([]);
+  const [opslaan, setOpslaan] = useState(false);
+  const [factuurLaden, setFactuurLaden] = useState(false);
+  const [bevestigingLaden, setBevestigingLaden] = useState(false);
+  const [bevestigingSucces, setBevestigingSucces] = useState(false);
   const [fout, setFout] = useState<string | null>(null);
 
-  const maakFacturen = async () => {
-    setMakenLaden(true);
-    setFout(null);
-    try {
-      const res = await window.api.agenda.maakFacturenVanAfspraak({ eventId: afspraak.id });
-      if (!res.succes || !res.facturen?.length) {
-        setFout(res.fout ?? "Geen klanten gekoppeld aan deze afspraak.");
-        return;
+  useEffect(() => {
+    window.api.agenda.haalAfspraakData(afspraak.id).then((data: unknown) => {
+      const d = data as { klantIds?: string[]; regels?: FactuurRegel[]; locatie?: string } | null;
+      if (d) {
+        if (d.klantIds?.length) setKlantIds(d.klantIds);
+        if (d.regels?.length) setRegels(d.regels);
+        if (d.locatie && !afspraak.locatie) setLocatie(d.locatie);
       }
+    }).catch(() => {}).finally(() => setInitLaden(false));
+  }, [afspraak.id, afspraak.locatie]);
+
+  const titelPreview = useMemo(() => {
+    const parts = klantIds.map(id => klanten.find(k => k.id === id)).filter(Boolean).map(k => k!.bedrijf || k!.naam);
+    if (locatie) parts.push(locatie);
+    return parts.length > 0 ? parts.join(" – ") : afspraak.samenvatting;
+  }, [klantIds, locatie, klanten, afspraak.samenvatting]);
+
+  const slaOp = async () => {
+    setOpslaan(true); setFout(null);
+    try {
+      let startDT = datum, eindDT = datum;
+      if (!geheledag) { startDT = `${datum}T${startTijd}:00`; eindDT = `${datum}T${eindTijd}:00`; }
+      await window.api.agenda.updateAfspraak(afspraak.id, {
+        klantIds, locatie: locatie || undefined, regels: regels.length > 0 ? regels : undefined,
+        startDatumTijd: startDT, eindDatumTijd: eindDT, geheledag, calendarId: kalenderId,
+      });
+      onOpgeslagen();
+      onSluit();
+    } catch (e) {
+      setFout(e instanceof Error ? e.message : "Opslaan mislukt");
+    } finally { setOpslaan(false); }
+  };
+
+  const maakFacturen = async () => {
+    setFactuurLaden(true); setFout(null);
+    try {
+      const res = await window.api.agenda.maakFacturenVanAfspraak({ eventId: afspraak.id }) as { succes: boolean; facturen?: Array<{ id: string; nummer: string; klantNaam: string }>; fout?: string };
+      if (!res.succes || !res.facturen?.length) { setFout(res.fout ?? "Geen klanten gekoppeld."); return; }
       onSluit();
       onFacturenAangemaakt(res.facturen);
     } catch (e) {
       setFout(e instanceof Error ? e.message : "Aanmaken mislukt");
-    } finally {
-      setMakenLaden(false);
-    }
+    } finally { setFactuurLaden(false); }
+  };
+
+  const stuurBevestiging = async () => {
+    setBevestigingLaden(true); setFout(null);
+    try {
+      await window.api.agenda.stuurBevestiging(afspraak.id);
+      setBevestigingSucces(true);
+      setTimeout(() => setBevestigingSucces(false), 3000);
+    } catch (e) {
+      setFout(e instanceof Error ? e.message : "Versturen mislukt");
+    } finally { setBevestigingLaden(false); }
   };
 
   return (
-    <>
-      <div className="fixed inset-0 z-40" onClick={onSluit} />
-      <div className="fixed z-50 bottom-6 right-6 bg-white rounded-xl shadow-2xl border border-gray-200 w-80 p-4">
-        <div className="flex items-start justify-between gap-2 mb-3">
-          <h3 className="font-semibold text-gray-900 text-sm leading-tight">{afspraak.samenvatting}</h3>
-          <button onClick={onSluit} className="text-gray-400 hover:text-gray-600 rounded p-0.5 shrink-0">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        <div className="space-y-1.5 text-sm text-gray-600">
-          <div className="flex items-center gap-2">
-            <Clock className="h-3.5 w-3.5 text-gray-400 shrink-0" />
-            <span className="text-xs">
-              {afspraak.geheledag
-                ? `${new Date(afspraak.start).toLocaleDateString("nl-NL", { weekday: "long", day: "numeric", month: "long" })} — Hele dag`
-                : `${new Date(afspraak.start).toLocaleDateString("nl-NL", { weekday: "short", day: "numeric", month: "short" })} ${formatTijd(afspraak.start)} – ${formatTijd(afspraak.einde)}`
-              }
-            </span>
+    <Modal open={true} onOpenChange={v => { if (!v) onSluit(); }}>
+      <ModalContent className="max-w-3xl p-0 overflow-hidden gap-0" style={{ display: "flex", flexDirection: "column", maxHeight: "90vh" }}>
+        <div className="px-6 pt-5 pb-4 border-b border-gray-100 shrink-0">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <ModalTitle className="flex items-center gap-2">
+                <Edit3 className="h-4 w-4 text-indigo-500 shrink-0" />
+                Afspraak bewerken
+              </ModalTitle>
+              <p className="text-xs text-gray-400 mt-0.5 truncate">{afspraak.samenvatting}</p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <Button variant="outline" size="sm" loading={bevestigingLaden} onClick={stuurBevestiging} className="gap-1.5">
+                {bevestigingSucces ? <Check className="h-3.5 w-3.5 text-green-600" /> : <Mail className="h-3.5 w-3.5" />}
+                {bevestigingSucces ? "Verstuurd!" : "Bevestiging"}
+              </Button>
+              <Button size="sm" loading={factuurLaden} onClick={maakFacturen} className="gap-1.5">
+                <FileText className="h-3.5 w-3.5" />
+                Factuur aanmaken
+              </Button>
+              <button onClick={onSluit} className="text-gray-400 hover:text-gray-600 rounded p-0.5">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
           </div>
-          {afspraak.locatie && (
-            <div className="flex items-start gap-2">
-              <MapPin className="h-3.5 w-3.5 text-gray-400 shrink-0 mt-0.5" />
-              <span className="text-xs">{afspraak.locatie}</span>
-            </div>
-          )}
-          {afspraak.omschrijving && (
-            <div className="flex items-start gap-2">
-              <FileText className="h-3.5 w-3.5 text-gray-400 shrink-0 mt-0.5" />
-              <span className="text-xs line-clamp-3">{afspraak.omschrijving}</span>
-            </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4 min-h-0">
+          {initLaden ? (
+            <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin text-indigo-300" /></div>
+          ) : (
+            <>
+              <div className="rounded-lg bg-indigo-50 border border-indigo-100 px-3 py-2">
+                <p className="text-[10px] font-medium text-indigo-500 uppercase tracking-wide mb-0.5">Titel in Google Calendar</p>
+                <p className="text-sm font-semibold text-indigo-900">{titelPreview}</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <KlantSelector klanten={klanten} klantIds={klantIds} setKlantIds={setKlantIds} />
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Locatie</label>
+                  <input type="text" value={locatie} onChange={e => setLocatie(e.target.value)} placeholder="Adres of naam"
+                    className="w-full h-9 rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Datum</label>
+                  <input type="date" value={datum} onChange={e => setDatum(e.target.value)}
+                    className="w-full h-9 rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                </div>
+                <div className="flex items-end pb-1">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input type="checkbox" checked={geheledag} onChange={e => setGeheledag(e.target.checked)} className="w-4 h-4 rounded border-gray-300 text-indigo-600" />
+                    <span className="text-sm text-gray-700">Hele dag</span>
+                  </label>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Agenda</label>
+                  <select value={kalenderId} onChange={e => setKalenderId(e.target.value)}
+                    className="w-full h-9 rounded-lg border border-gray-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    {kalenders.length === 0 ? <option value="primary">Primaire agenda</option>
+                      : kalenders.map(k => <option key={k.id} value={k.id}>{k.samenvatting}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              {!geheledag && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Begintijd</label>
+                    <input type="time" value={startTijd} onChange={e => setStartTijd(e.target.value)}
+                      className="w-full h-9 rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Eindtijd</label>
+                    <input type="time" value={eindTijd} onChange={e => setEindTijd(e.target.value)}
+                      className="w-full h-9 rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                  </div>
+                </div>
+              )}
+
+              <RegelEditor regels={regels} korActief={korActief} producten={producten} setRegels={setRegels} />
+
+              {fout && (
+                <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700 flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4 shrink-0" /> {fout}
+                </div>
+              )}
+            </>
           )}
         </div>
-        {fout && (
-          <p className="mt-2 text-xs text-red-600 bg-red-50 rounded px-2 py-1">{fout}</p>
-        )}
-        <div className="mt-3 pt-3 border-t border-gray-100">
-          <Button size="sm" className="w-full" loading={makenLaden} onClick={maakFacturen}>
-            <FileText className="h-3.5 w-3.5" />
-            Facturen aanmaken van afspraak
-          </Button>
+
+        <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-2 shrink-0">
+          <Button variant="outline" onClick={onSluit}>Annuleren</Button>
+          <Button loading={opslaan} onClick={slaOp}>Opslaan</Button>
         </div>
-      </div>
-    </>
+      </ModalContent>
+    </Modal>
   );
 }
 
 // ── Nieuw Afspraak Modal ───────────────────────────────────────────────────────
 
-function NieuwAfspraakModal({ open, onOpenChange, kalenders, primaryKalenderId, klanten, voorafDatum, voorafUur, onOpgeslagen }: {
+function NieuwAfspraakModal({ open, onOpenChange, kalenders, primaryKalenderId, klanten, producten, korActief, voorafDatum, voorafUur, onOpgeslagen }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   kalenders: Kalender[];
   primaryKalenderId: string;
   klanten: Klant[];
+  producten: Product[];
+  korActief: boolean;
   voorafDatum: string;
   voorafUur: number;
   onOpgeslagen: () => void;
 }) {
   const [klantIds, setKlantIds] = useState<string[]>([]);
-  const [klantZoek, setKlantZoek] = useState("");
   const [locatie, setLocatie] = useState("");
   const [datum, setDatum] = useState(voorafDatum);
   const [geheledag, setGeheledag] = useState(false);
@@ -527,52 +832,26 @@ function NieuwAfspraakModal({ open, onOpenChange, kalenders, primaryKalenderId, 
       setKalenderId(primaryKalenderId || "primary");
       setFout(null);
       setKlantIds([]);
-      setKlantZoek("");
+      setRegels([]);
     }
   }, [open, voorafDatum, voorafUur, primaryKalenderId]);
 
-  const toggleKlant = (id: string) =>
-    setKlantIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-
-  const gefilterdKlanten = useMemo(() =>
-    klanten.filter(k => {
-      const q = klantZoek.toLowerCase();
-      return !q || k.naam.toLowerCase().includes(q) || (k.bedrijf ?? "").toLowerCase().includes(q);
-    }),
-  [klanten, klantZoek]);
-
   const titelPreview = useMemo(() => {
-    const parts: string[] = [];
-    for (const id of klantIds) {
-      const k = klanten.find(k => k.id === id);
-      if (k) parts.push(k.bedrijf || k.naam);
-    }
+    const parts = klantIds.map(id => klanten.find(k => k.id === id)).filter(Boolean).map(k => k!.bedrijf || k!.naam);
     if (locatie) parts.push(locatie);
     return parts.length > 0 ? parts.join(" – ") : "Afspraak";
   }, [klantIds, locatie, klanten]);
 
-  const voegRegelToe = () => setRegels(r => [...r, { omschrijving: "", aantal: 1, eenheid: "uur", prijs: 0, btwPercentage: 21 }]);
-  const verwijderRegel = (i: number) => setRegels(r => r.filter((_, j) => j !== i));
-  const updateRegel = (i: number, veld: keyof FactuurRegel, waarde: string | number) =>
-    setRegels(r => r.map((regel, j) => j === i ? { ...regel, [veld]: waarde } : regel));
-
   const slaOp = async () => {
     if (!datum) { setFout("Vul een datum in."); return; }
-    setOpslaan(true);
-    setFout(null);
+    setOpslaan(true); setFout(null);
     try {
-      let startDatumTijd = datum;
-      let eindDatumTijd = datum;
-      if (!geheledag) {
-        startDatumTijd = `${datum}T${startTijd}:00`;
-        eindDatumTijd = `${datum}T${eindTijd}:00`;
-      }
+      let startDatumTijd = datum, eindDatumTijd = datum;
+      if (!geheledag) { startDatumTijd = `${datum}T${startTijd}:00`; eindDatumTijd = `${datum}T${eindTijd}:00`; }
       await window.api.agenda.maakAfspraak({
         klantIds: klantIds.length > 0 ? klantIds : undefined,
         locatie: locatie || undefined,
-        startDatumTijd,
-        eindDatumTijd,
-        geheledag,
+        startDatumTijd, eindDatumTijd, geheledag,
         calendarId: kalenderId,
         regels: regels.length > 0 ? regels : undefined,
       });
@@ -581,116 +860,49 @@ function NieuwAfspraakModal({ open, onOpenChange, kalenders, primaryKalenderId, 
       setKlantIds([]); setLocatie(""); setRegels([]);
     } catch (e) {
       setFout(e instanceof Error ? e.message : "Opslaan mislukt");
-    } finally {
-      setOpslaan(false);
-    }
+    } finally { setOpslaan(false); }
   };
 
   return (
     <Modal open={open} onOpenChange={onOpenChange}>
-      <ModalContent
-        className="max-w-3xl p-0 overflow-hidden gap-0"
-        style={{ display: "flex", flexDirection: "column", maxHeight: "90vh" }}
-      >
-        {/* Header — buiten scroll */}
+      <ModalContent className="max-w-3xl p-0 overflow-hidden gap-0" style={{ display: "flex", flexDirection: "column", maxHeight: "90vh" }}>
         <div className="px-6 pt-6 pb-4 border-b border-gray-100 shrink-0">
           <ModalTitle>Nieuwe afspraak</ModalTitle>
         </div>
 
-        {/* Scrollbaar formulier */}
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4 min-h-0">
-          {/* Titel preview */}
           <div className="rounded-lg bg-indigo-50 border border-indigo-100 px-3 py-2">
             <p className="text-[10px] font-medium text-indigo-500 uppercase tracking-wide mb-0.5">Titel in Google Calendar</p>
             <p className="text-sm font-semibold text-indigo-900">{titelPreview}</p>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            {/* Klanten (multi-select) */}
-            <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">
-                Klanten (optioneel)
-                {klantIds.length > 0 && (
-                  <span className="ml-1.5 inline-flex items-center justify-center h-4 w-4 rounded-full bg-indigo-600 text-white text-[9px] font-bold">
-                    {klantIds.length}
-                  </span>
-                )}
-              </label>
-              <div className="border border-gray-300 rounded-lg overflow-hidden">
-                <input
-                  type="text"
-                  value={klantZoek}
-                  onChange={e => setKlantZoek(e.target.value)}
-                  placeholder="Zoek klant..."
-                  className="w-full h-8 px-3 text-xs border-b border-gray-200 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-indigo-400"
-                />
-                <div className="max-h-32 overflow-y-auto">
-                  {gefilterdKlanten.length === 0 ? (
-                    <p className="text-xs text-gray-400 px-3 py-2">Geen klanten gevonden</p>
-                  ) : gefilterdKlanten.map(k => (
-                    <label key={k.id} className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={klantIds.includes(k.id)}
-                        onChange={() => toggleKlant(k.id)}
-                        className="w-3.5 h-3.5 rounded border-gray-300 text-indigo-600 shrink-0"
-                      />
-                      <span className="text-xs text-gray-800 truncate">
-                        {k.bedrijf ? `${k.bedrijf} (${k.naam})` : k.naam}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            </div>
-            {/* Locatie */}
+            <KlantSelector klanten={klanten} klantIds={klantIds} setKlantIds={setKlantIds} />
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Locatie</label>
-              <input
-                type="text"
-                value={locatie}
-                onChange={e => setLocatie(e.target.value)}
-                placeholder="Adres of naam"
-                className="w-full h-9 rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
+              <input type="text" value={locatie} onChange={e => setLocatie(e.target.value)} placeholder="Adres of naam"
+                className="w-full h-9 rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
             </div>
           </div>
 
           <div className="grid grid-cols-3 gap-3">
-            {/* Datum */}
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Datum</label>
-              <input
-                type="date"
-                value={datum}
-                onChange={e => setDatum(e.target.value)}
-                className="w-full h-9 rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
+              <input type="date" value={datum} onChange={e => setDatum(e.target.value)}
+                className="w-full h-9 rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
             </div>
-            {/* Hele dag toggle */}
             <div className="flex items-end pb-1">
               <label className="flex items-center gap-2 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={geheledag}
-                  onChange={e => setGeheledag(e.target.checked)}
-                  className="w-4 h-4 rounded border-gray-300 text-indigo-600"
-                />
+                <input type="checkbox" checked={geheledag} onChange={e => setGeheledag(e.target.checked)} className="w-4 h-4 rounded border-gray-300 text-indigo-600" />
                 <span className="text-sm text-gray-700">Hele dag</span>
               </label>
             </div>
-            {/* Kalender */}
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Agenda</label>
-              <select
-                value={kalenderId}
-                onChange={e => setKalenderId(e.target.value)}
-                className="w-full h-9 rounded-lg border border-gray-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              >
-                {kalenders.length === 0
-                  ? <option value="primary">Primaire agenda</option>
-                  : kalenders.map(k => <option key={k.id} value={k.id}>{k.samenvatting}</option>)
-                }
+              <select value={kalenderId} onChange={e => setKalenderId(e.target.value)}
+                className="w-full h-9 rounded-lg border border-gray-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                {kalenders.length === 0 ? <option value="primary">Primaire agenda</option>
+                  : kalenders.map(k => <option key={k.id} value={k.id}>{k.samenvatting}</option>)}
               </select>
             </div>
           </div>
@@ -699,85 +911,18 @@ function NieuwAfspraakModal({ open, onOpenChange, kalenders, primaryKalenderId, 
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">Begintijd</label>
-                <input
-                  type="time"
-                  value={startTijd}
-                  onChange={e => setStartTijd(e.target.value)}
-                  className="w-full h-9 rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
+                <input type="time" value={startTijd} onChange={e => setStartTijd(e.target.value)}
+                  className="w-full h-9 rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">Eindtijd</label>
-                <input
-                  type="time"
-                  value={eindTijd}
-                  onChange={e => setEindTijd(e.target.value)}
-                  className="w-full h-9 rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
+                <input type="time" value={eindTijd} onChange={e => setEindTijd(e.target.value)}
+                  className="w-full h-9 rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
               </div>
             </div>
           )}
 
-          {/* Factuurregels */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="text-xs font-medium text-gray-700">Factuurregels (optioneel, voor later)</label>
-              <button
-                onClick={voegRegelToe}
-                className="flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 font-medium"
-              >
-                <Plus className="h-3 w-3" /> Regel toevoegen
-              </button>
-            </div>
-            {regels.length > 0 && (
-              <div className="border border-gray-200 rounded-lg overflow-hidden">
-                <div className="grid text-[10px] font-medium text-gray-500 uppercase bg-gray-50 px-2 py-1.5" style={{ gridTemplateColumns: "3fr 1fr 1fr 1fr 1fr auto" }}>
-                  <span>Omschrijving</span><span>Aantal</span><span>Eenheid</span><span>Prijs</span><span>BTW%</span><span />
-                </div>
-                {regels.map((regel, i) => (
-                  <div key={i} className="grid gap-1 px-2 py-1.5 border-t border-gray-100" style={{ gridTemplateColumns: "3fr 1fr 1fr 1fr 1fr auto" }}>
-                    <input
-                      value={regel.omschrijving}
-                      onChange={e => updateRegel(i, "omschrijving", e.target.value)}
-                      placeholder="Omschrijving"
-                      className="h-7 rounded border border-gray-200 px-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400"
-                    />
-                    <input
-                      type="number"
-                      value={regel.aantal}
-                      onChange={e => updateRegel(i, "aantal", parseFloat(e.target.value) || 1)}
-                      className="h-7 rounded border border-gray-200 px-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400"
-                    />
-                    <input
-                      value={regel.eenheid}
-                      onChange={e => updateRegel(i, "eenheid", e.target.value)}
-                      placeholder="uur"
-                      className="h-7 rounded border border-gray-200 px-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400"
-                    />
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={regel.prijs}
-                      onChange={e => updateRegel(i, "prijs", parseFloat(e.target.value) || 0)}
-                      className="h-7 rounded border border-gray-200 px-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400"
-                    />
-                    <select
-                      value={regel.btwPercentage}
-                      onChange={e => updateRegel(i, "btwPercentage", parseFloat(e.target.value))}
-                      className="h-7 rounded border border-gray-200 px-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white"
-                    >
-                      <option value={0}>0%</option>
-                      <option value={9}>9%</option>
-                      <option value={21}>21%</option>
-                    </select>
-                    <button onClick={() => verwijderRegel(i)} className="text-red-400 hover:text-red-600 p-0.5">
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <RegelEditor regels={regels} korActief={korActief} producten={producten} setRegels={setRegels} />
 
           {fout && (
             <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700 flex items-center gap-2">
@@ -786,7 +931,7 @@ function NieuwAfspraakModal({ open, onOpenChange, kalenders, primaryKalenderId, 
           )}
         </div>
 
-        {/* Footer — buiten scroll */}
+        {/* Footer */}
         <div className="px-6 py-4 border-t border-gray-100 shrink-0 flex justify-end gap-2">
           <Button variant="outline" disabled={opslaan} onClick={() => onOpenChange(false)}>Annuleren</Button>
           <Button onClick={slaOp} disabled={opslaan}>
@@ -803,12 +948,14 @@ function NieuwAfspraakModal({ open, onOpenChange, kalenders, primaryKalenderId, 
 
 export default function AgendaPagina() {
   const navigate = useNavigate();
-  const [weergave, setWeergave] = useState<Weergave>("maand");
+  const [weergave, setWeergave] = useState<Weergave>("week");
   const [geselecteerdeDatum, setGeselecteerdeDatum] = useState(() => new Date());
   const [afspraken, setAfspraken] = useState<Afspraak[]>([]);
   const [kalenders, setKalenders] = useState<Kalender[]>([]);
   const [primaryKalenderId, setPrimaryKalenderId] = useState("primary");
   const [klanten, setKlanten] = useState<Klant[]>([]);
+  const [producten, setProducten] = useState<Product[]>([]);
+  const [korActief, setKorActief] = useState(false);
   const [laden, setLaden] = useState(true);
   const [fout, setFout] = useState<string | null>(null);
   const [googleNietGekoppeld, setGoogleNietGekoppeld] = useState(false);
@@ -817,6 +964,7 @@ export default function AgendaPagina() {
   const [nieuwAfspraakOpen, setNieuwAfspraakOpen] = useState(false);
   const [voorafDatum, setVoorafDatum] = useState(dagSleutel(new Date()));
   const [voorafUur, setVoorafUur] = useState(9);
+  const [contextMenu, setContextMenu] = useState<{ pos: { x: number; y: number }; afspraak: Afspraak } | null>(null);
 
   // Bereken datum-range op basis van weergave
   const { van, tot, weekDagen } = useMemo(() => {
@@ -870,6 +1018,12 @@ export default function AgendaPagina() {
     }).catch(() => {});
     window.api.klanten.list().then((d: unknown) => {
       setKlanten(Array.isArray(d) ? (d as Klant[]) : []);
+    }).catch(() => {});
+    window.api.producten.list().then((d: unknown) => {
+      setProducten(Array.isArray(d) ? (d as Product[]) : []);
+    }).catch(() => {});
+    window.api.instellingen.get().then((d: unknown) => {
+      setKorActief(!!(d as Record<string, unknown>)?.korActief);
     }).catch(() => {});
   }, []);
 
@@ -962,6 +1116,7 @@ export default function AgendaPagina() {
                   afspraken={afspraken}
                   onTijdKlik={(datum, uur) => openNieuwAfspraak(datum, uur)}
                   onAfspraakKlik={a => setGeselecteerdeAfspraak(a)}
+                  onAfspraakContextMenu={(a, e) => setContextMenu({ pos: { x: e.clientX, y: e.clientY }, afspraak: a })}
                 />
             }
           </div>
@@ -976,6 +1131,7 @@ export default function AgendaPagina() {
                 afspraken={afspraken}
                 onTijdKlik={(datum, uur) => openNieuwAfspraak(datum, uur)}
                 onAfspraakKlik={a => setGeselecteerdeAfspraak(a)}
+                onAfspraakContextMenu={(a, e) => setContextMenu({ pos: { x: e.clientX, y: e.clientY }, afspraak: a })}
               />
         )}
 
@@ -989,6 +1145,7 @@ export default function AgendaPagina() {
                 afspraken={afspraken}
                 onDagKlik={d => { setGeselecteerdeDatum(d); setWeergave("dag"); }}
                 onAfspraakKlik={a => setGeselecteerdeAfspraak(a)}
+                onAfspraakContextMenu={(a, e) => setContextMenu({ pos: { x: e.clientX, y: e.clientY }, afspraak: a })}
               />
         )}
       </div>
@@ -1018,13 +1175,56 @@ export default function AgendaPagina() {
         </div>
       )}
 
-      {/* Afspraak detail */}
+      {/* Afspraak bewerken modal */}
       {geselecteerdeAfspraak && (
-        <AfspraakDetail
+        <BewerkenAfspraakModal
           afspraak={geselecteerdeAfspraak}
+          klanten={klanten}
+          producten={producten}
+          korActief={korActief}
+          kalenders={kalenders}
+          primaryKalenderId={primaryKalenderId}
           onSluit={() => setGeselecteerdeAfspraak(null)}
-          onFacturenAangemaakt={facturen => setFactuurMelding(facturen)}
+          onOpgeslagen={() => laadAfspraken(van, tot)}
+          onFacturenAangemaakt={facturen => { setGeselecteerdeAfspraak(null); setFactuurMelding(facturen); }}
         />
+      )}
+
+      {/* Context menu (rechtermuisknop op afspraak) */}
+      {contextMenu && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setContextMenu(null)} />
+          <div
+            className="fixed z-50 bg-white rounded-lg shadow-xl border border-gray-200 py-1 w-48"
+            style={{ left: contextMenu.pos.x, top: contextMenu.pos.y }}
+          >
+            <button
+              onClick={() => { setGeselecteerdeAfspraak(contextMenu.afspraak); setContextMenu(null); }}
+              className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+            >
+              <Edit3 className="h-3.5 w-3.5 text-gray-400" /> Bewerken
+            </button>
+            <button
+              onClick={async () => {
+                setContextMenu(null);
+                const res = await window.api.agenda.maakFacturenVanAfspraak({ eventId: contextMenu.afspraak.id }) as { succes: boolean; facturen?: Array<{ id: string; nummer: string; klantNaam: string }>; fout?: string };
+                if (res.succes && res.facturen?.length) setFactuurMelding(res.facturen);
+              }}
+              className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+            >
+              <FileText className="h-3.5 w-3.5 text-gray-400" /> Factuur aanmaken
+            </button>
+            <button
+              onClick={async () => {
+                setContextMenu(null);
+                await window.api.agenda.stuurBevestiging(contextMenu.afspraak.id).catch(() => {});
+              }}
+              className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+            >
+              <Mail className="h-3.5 w-3.5 text-gray-400" /> Bevestiging sturen
+            </button>
+          </div>
+        </>
       )}
 
       {/* Nieuwe afspraak modal */}
@@ -1034,6 +1234,8 @@ export default function AgendaPagina() {
         kalenders={kalenders}
         primaryKalenderId={primaryKalenderId}
         klanten={klanten}
+        producten={producten}
+        korActief={korActief}
         voorafDatum={voorafDatum}
         voorafUur={voorafUur}
         onOpgeslagen={() => laadAfspraken(van, tot)}

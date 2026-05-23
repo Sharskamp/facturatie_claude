@@ -111,6 +111,14 @@ interface Instellingen {
   // Email sjabloon
   emailAanhef?: string;
   emailAfsluitingsTekst?: string;
+  emailFactuurOnderwerp?: string;
+  emailHerinneringOnderwerp?: string;
+  emailHerinneringTekst?: string;
+  agendaHerinneringActief?: boolean;
+  agendaHerinneringModus?: string;
+  agendaHerinneringVoorafUren?: number;
+  agendaHerinneringDagen?: number;
+  agendaHerinneringTijd?: string;
   // Overig
   kmVergoeding?: number;
   bankAfschriftenMap?: string;
@@ -698,6 +706,79 @@ export default function InstellingenPagina() {
                 )}
               </div>
 
+              {/* Agenda afspraakreinneringen */}
+              <div className="rounded-lg border border-gray-200 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-700">Afspraakherinneringen</p>
+                    <p className="text-xs text-gray-400 mt-0.5">Automatisch herinneringen sturen aan klanten voor afspraken</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nieuw = !instellingen.agendaHerinneringActief;
+                      updateVeld("agendaHerinneringActief", nieuw);
+                      slaOp({ agendaHerinneringActief: nieuw });
+                    }}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      instellingen.agendaHerinneringActief ? "bg-indigo-600" : "bg-gray-200"
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                        instellingen.agendaHerinneringActief ? "translate-x-6" : "translate-x-1"
+                      }`}
+                    />
+                  </button>
+                </div>
+                {instellingen.agendaHerinneringActief && (
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Verstuurmodus</label>
+                      <select
+                        value={instellingen.agendaHerinneringModus ?? "vooraf"}
+                        onChange={(e) => updateVeld("agendaHerinneringModus", e.target.value)}
+                        onBlur={() => slaOp({ agendaHerinneringModus: instellingen.agendaHerinneringModus })}
+                        className="h-9 rounded-lg border border-gray-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full"
+                      >
+                        <option value="vooraf">X uur voor de afspraak</option>
+                        <option value="vasteTijd">Op een vast tijdstip X dagen van te voren</option>
+                      </select>
+                    </div>
+                    {instellingen.agendaHerinneringModus === "vasteTijd" ? (
+                      <div className="grid grid-cols-2 gap-3">
+                        <Input
+                          label="Dagen van te voren"
+                          type="number"
+                          min="1"
+                          max="30"
+                          value={instellingen.agendaHerinneringDagen ?? 1}
+                          onChange={(e) => updateVeld("agendaHerinneringDagen", parseInt(e.target.value))}
+                          onBlur={() => slaOp({ agendaHerinneringDagen: instellingen.agendaHerinneringDagen })}
+                        />
+                        <Input
+                          label="Tijdstip (bijv. 09:00)"
+                          type="time"
+                          value={instellingen.agendaHerinneringTijd ?? "09:00"}
+                          onChange={(e) => updateVeld("agendaHerinneringTijd", e.target.value)}
+                          onBlur={() => slaOp({ agendaHerinneringTijd: instellingen.agendaHerinneringTijd })}
+                        />
+                      </div>
+                    ) : (
+                      <Input
+                        label="Uren voor de afspraak"
+                        type="number"
+                        min="1"
+                        max="72"
+                        value={instellingen.agendaHerinneringVoorafUren ?? 2}
+                        onChange={(e) => updateVeld("agendaHerinneringVoorafUren", parseInt(e.target.value))}
+                        onBlur={() => slaOp({ agendaHerinneringVoorafUren: instellingen.agendaHerinneringVoorafUren })}
+                      />
+                    )}
+                  </div>
+                )}
+              </div>
+
               <div className="flex justify-end pt-2">
                 <Button onClick={() => slaOp(instellingen)} loading={opslaan}>
                   Opslaan
@@ -1107,6 +1188,19 @@ export default function InstellingenPagina() {
               <CardContent className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Onderwerp factuur-e-mail
+                  </label>
+                  <input
+                    type="text"
+                    value={instellingen.emailFactuurOnderwerp ?? ''}
+                    onChange={(e) => updateVeld('emailFactuurOnderwerp', e.target.value)}
+                    placeholder="Factuur {{nummer}} van {{bedrijf}}"
+                    className="flex h-9 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-1 text-sm text-gray-900 dark:text-gray-100 shadow-sm placeholder:text-gray-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:border-transparent"
+                  />
+                  <p className="mt-1 text-xs text-gray-400">Gebruik {'{{nummer}}'} voor het factuurnummer, {'{{bedrijf}}'} voor je bedrijfsnaam</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                     Aanhef
                   </label>
                   <input
@@ -1131,7 +1225,50 @@ export default function InstellingenPagina() {
                   />
                 </div>
                 <Button
-                  onClick={() => slaOp({ emailAanhef: instellingen.emailAanhef, emailAfsluitingsTekst: instellingen.emailAfsluitingsTekst })}
+                  onClick={() => slaOp({ emailAanhef: instellingen.emailAanhef, emailAfsluitingsTekst: instellingen.emailAfsluitingsTekst, emailFactuurOnderwerp: instellingen.emailFactuurOnderwerp })}
+                  disabled={opslaan}
+                  className="gap-2"
+                >
+                  {opslaan && <Loader2 className="h-4 w-4 animate-spin" />}
+                  Sjabloon opslaan
+                </Button>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Betalingsherinnering sjabloon</CardTitle>
+                <CardDescription>Stel de e-mailtekst in voor betalingsherinneringen</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Onderwerp herinnering
+                  </label>
+                  <input
+                    type="text"
+                    value={instellingen.emailHerinneringOnderwerp ?? ''}
+                    onChange={(e) => updateVeld('emailHerinneringOnderwerp', e.target.value)}
+                    placeholder="Betalingsherinnering - Factuur {{factuurnummer}}"
+                    className="flex h-9 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-1 text-sm text-gray-900 dark:text-gray-100 shadow-sm placeholder:text-gray-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:border-transparent"
+                  />
+                  <p className="mt-1 text-xs text-gray-400">Gebruik {'{{factuurnummer}}'} voor het nummer</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Tekst herinnering
+                  </label>
+                  <textarea
+                    rows={5}
+                    value={instellingen.emailHerinneringTekst ?? ''}
+                    onChange={(e) => updateVeld('emailHerinneringTekst', e.target.value)}
+                    placeholder={`Geachte {{naam}},\n\nWij attenderen u op onderstaande openstaande facturen.\n\nMet vriendelijke groet`}
+                    className="flex w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 shadow-sm placeholder:text-gray-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:border-transparent resize-none"
+                  />
+                  <p className="mt-1 text-xs text-gray-400">Beschikbare variabelen: {'{{naam}}'} (klantnaam), {'{{openstaand}}'} (totaal openstaand bedrag). De facturenlijst wordt automatisch toegevoegd.</p>
+                </div>
+                <Button
+                  onClick={() => slaOp({ emailHerinneringOnderwerp: instellingen.emailHerinneringOnderwerp, emailHerinneringTekst: instellingen.emailHerinneringTekst })}
                   disabled={opslaan}
                   className="gap-2"
                 >
