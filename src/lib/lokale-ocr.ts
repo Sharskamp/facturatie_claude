@@ -300,6 +300,56 @@ export async function uitsnedeTekstVanPdf(
   return gevonden.map(i => i.tekst).join(' ').trim()
 }
 
+// ── Detecteer en crop naar de witte PDF-pagina binnen de Chromium viewer ────────
+function cropNaarPdfPagina(img: {
+  getSize(): { width: number; height: number }
+  getBitmap(): Buffer
+  crop(r: { x: number; y: number; width: number; height: number }): {
+    getSize(): { width: number; height: number }
+    toPNG(): Buffer
+  }
+}): Buffer {
+  const { width: imgW, height: imgH } = img.getSize()
+  const bmp = img.getBitmap() // BGRA
+
+  // Pixel is "wit" (PDF-pagina) als R>230 && G>230 && B>230
+  const isWit = (x: number, y: number): boolean => {
+    const i = (y * imgW + x) * 4
+    return bmp[i] > 230 && bmp[i + 1] > 230 && bmp[i + 2] > 230
+  }
+
+  // Gebruik het horizontale midden voor verticale scan (buiten de zijbalk)
+  const cx = imgW >> 1
+
+  let yTop = 0
+  for (let y = 0; y < imgH; y++) { if (isWit(cx, y)) { yTop = y; break } }
+
+  let yBot = imgH - 1
+  for (let y = imgH - 1; y >= 0; y--) { if (isWit(cx, y)) { yBot = y; break } }
+
+  // Gebruik het verticale midden van de gevonden content voor horizontale scan
+  const cy = (yTop + yBot) >> 1
+
+  let xLeft = 0
+  for (let x = 0; x < imgW; x++) { if (isWit(x, cy)) { xLeft = x; break } }
+
+  let xRight = imgW - 1
+  for (let x = imgW - 1; x >= 0; x--) { if (isWit(x, cy)) { xRight = x; break } }
+
+  const w = xRight - xLeft + 1
+  const h = yBot - yTop + 1
+
+  console.log(`[PDF-CROP] Volledig: ${imgW}×${imgH} → PDF-pagina: x=${xLeft} y=${yTop} w=${w} h=${h}`)
+
+  // Sanity check: content moet minstens 30% van het beeld zijn
+  if (w < imgW * 0.3 || h < imgH * 0.3) {
+    console.warn('[PDF-CROP] Detectie mislukt, gebruik volledig beeld')
+    return img.crop({ x: 0, y: 0, width: imgW, height: imgH }).toPNG()
+  }
+
+  return img.crop({ x: xLeft, y: yTop, width: w, height: h }).toPNG()
+}
+
 // ── PDF → PNG via Electron offscreen BrowserWindow ───────────────────────────
 export async function pdfPaginaNaarPng(pad: string, paginaIndex = 0): Promise<Buffer> {
   // Gebruik Electron's ingebouwde PDF viewer om PDF naar image te renderen
@@ -346,7 +396,8 @@ export async function pdfPaginaNaarPng(pad: string, paginaIndex = 0): Promise<Bu
         const image = await win.webContents.capturePage()
         clearTimeout(timeout)
         win.destroy()
-        resolve(image.toPNG())
+        // Crop naar de witte PDF-pagina (verwijder toolbar, zijbalk, grijze marges)
+        resolve(cropNaarPdfPagina(image))
       } catch (e) {
         clearTimeout(timeout)
         win.destroy()
