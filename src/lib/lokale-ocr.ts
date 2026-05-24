@@ -195,43 +195,40 @@ interface PdfPage {
 // ── PDF → PNG via Electron offscreen BrowserWindow ───────────────────────────
 export async function pdfPaginaNaarPng(pad: string, paginaIndex = 0): Promise<Buffer> {
   try {
-    const pdfjsLib = laadPdfJsVoorTekst()
-    const buffer = fs.readFileSync(pad)
-    const doc = await pdfjsLib.getDocument({
-      data: new Uint8Array(buffer),
-      useSystemFonts: true,
-      disableFontFace: true,
-    }).promise
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { convert } = require('pdf2pic')
 
-    // Zorg dat de pagina-index geldig is
-    const actualPageIndex = Math.max(0, Math.min(paginaIndex, doc.numPages - 1))
-    const page = await doc.getPage(actualPageIndex + 1)
-
-    // Render met 150 DPI (schaal ~1.5 voor standaard scherm DPI)
-    const scale = 1.5
-    const viewport = page.getViewport({ scale })
-
-    // Canvas rendering — we gebruiken de native 'canvas' package die in Node.js beschikbaar is
-    const { createCanvas } = require('canvas')
-    const canvas = createCanvas(viewport.width, viewport.height)
-    const ctx = canvas.getContext('2d')
-
-    // Rendereer de PDF-pagina
-    const renderContext = {
-      canvasContext: ctx,
-      viewport: viewport
+    const options = {
+      density: 150,
+      saveFilename: `page_${paginaIndex}`,
+      savePath: os.tmpdir(),
+      format: 'png',
+      width: 1240,
+      height: 1754,
     }
-    await page.render(renderContext).promise
 
-    // Converteer canvas naar PNG buffer
-    const pngBuffer = canvas.toBuffer('image/png')
-    await doc.destroy()
+    const converted = await convert({
+      url: pad,
+      page: paginaIndex + 1,
+      ...options
+    })
+
+    if (!converted || !converted.path) {
+      throw new Error('PDF conversion returned no output')
+    }
+
+    const pngBuffer = fs.readFileSync(converted.path)
+    // Opruimen
+    try {
+      fs.unlinkSync(converted.path)
+    } catch {
+      // ignore
+    }
 
     return pngBuffer
   } catch (e) {
-    // Fallback: als canvas rendering faalt, return een placeholder
     console.error('PDF rendering failed:', e)
-    // Maak een minimale 1x1 PNG placeholder zodat de client dit kan zien
+    // Fallback: als rendering faalt, return een placeholder
     const { createCanvas } = require('canvas')
     const canvas = createCanvas(800, 1000)
     const ctx = canvas.getContext('2d')
