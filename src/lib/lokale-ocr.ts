@@ -217,6 +217,85 @@ interface PdfDoc {
 interface PdfPage {
   getViewport(opts: { scale: number }): { width: number; height: number }
   getTextContent(opts?: { normalizeWhitespace: boolean }): Promise<{ items: unknown[] }>
+  render(ctx: { canvasContext: unknown; viewport: unknown }): { promise: Promise<void> }
+}
+
+// ── PDF → PNG via PDF.js + canvas (geen Chromium-toolbar, exacte coördinaten) ──
+export async function renderPdfPagina(pad: string, paginaIndex = 0): Promise<Buffer> {
+  const pdfjsLib = laadPdfJsVoorTekst()
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { createCanvas } = require('canvas') as typeof import('canvas')
+
+  const buffer = fs.readFileSync(pad)
+  const doc = await pdfjsLib.getDocument({
+    data: new Uint8Array(buffer),
+    useSystemFonts: true,
+    disableFontFace: true,
+  }).promise
+
+  const page = await (doc as PdfDoc).getPage(paginaIndex + 1)
+  const viewport = page.getViewport({ scale: 2.0 })
+
+  const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height))
+  const ctx = canvas.getContext('2d')
+  ctx.fillStyle = 'white'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+  await page.render({ canvasContext: ctx, viewport }).promise
+  await (doc as PdfDoc).destroy()
+
+  return canvas.toBuffer('image/png')
+}
+
+// ── Tekst direct uit PDF tekstlaag, gefilterd op box (coördinaten 0-1) ─────────
+export async function uitsnedeTekstVanPdf(
+  pad: string, paginaIndex: number,
+  x: number, y: number, w: number, h: number,
+): Promise<string> {
+  const pdfjsLib = laadPdfJsVoorTekst()
+  const buffer = fs.readFileSync(pad)
+  const doc = await pdfjsLib.getDocument({
+    data: new Uint8Array(buffer),
+    useSystemFonts: true,
+    disableFontFace: true,
+  }).promise
+
+  const page = await (doc as PdfDoc).getPage(paginaIndex + 1)
+  const viewport = page.getViewport({ scale: 1.0 })
+  const pdfW = viewport.width
+  const pdfH = viewport.height
+
+  const content = await page.getTextContent({ normalizeWhitespace: false })
+  await (doc as PdfDoc).destroy()
+
+  const gevonden: { tekst: string; xn: number; yn: number }[] = []
+
+  for (const raw of content.items) {
+    const item = raw as { str: string; transform: number[]; width: number; height: number }
+    if (!item.str?.trim()) continue
+
+    const itemH = Math.max(4, Math.abs(item.transform[3]) || Math.abs(item.height) || 10)
+    const itemW = Math.max(4, Math.abs(item.width) || item.str.length * 6)
+
+    // PDF-coördinaten: origin linksonder, Y omhoog → omdraaien naar scherm-Y (top=0)
+    const screenX = item.transform[4]
+    const screenY = pdfH - item.transform[5] - itemH
+
+    // Normaliseer naar 0-1 relatief aan PDF-pagina
+    const xn = screenX / pdfW
+    const yn = screenY / pdfH
+    const wn = itemW / pdfW
+    const hn = itemH / pdfH
+
+    // Overlap-check met de geselecteerde box
+    if (xn < x + w && xn + wn > x && yn < y + h && yn + hn > y) {
+      gevonden.push({ tekst: item.str.trim(), xn, yn })
+    }
+  }
+
+  // Sorteer: boven → onder, dan links → rechts
+  gevonden.sort((a, b) => Math.abs(a.yn - b.yn) > 0.005 ? a.yn - b.yn : a.xn - b.xn)
+  return gevonden.map(i => i.tekst).join(' ').trim()
 }
 
 // ── PDF → PNG via Electron offscreen BrowserWindow ───────────────────────────

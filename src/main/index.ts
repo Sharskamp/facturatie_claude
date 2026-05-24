@@ -10,7 +10,7 @@ import * as net from 'net'
 import { DOMParser } from '@xmldom/xmldom'
 import { verstuurEmail, maakFactuurEmailHtml } from '../lib/email'
 import { haalAgendaAfspraken, haalKalenderLijst, maakGoogleAfspraak, wijzigGoogleAfspraak, verwijderGoogleAfspraak, maakGoogleAuthUrl, wisselCodeVoorTokens, vernieuwAccessToken } from '../lib/google-calendar'
-import { scanBestandLokaal, pdfPaginaNaarPng } from '../lib/lokale-ocr'
+import { scanBestandLokaal, renderPdfPagina, uitsnedeTekstVanPdf } from '../lib/lokale-ocr'
 import { ExpenseReceiptScanService, HistoricalInvoiceImportService } from '../services/invoice'
 import { autoUpdater } from 'electron-updater'
 import * as os from 'os'
@@ -3576,7 +3576,7 @@ function setupIpcHandlers() {
     let pngPad: string
 
     if (ext === 'pdf') {
-      const pngBuffer = await pdfPaginaNaarPng(bestandPad, pagina - 1)
+      const pngBuffer = await renderPdfPagina(bestandPad, pagina - 1)
       pngPad = join(app.getPath('temp'), `scan_p${pagina}_${Date.now()}.png`)
       fs.writeFileSync(pngPad, pngBuffer)
     } else {
@@ -3651,13 +3651,23 @@ function setupIpcHandlers() {
     console.log(`  Pagina  : ${pagina}`)
     console.log(`  Box (%) : x=${(x*100).toFixed(1)}% y=${(y*100).toFixed(1)}% w=${(breedte*100).toFixed(1)}% h=${(hoogte*100).toFixed(1)}%`)
     try {
+      const ext = extname(bestandPad).toLowerCase().slice(1)
+
+      if (ext === 'pdf') {
+        // PDF met tekstlaag: gebruik PDF.js tekst-extractie (altijd correct, geen OCR nodig)
+        console.log(`  PDF tekstlaag-extractie...`)
+        const tekst = await uitsnedeTekstVanPdf(bestandPad, pagina - 1, x, y, breedte, hoogte)
+        console.log(`  Tekstlaag resultaat: ${JSON.stringify(tekst)}`)
+        if (!tekst) console.log(`  !! Geen tekst gevonden — PDF heeft mogelijk geen tekstlaag (gescand)`)
+        return { succes: true, tekst }
+      }
+
+      // Afbeelding of gescande PDF: crop + PaddleOCR
       const pngPad = await haalPngPad(bestandPad, pagina)
-      console.log(`  PNG pad : ${pngPad}`)
       const fullImg = nativeImage.createFromPath(pngPad)
       const { width: imgW, height: imgH } = fullImg.getSize()
       console.log(`  Afbeelding: ${imgW}×${imgH}px`)
 
-      // Coördinaten zijn percentages (0-1), omzetten naar pixels
       const cropX = Math.max(0, Math.round(x * imgW))
       const cropY = Math.max(0, Math.round(y * imgH))
       const cropW = Math.max(4, Math.min(Math.round(breedte * imgW), imgW - cropX))
@@ -3667,16 +3677,13 @@ function setupIpcHandlers() {
       const cropped = fullImg.crop({ x: cropX, y: cropY, width: cropW, height: cropH })
       const tmpPad = join(app.getPath('temp'), `scan_uitsnede_${Date.now()}.png`)
       fs.writeFileSync(tmpPad, cropped.toPNG())
-      console.log(`  Uitsnede opgeslagen: ${tmpPad}`)
 
-      console.log(`  OCR starten...`)
       const { ocrAfbeelding } = await import('../lib/paddle-ocr')
       const resultaat = await ocrAfbeelding(tmpPad)
       try { fs.unlinkSync(tmpPad) } catch { /* */ }
 
       const tekst = resultaat.tekst?.trim() ?? ''
       console.log(`  OCR resultaat: ${JSON.stringify(tekst)}`)
-      if (!tekst) console.log(`  !! Geen tekst gevonden in uitsnede`)
       return { succes: true, tekst }
     } catch (e) {
       console.error(`  FOUT in scan:ocrUitsnede:`, e)
