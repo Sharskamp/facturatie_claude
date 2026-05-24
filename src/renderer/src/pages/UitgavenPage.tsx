@@ -11,6 +11,7 @@ import {
   Settings2,
   ScanLine,
 } from "lucide-react";
+import { ScanModal, type ScanFormulier } from "@/components/scan/ScanModal";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -141,6 +142,7 @@ export default function UitgavenPagina() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailItem, setDetailItem] = useState<Uitgave | null>(null);
   const [scanBezig, setScanBezig] = useState(false);
+  const [scanModalOpen, setScanModalOpen] = useState(false);
 
   const haalUitgavenOp = useCallback(async () => {
     try {
@@ -296,45 +298,37 @@ export default function UitgavenPagina() {
     }
   };
 
-  const scanBon = async () => {
-    setScanBezig(true);
-    try {
-      const res = await window.api.scan.kiesEnScan();
-      if (!res.succes) {
-        if (res.fout) toonMelding("fout", `Scan mislukt: ${res.fout}`);
-        return;
+  const scanBon = () => setScanModalOpen(true);
+
+  const handleScanOpslaan = async (f: ScanFormulier, bonPadScan: string | null) => {
+    const bedrag = parseFloat(f.subtotaal || f.totaal || '0');
+    let btwPercentage = 21;
+    if (f.subtotaal && f.btwBedrag) {
+      const s = parseFloat(f.subtotaal); const b = parseFloat(f.btwBedrag);
+      if (s > 0) {
+        const perc = Math.round((b / s) * 100);
+        btwPercentage = perc <= 2 ? 0 : perc <= 14 ? 9 : 21;
       }
-      const v = res.velden!;
-      if (!v || v.error) {
-        toonMelding("fout", `OCR fout: ${v?.error || 'Kon gegevens niet lezen. Probeer een beter afbeelding.'}`);
-        return;
-      }
-      let btwPercentage = 21;
-      if (v.subtotaal != null && v.btwBedrag != null && v.subtotaal > 0) {
-        const berekend = Math.round((v.btwBedrag / v.subtotaal) * 100);
-        if (berekend <= 2) btwPercentage = 0;
-        else if (berekend <= 14) btwPercentage = 9;
-        else btwPercentage = 21;
-      }
-      resetFormulier();
-      setFormulier({
-        datum: v.datum ?? new Date().toISOString().split('T')[0],
-        omschrijving: v.omschrijving ?? v.klantNaam ?? '',
-        bedrag: v.subtotaal != null ? String(v.subtotaal) : (v.totaal != null ? String(v.totaal) : ''),
-        btwPercentage: String(btwPercentage),
-        leverancier: v.klantNaam ?? '',
-        categorieId: '',
-        zakelijk: true,
-        zakelijkPercent: 100,
-        notities: v.notities ?? '',
-      });
-      if (res.bonPad) setPendingBonPad(res.bonPad);
-      setModalOpen(true);
-    } catch {
-      toonMelding("fout", "Scan mislukt");
-    } finally {
-      setScanBezig(false);
     }
+    const btw = (bedrag * btwPercentage) / 100;
+    const nieuw = await window.api.uitgaven.create({
+      datum: f.datum || new Date().toISOString().split('T')[0],
+      omschrijving: f.klantNaam || f.nummer || 'Gescande uitgave',
+      bedrag,
+      btwPercentage,
+      btw,
+      totaal: bedrag + btw,
+      leverancier: f.klantNaam || null,
+      categorieId: null,
+      zakelijk: true,
+      zakelijkPercent: 100,
+      notities: null,
+    }) as { id: string };
+    if (bonPadScan && nieuw?.id) {
+      await window.api.uitgaven.update(nieuw.id, { bonBestand: bonPadScan });
+    }
+    toonMelding("succes", "Uitgave opgeslagen");
+    haalUitgavenOp();
   };
 
   const isSpaarUitgave = (u: Uitgave) => spaarIbans.some(s =>
@@ -1071,6 +1065,12 @@ export default function UitgavenPagina() {
           </ModalFooter>
         </ModalContent>
       </Modal>
+
+      <ScanModal
+        open={scanModalOpen}
+        onClose={() => setScanModalOpen(false)}
+        onOpslaan={handleScanOpslaan}
+      />
     </div>
   );
 }

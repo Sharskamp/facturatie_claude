@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { ScanModal, type ScanFormulier } from "@/components/scan/ScanModal";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,6 +46,7 @@ export default function CrediteurenPage() {
   const [formulier, setFormulier] = useState(leegFormulier);
   const [opslaan, setOpslaan] = useState(false);
   const [scanBezig, setScanBezig] = useState(false);
+  const [scanModalOpen, setScanModalOpen] = useState(false);
 
   const laadCrediteuren = useCallback(async () => {
     setLoading(true);
@@ -117,43 +119,32 @@ export default function CrediteurenPage() {
     laadCrediteuren();
   }
 
-  const scanFactuur = async () => {
-    setScanBezig(true);
-    try {
-      const res = await window.api.scan.kiesEnScan();
-      if (!res.succes) {
-        if (res.fout) alert(`Scan mislukt: ${res.fout}`);
-        return;
+  const scanFactuur = () => setScanModalOpen(true);
+
+  const handleScanOpslaan = async (f: ScanFormulier, _bonPad: string | null) => {
+    const bedrag = parseFloat(f.subtotaal || f.totaal || '0');
+    let btwPercentage = 21;
+    if (f.subtotaal && f.btwBedrag) {
+      const s = parseFloat(f.subtotaal); const b = parseFloat(f.btwBedrag);
+      if (s > 0) {
+        const perc = Math.round((b / s) * 100);
+        btwPercentage = perc <= 2 ? 0 : perc <= 14 ? 9 : 21;
       }
-      const v = res.velden!;
-      if (!v || v.error) {
-        alert(`OCR fout: ${v?.error || 'Kon gegevens niet lezen. Probeer een beter afbeelding.'}`);
-        return;
-      }
-      let btwPercentage = 21;
-      if (v.subtotaal != null && v.btwBedrag != null && v.subtotaal > 0) {
-        const berekend = Math.round((v.btwBedrag / v.subtotaal) * 100);
-        if (berekend <= 2) btwPercentage = 0;
-        else if (berekend <= 14) btwPercentage = 9;
-        else btwPercentage = 21;
-      }
-      const factuurdatum = v.datum ?? new Date().toISOString().slice(0, 10);
-      const vervaldatum = v.vervaldatum ?? new Date(new Date(factuurdatum).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-      setFormulier({
-        leverancier: v.klantNaam ?? '',
-        factuurNummer: v.nummer ?? '',
-        factuurdatum,
-        vervaldatum,
-        bedrag: v.subtotaal != null ? String(v.subtotaal) : (v.totaal != null ? String(v.totaal) : ''),
-        btwPercentage: String(btwPercentage),
-        notities: '',
-      });
-      setModalOpen(true);
-    } catch {
-      alert('Scan mislukt');
-    } finally {
-      setScanBezig(false);
     }
+    const btwBedrag = (bedrag * btwPercentage) / 100;
+    const factuurdatum = f.datum || new Date().toISOString().slice(0, 10);
+    const vervaldatum = f.vervaldatum || new Date(new Date(factuurdatum).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    await window.api.crediteuren.create({
+      leverancier: f.klantNaam || 'Onbekend',
+      factuurNummer: f.nummer || null,
+      factuurdatum: new Date(factuurdatum).toISOString(),
+      vervaldatum:  new Date(vervaldatum).toISOString(),
+      bedrag,
+      btwBedrag,
+      btwPercentage,
+      notities: null,
+    });
+    await laadCrediteuren();
   };
 
   const totaalOpenstaand = crediteuren
@@ -417,6 +408,11 @@ export default function CrediteurenPage() {
           </ModalFooter>
         </ModalContent>
       </Modal>
+      <ScanModal
+        open={scanModalOpen}
+        onClose={() => setScanModalOpen(false)}
+        onOpslaan={handleScanOpslaan}
+      />
     </div>
   );
 }

@@ -42,6 +42,26 @@ export interface OcrVelden {
 // ── PDF tekstextractie via pdfjs-dist (CJS legacy build) ─────────────────────
 
 /** Extraheer tekst met posities uit een PDF via PDF.js — werkt voor gedrukte/programmatische PDFs */
+export async function getPdfAantalPaginas(pad: string): Promise<number> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js') as {
+      getDocument: (src: { data: Uint8Array; useSystemFonts?: boolean; disableFontFace?: boolean }) => {
+        promise: Promise<{ numPages: number; destroy(): Promise<void> }>
+      }
+      GlobalWorkerOptions: { workerSrc: unknown }
+    }
+    pdfjsLib.GlobalWorkerOptions.workerSrc = ''
+    const buffer = fs.readFileSync(pad)
+    const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buffer), useSystemFonts: true, disableFontFace: true }).promise
+    const n = doc.numPages
+    await doc.destroy()
+    return n
+  } catch {
+    return 1
+  }
+}
+
 async function extraheerPdfAlsRegels(pad: string): Promise<OcrWoord[][] | null> {
   try {
     // Lazy load om startup-tijd te beperken; legacy/build/pdf.js is CJS

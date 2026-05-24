@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, dialog, nativeImage } from 'electron'
 import { join, extname, basename } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { PrismaClient } from '../generated/prisma/client'
@@ -13,7 +13,7 @@ import { haalAgendaAfspraken, haalKalenderLijst, maakGoogleAfspraak, wijzigGoogl
 import { autoUpdater } from 'electron-updater'
 import * as os from 'os'
 import QRCode from 'qrcode'
-import { scanBestandLokaal } from '../lib/lokale-ocr'
+import { scanBestandLokaal, getPdfAantalPaginas, pdfPaginaNaarPng } from '../lib/lokale-ocr'
 
 app.setName('Streamline Facturatie')
 
@@ -3387,8 +3387,43 @@ function setupIpcHandlers() {
     return { succes: true, pad: doelPad }
   })
 
-  // ── Scan: OCR van facturen en bonnen ────────────────────────────────────────
-  ipcMain.handle('scan:kiesEnScan', async () => {
+  // ── Scan: interactieve document-viewer met OCR ───────────────────────────────
+  // Cache: bestandPad → Map<pagina, pngPad>
+  const scanPaginaCache = new Map<string, Map<number, string>>()
+
+  function scanCacheOpruimen() {
+    for (const [, pages] of scanPaginaCache) {
+      for (const [, pngPad] of pages) {
+        try { fs.unlinkSync(pngPad) } catch { /* */ }
+      }
+    }
+    scanPaginaCache.clear()
+  }
+
+  async function haalPngPad(bestandPad: string, pagina: number): Promise<string> {
+    if (!scanPaginaCache.has(bestandPad)) scanPaginaCache.set(bestandPad, new Map())
+    const pages = scanPaginaCache.get(bestandPad)!
+    if (pages.has(pagina)) return pages.get(pagina)!
+
+    const ext = extname(bestandPad).toLowerCase().slice(1)
+    let pngPad: string
+
+    if (ext === 'pdf') {
+      const pngBuffer = await pdfPaginaNaarPng(bestandPad, pagina - 1)
+      pngPad = join(app.getPath('temp'), `scan_p${pagina}_${Date.now()}.png`)
+      fs.writeFileSync(pngPad, pngBuffer)
+    } else {
+      // Afbeelding: converteer naar PNG voor consistentie
+      const img = nativeImage.createFromPath(bestandPad)
+      pngPad = join(app.getPath('temp'), `scan_img_${Date.now()}.png`)
+      fs.writeFileSync(pngPad, img.toPNG())
+    }
+
+    pages.set(pagina, pngPad)
+    return pngPad
+  }
+
+  ipcMain.handle('scan:openEnPreview', async () => {
     const venster = BrowserWindow.getFocusedWindow() ?? mainWindow
     const result = await dialog.showOpenDialog(venster!, {
       filters: [{ name: 'Facturen & Bonnen', extensions: ['jpg', 'jpeg', 'png', 'webp', 'pdf', 'bmp', 'tiff'] }],
@@ -3399,26 +3434,72 @@ function setupIpcHandlers() {
     const bronPad = result.filePaths[0]
     const ext = extname(bronPad).toLowerCase().slice(1)
 
+    // Kopieer naar bonnen-map (voor opslag als bonBestand)
     const bonMap = join(app.getPath('userData'), 'bonnen')
     if (!fs.existsSync(bonMap)) fs.mkdirSync(bonMap, { recursive: true })
     const doelPad = join(bonMap, `scan-${Date.now()}.${ext}`)
-    try {
-      fs.copyFileSync(bronPad, doelPad)
-    } catch (e) {
-      logSchrijven(`Scan: bestand kopiëren mislukt: ${e}`)
+    try { fs.copyFileSync(bronPad, doelPad) } catch (e) {
       return { succes: false, fout: 'Bestand kon niet worden gekopieerd.' }
     }
 
+    scanCacheOpruimen()
+
+    const aantalPaginas = ext === 'pdf' ? await getPdfAantalPaginas(bronPad) : 1
+
+    let previewBase64 = ''
     try {
-      const velden = await scanBestandLokaal(bronPad)
-      if (velden.error) {
-        logSchrijven(`Scan OCR fout: ${velden.error}`)
-        return { succes: false, fout: velden.error, bonPad: doelPad }
-      }
-      return { succes: true, velden, bonPad: doelPad }
+      const pngPad = await haalPngPad(bronPad, 1)
+      previewBase64 = fs.readFileSync(pngPad).toString('base64')
     } catch (e) {
-      logSchrijven(`Scan fout: ${e}`)
-      return { succes: false, fout: String(e), bonPad: doelPad }
+      logSchrijven(`Scan preview mislukt: ${e}`)
+      return { succes: false, fout: `Preview mislukt: ${e}` }
+    }
+
+    // Auto-fill via OCR
+    let velden = null
+    try {
+      const ocr = await scanBestandLokaal(bronPad)
+      if (!ocr.error) velden = ocr
+    } catch { /* stil falen, gebruiker vult handmatig in */ }
+
+    return { succes: true, bestandPad: bronPad, bonPad: doelPad, previewBase64, aantalPaginas, velden }
+  })
+
+  ipcMain.handle('scan:renderPagina', async (_, { bestandPad, pagina }: { bestandPad: string; pagina: number }) => {
+    try {
+      const pngPad = await haalPngPad(bestandPad, pagina)
+      const base64 = fs.readFileSync(pngPad).toString('base64')
+      return { succes: true, previewBase64: base64 }
+    } catch (e) {
+      return { succes: false, fout: String(e) }
+    }
+  })
+
+  ipcMain.handle('scan:ocrUitsnede', async (_, {
+    bestandPad, pagina, x, y, breedte, hoogte
+  }: { bestandPad: string; pagina: number; x: number; y: number; breedte: number; hoogte: number }) => {
+    try {
+      const pngPad = await haalPngPad(bestandPad, pagina)
+      const fullImg = nativeImage.createFromPath(pngPad)
+      const { width: imgW, height: imgH } = fullImg.getSize()
+
+      // Coördinaten zijn percentages (0-1), omzetten naar pixels
+      const cropX = Math.max(0, Math.round(x * imgW))
+      const cropY = Math.max(0, Math.round(y * imgH))
+      const cropW = Math.max(4, Math.min(Math.round(breedte * imgW), imgW - cropX))
+      const cropH = Math.max(4, Math.min(Math.round(hoogte * imgH), imgH - cropY))
+
+      const cropped = fullImg.crop({ x: cropX, y: cropY, width: cropW, height: cropH })
+      const tmpPad = join(app.getPath('temp'), `scan_uitsnede_${Date.now()}.png`)
+      fs.writeFileSync(tmpPad, cropped.toPNG())
+
+      const { ocrAfbeelding } = await import('../lib/paddle-ocr')
+      const resultaat = await ocrAfbeelding(tmpPad)
+      try { fs.unlinkSync(tmpPad) } catch { /* */ }
+
+      return { succes: true, tekst: resultaat.tekst?.trim() ?? '' }
+    } catch (e) {
+      return { succes: false, tekst: '', fout: String(e) }
     }
   })
 

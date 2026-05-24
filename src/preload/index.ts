@@ -141,7 +141,9 @@ contextBridge.exposeInMainWorld('api', {
     prijsHistorie: (productId: string) => ipcRenderer.invoke('producten:prijsHistorie', productId),
   },
   scan: {
-    kiesEnScan: () => ipcRenderer.invoke('scan:kiesEnScan'),
+    openEnPreview: () => ipcRenderer.invoke('scan:openEnPreview'),
+    renderPagina: (data: unknown) => ipcRenderer.invoke('scan:renderPagina', data),
+    ocrUitsnede: (data: unknown) => ipcRenderer.invoke('scan:ocrUitsnede', data),
   },
   vasteActiva: {
     list: () => ipcRenderer.invoke('vasteActiva:list'),
