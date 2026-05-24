@@ -305,6 +305,10 @@ export default function UitgavenPagina() {
         return;
       }
       const v = res.velden!;
+      if (!v || v.error) {
+        toonMelding("fout", `OCR fout: ${v?.error || 'Kon gegevens niet lezen. Probeer een beter afbeelding.'}`);
+        return;
+      }
       let btwPercentage = 21;
       if (v.subtotaal != null && v.btwBedrag != null && v.subtotaal > 0) {
         const berekend = Math.round((v.btwBedrag / v.subtotaal) * 100);

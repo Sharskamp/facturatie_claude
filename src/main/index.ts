@@ -3411,9 +3411,13 @@ function setupIpcHandlers() {
 
     try {
       const velden = await scanBestandLokaal(bronPad)
+      if (velden.error) {
+        logSchrijven(`Scan OCR fout: ${velden.error}`)
+        return { succes: false, fout: velden.error, bonPad: doelPad }
+      }
       return { succes: true, velden, bonPad: doelPad }
     } catch (e) {
-      logSchrijven(`OCR scan fout: ${e}`)
+      logSchrijven(`Scan fout: ${e}`)
       return { succes: false, fout: String(e), bonPad: doelPad }
     }
   })

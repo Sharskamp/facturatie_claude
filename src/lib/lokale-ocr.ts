@@ -328,14 +328,25 @@ export function extraheerFactuurVelden(
 
   // ── Factuurnummer ─────────────────────────────────────────────────────────
   let nummer: string | null = null
-  // Probeer eerst met dubbele punt (meest betrouwbaar — pakt nooit de kopkop "Factuur")
-  const nummerMatch = alles.match(
-    /(?:factuur(?:nummer)?|invoice(?:\s*no\.?|\s*number)?|inv\.?\s*nr\.?|rekening(?:nummer)?|bon(?:nummer|\s*nr\.?)?)\s*[:#]\s*([A-Z0-9][-A-Z0-9/_.]{2,25})/i
-  ) ?? alles.match(
-    // Zonder dubbele punt alleen als het VOLLEDIGE samengestelde woord er staat
-    /(?:factuurnummer|invoicenumber|bonnummer|rekeningnummer)\s+([A-Z0-9][-A-Z0-9/_.]{2,25})/i
-  )
-  if (nummerMatch) nummer = nummerMatch[1].trim()
+  // Zoek eerst op rule-basis door tekstRegels
+  for (const r of tekstRegels) {
+    const m = r.match(
+      /(?:factuur(?:nummer)?|invoice(?:\s*no\.?|\s*number)?|inv\.?\s*nr\.?|rekening(?:nummer)?|bon(?:nummer|\s*nr\.?)?)\s*[:#]?\s*([A-Z0-9][-A-Z0-9/_.]{2,25})/i
+    )
+    if (m && !nummer) {
+      nummer = m[1].trim()
+      break
+    }
+  }
+  // Fallback: global search
+  if (!nummer) {
+    const nummerMatch = alles.match(
+      /(?:factuur(?:nummer)?|invoice(?:\s*no\.?|\s*number)?|inv\.?\s*nr\.?|rekening(?:nummer)?|bon(?:nummer|\s*nr\.?)?)\s*[:#]\s*([A-Z0-9][-A-Z0-9/_.]{2,25})/i
+    ) ?? alles.match(
+      /(?:factuurnummer|invoicenumber|bonnummer|rekeningnummer)\s+([A-Z0-9][-A-Z0-9/_.]{2,25})/i
+    )
+    if (nummerMatch) nummer = nummerMatch[1].trim()
+  }
 
   // ── Datums ────────────────────────────────────────────────────────────────
   // Strategie: zoek label + datum op dezelfde regel; als datum ontbreekt, kijk ook op de volgende regel.
@@ -589,11 +600,20 @@ export function extraheerFactuurVelden(
     btwBedrag = 0
     subtotaal = totaal
   } else {
+    // Zoek eerst Subtotaal label — dat is 80% betrouwbaarder
+    for (const r of tekstRegels) {
+      if (/\b(?:subtotaal|netto(?:bedrag)?|excl\.?\s*btw)\b/i.test(r) && /\d/.test(r)) {
+        subtotaal = laatsteBedragIn(r)
+        if (subtotaal !== null && subtotaal > 0) break
+      }
+    }
+
+    // Zoek BTW-bedrag
     let totaleBtw = 0
     let btwGevonden = false
     for (const r of tekstRegels) {
       if (/\b(?:btw|omzetbelasting|vat|tax)\b/i.test(r) &&
-          !/excl|exclu|tarief/i.test(r) && /\d/.test(r)) {
+          !/excl|exclu|tarief|percentage/i.test(r) && /\d/.test(r)) {
         const b = laatsteBedragIn(r)
         if (b !== null && b >= 0 && b < (totaal ?? 999999)) {
           totaleBtw += b
@@ -603,15 +623,20 @@ export function extraheerFactuurVelden(
     }
     if (btwGevonden) btwBedrag = Math.round(totaleBtw * 100) / 100
 
-    const subRegel = tekstRegels.find(r =>
-      /\b(?:subtotaal|excl(?:\.|usief)?\.?\s*btw|netto(?:bedrag)?)\b/i.test(r) && /\d/.test(r)
-    )
-    if (subRegel) subtotaal = laatsteBedragIn(subRegel)
+    // Zoek ook Korting (kan in groene tekst staan)
+    let kortingBedrag = 0
+    for (const r of tekstRegels) {
+      if (/\b(?:korting|discount|reduction)\b/i.test(r) && /\d/.test(r)) {
+        const k = laatsteBedragIn(r)
+        if (k !== null && k > 0) kortingBedrag = k
+      }
+    }
 
-    if (totaal !== null && btwBedrag !== null && subtotaal === null)
-      subtotaal = Math.round((totaal - btwBedrag) * 100) / 100
-    else if (totaal !== null && subtotaal !== null && btwBedrag === null)
+    // Afleid ontbrekende waarden
+    if (totaal !== null && subtotaal !== null && btwBedrag === null)
       btwBedrag = Math.round((totaal - subtotaal) * 100) / 100
+    else if (totaal !== null && btwBedrag !== null && subtotaal === null)
+      subtotaal = Math.round((totaal - btwBedrag) * 100) / 100
     else if (totaal !== null && btwBedrag === null && subtotaal === null) {
       // Geen BTW-info gevonden — neem aan 21%
       subtotaal = Math.round((totaal / 1.21) * 100) / 100
