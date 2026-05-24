@@ -1,6 +1,13 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { Loader2, ChevronLeft, ChevronRight, X, FolderOpen, Save, MousePointer, Wand2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import * as pdfjsLib from 'pdfjs-dist'
+
+// Vite bundelt de worker als aparte chunk; import.meta.url zorgt voor correcte resolutie
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.js',
+  import.meta.url,
+).href
 
 export interface ScanFormulier {
   nummer: string
@@ -45,9 +52,6 @@ interface Props {
   onOpslaan: (formulier: ScanFormulier, bonPad: string | null) => Promise<void>
 }
 
-// PDF.js wordt eenmalig geïnitialiseerd
-let pdfjsWorkerInit = false
-
 export function ScanModal({ open, onClose, onOpslaan }: Props) {
   const [bestandPad, setBestandPad] = useState<string | null>(null)
   const [bonPad, setBonPad] = useState<string | null>(null)
@@ -86,18 +90,12 @@ export function ScanModal({ open, onClose, onOpslaan }: Props) {
     setLadenPreview(true)
     setPreviewGeladen(false)
     try {
-      const lib = await import('pdfjs-dist')
-      if (!pdfjsWorkerInit) {
-        // Gebruik fake worker (geen aparte thread nodig, werkt altijd in Electron)
-        lib.GlobalWorkerOptions.workerSrc = ''
-        pdfjsWorkerInit = true
-      }
       // Bouw file:// URL (Windows: C:\... → file:///C:/..., Unix: /... → file:///...)
       const slash = pad.replace(/\\/g, '/')
       const fileUrl = slash.startsWith('/') ? `file://${slash}` : `file:///${slash}`
       console.log('[SCAN] PDF.js laden:', fileUrl, 'pagina', pagina)
 
-      const pdfDoc = await lib.getDocument(fileUrl).promise
+      const pdfDoc = await pdfjsLib.getDocument(fileUrl).promise
       const page = await pdfDoc.getPage(pagina)
       const viewport = page.getViewport({ scale: 2 }) // 2× voor kwaliteit
 
