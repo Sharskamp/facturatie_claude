@@ -62,9 +62,36 @@ function laadPdfJsVoorTekst(): PdfJsTekstLib {
   globals.DOMMatrix ??= class DOMMatrix {}
   globals.Path2D ??= class Path2D {}
 
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  pdfJsTekstLib = require('pdfjs-dist/legacy/build/pdf.js') as PdfJsTekstLib
-  pdfJsTekstLib.GlobalWorkerOptions.workerSrc = ''
+  // Suppress canvas warnings — we're not rendering, just extracting text
+  const originalWarn = console.warn
+  const originalError = console.error
+  let suppressed = false
+
+  try {
+    console.warn = (...args: unknown[]) => {
+      const msg = String(args[0] || '')
+      if (msg.includes('Cannot polyfill') && msg.includes('canvas')) {
+        suppressed = true
+        return
+      }
+      originalWarn.apply(console, args as [string, ...unknown[]])
+    }
+    console.error = (...args: unknown[]) => {
+      const msg = String(args[0] || '')
+      if (msg.includes('Cannot find module') && msg.includes('canvas')) {
+        return
+      }
+      originalError.apply(console, args as [string, ...unknown[]])
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    pdfJsTekstLib = require('pdfjs-dist/legacy/build/pdf.js') as PdfJsTekstLib
+    pdfJsTekstLib.GlobalWorkerOptions.workerSrc = ''
+  } finally {
+    console.warn = originalWarn
+    console.error = originalError
+  }
+
   return pdfJsTekstLib
 }
 
