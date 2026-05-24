@@ -10,12 +10,11 @@ import * as net from 'net'
 import { DOMParser } from '@xmldom/xmldom'
 import { verstuurEmail, maakFactuurEmailHtml } from '../lib/email'
 import { haalAgendaAfspraken, haalKalenderLijst, maakGoogleAfspraak, wijzigGoogleAfspraak, verwijderGoogleAfspraak, maakGoogleAuthUrl, wisselCodeVoorTokens, vernieuwAccessToken } from '../lib/google-calendar'
-import { scanBestandLokaal } from '../lib/lokale-ocr'
+import { scanBestandLokaal, pdfPaginaNaarPng } from '../lib/lokale-ocr'
 import { ExpenseReceiptScanService, HistoricalInvoiceImportService } from '../services/invoice'
 import { autoUpdater } from 'electron-updater'
 import * as os from 'os'
 import QRCode from 'qrcode'
-import { scanBestandLokaal, getPdfAantalPaginas, pdfPaginaNaarPng } from '../lib/lokale-ocr'
 
 app.setName('Streamline Facturatie')
 
@@ -3546,6 +3545,26 @@ function setupIpcHandlers() {
       }
     }
     scanPaginaCache.clear()
+  }
+
+  async function getPdfAantalPaginas(pad: string): Promise<number> {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js') as {
+        getDocument: (src: { data: Uint8Array; useSystemFonts?: boolean; disableFontFace?: boolean }) => {
+          promise: Promise<{ numPages: number; destroy(): Promise<void> }>
+        }
+        GlobalWorkerOptions: { workerSrc: unknown }
+      }
+      pdfjsLib.GlobalWorkerOptions.workerSrc = ''
+      const buffer = fs.readFileSync(pad)
+      const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buffer), useSystemFonts: true, disableFontFace: true }).promise
+      const n = doc.numPages
+      await doc.destroy()
+      return n
+    } catch {
+      return 1
+    }
   }
 
   async function haalPngPad(bestandPad: string, pagina: number): Promise<string> {
