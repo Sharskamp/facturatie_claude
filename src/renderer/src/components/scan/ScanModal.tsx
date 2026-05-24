@@ -147,20 +147,27 @@ export function ScanModal({ open, onClose, onOpslaan }: Props) {
 
     setLadenOcr(true)
     try {
+      console.log('OCR uitsnede:', { bestandPad, pagina: huidigePagina, x: box.x, y: box.y, breedte: box.w, hoogte: box.h })
       const res = await window.api.scan.ocrUitsnede({
         bestandPad,
         pagina: huidigePagina,
         x: box.x, y: box.y, breedte: box.w, hoogte: box.h,
       })
+      console.log('OCR result:', res)
       if (res.succes && res.tekst) {
         const tekst = res.tekst.trim()
+        console.log('Geëxtraheerde tekst:', tekst, 'Modus:', modus, 'Veld:', geselecteerdVeld)
         if (modus === 'rij-eerst' && geselecteerdVeld) {
+          console.log('Zetten veld in rij-eerst modus:', geselecteerdVeld, '=', tekst)
           setFormulier(prev => ({ ...prev, [geselecteerdVeld]: tekst }))
           setGeselecteerdVeld(null)
-        } else {
+        } else if (modus === 'auto') {
           const veldKey = autoDetecteerVeld(tekst)
+          console.log('Auto-detect veld:', veldKey)
           if (veldKey) setFormulier(prev => ({ ...prev, [veldKey]: tekst }))
         }
+      } else {
+        console.log('OCR mislukt of geen tekst:', res)
       }
     } finally {
       setLadenOcr(false)
