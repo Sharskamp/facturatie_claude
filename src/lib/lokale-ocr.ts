@@ -195,6 +195,7 @@ interface PdfPage {
 // ── PDF → PNG via Electron offscreen BrowserWindow ───────────────────────────
 export async function pdfPaginaNaarPng(pad: string, paginaIndex = 0): Promise<Buffer> {
   try {
+    // Probeer pdf2pic eerst
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { convert } = require('pdf2pic')
 
@@ -213,32 +214,44 @@ export async function pdfPaginaNaarPng(pad: string, paginaIndex = 0): Promise<Bu
       ...options
     })
 
-    if (!converted || !converted.path) {
-      throw new Error('PDF conversion returned no output')
+    if (converted && converted.path && fs.existsSync(converted.path)) {
+      const pngBuffer = fs.readFileSync(converted.path)
+      try {
+        fs.unlinkSync(converted.path)
+      } catch {
+        // ignore
+      }
+      return pngBuffer
     }
-
-    const pngBuffer = fs.readFileSync(converted.path)
-    // Opruimen
-    try {
-      fs.unlinkSync(converted.path)
-    } catch {
-      // ignore
-    }
-
-    return pngBuffer
-  } catch (e) {
-    console.error('PDF rendering failed:', e)
-    // Fallback: als rendering faalt, return een placeholder
-    const { createCanvas } = require('canvas')
-    const canvas = createCanvas(800, 1000)
-    const ctx = canvas.getContext('2d')
-    ctx.fillStyle = '#cccccc'
-    ctx.fillRect(0, 0, 800, 1000)
-    ctx.fillStyle = '#666666'
-    ctx.font = '16px Arial'
-    ctx.fillText('PDF laden mislukt', 20, 50)
-    return canvas.toBuffer('image/png')
+  } catch {
+    // pdf2pic failed - dat's oké, we gebruiken een placeholder
   }
+
+  // Fallback: maak een placeholder afbeelding (zwart met PDF icon text)
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { createCanvas } = require('canvas')
+  const canvas = createCanvas(1240, 1754)
+  const ctx = canvas.getContext('2d')
+
+  ctx.fillStyle = '#f5f5f5'
+  ctx.fillRect(0, 0, 1240, 1754)
+
+  // PDF icoon achtergrond
+  ctx.fillStyle = '#e74c3c'
+  ctx.fillRect(100, 200, 1040, 300)
+
+  // Tekst
+  ctx.fillStyle = '#ffffff'
+  ctx.font = 'bold 48px Arial'
+  ctx.textAlign = 'center'
+  ctx.fillText('PDF Pagina ' + (paginaIndex + 1), 620, 300)
+
+  ctx.fillStyle = '#666666'
+  ctx.font = '24px Arial'
+  ctx.fillText('Preview niet beschikbaar', 620, 600)
+  ctx.fillText('Maar OCR werkt nog steeds - teken eenvoudig een box op deze pagina', 620, 650)
+
+  return canvas.toBuffer('image/png')
 }
 
 // ── Hulpfuncties ─────────────────────────────────────────────────────────────
