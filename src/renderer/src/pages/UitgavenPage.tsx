@@ -9,6 +9,7 @@ import {
   Filter,
   Upload,
   Settings2,
+  ScanLine,
 } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -160,6 +161,7 @@ export default function UitgavenPagina() {
 
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailItem, setDetailItem] = useState<Uitgave | null>(null);
+  const [scanBezig, setScanBezig] = useState(false);
 
   const haalUitgavenOp = useCallback(async () => {
     try {
@@ -359,6 +361,43 @@ export default function UitgavenPagina() {
     }
   };
 
+  const scanBon = async () => {
+    setScanBezig(true);
+    try {
+      const res = await window.api.scan.kiesEnScan();
+      if (!res.succes) {
+        if (res.fout) toonMelding("fout", `Scan mislukt: ${res.fout}`);
+        return;
+      }
+      const v = res.velden!;
+      let btwPercentage = 21;
+      if (v.subtotaal != null && v.btwBedrag != null && v.subtotaal > 0) {
+        const berekend = Math.round((v.btwBedrag / v.subtotaal) * 100);
+        if (berekend <= 2) btwPercentage = 0;
+        else if (berekend <= 14) btwPercentage = 9;
+        else btwPercentage = 21;
+      }
+      resetFormulier();
+      setFormulier({
+        datum: v.datum ?? new Date().toISOString().split('T')[0],
+        omschrijving: v.omschrijving ?? v.klantNaam ?? '',
+        bedrag: v.subtotaal != null ? String(v.subtotaal) : (v.totaal != null ? String(v.totaal) : ''),
+        btwPercentage: String(btwPercentage),
+        leverancier: v.klantNaam ?? '',
+        categorieId: '',
+        zakelijk: true,
+        zakelijkPercent: 100,
+        notities: v.notities ?? '',
+      });
+      if (res.bonPad) setPendingBonPad(res.bonPad);
+      setModalOpen(true);
+    } catch {
+      toonMelding("fout", "Scan mislukt");
+    } finally {
+      setScanBezig(false);
+    }
+  };
+
   const isSpaarUitgave = (u: Uitgave) => spaarIbans.some(s =>
     u.tegenrekening?.toUpperCase() === s.toUpperCase() ||
     (u.leverancier?.toLowerCase() === s.toLowerCase() && s.length > 0)
@@ -404,15 +443,21 @@ export default function UitgavenPagina() {
         titel="Uitgaven"
         subtitel="Beheer je bedrijfskosten"
         acties={
-          <Button
-            onClick={() => {
-              resetFormulier();
-              setModalOpen(true);
-            }}
-          >
-            <Plus className="h-4 w-4" />
-            Uitgave toevoegen
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={scanBon} disabled={scanBezig}>
+              {scanBezig ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanLine className="h-4 w-4" />}
+              {scanBezig ? 'Scannen...' : 'Scan bon'}
+            </Button>
+            <Button
+              onClick={() => {
+                resetFormulier();
+                setModalOpen(true);
+              }}
+            >
+              <Plus className="h-4 w-4" />
+              Uitgave toevoegen
+            </Button>
+          </div>
         }
       />
 

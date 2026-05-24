@@ -130,6 +130,9 @@ interface ElectronAPI {
     update: (id: string, data: unknown) => Promise<unknown>
     delete: (id: string) => Promise<{ succes: boolean }>
   }
+  scan: {
+    kiesEnScan: () => Promise<{ succes: boolean; velden?: { klantNaam?: string; nummer?: string; datum?: string; vervaldatum?: string; subtotaal?: number; btwBedrag?: number; totaal?: number; omschrijving?: string; notities?: string; documentType?: string; error?: string }; bonPad?: string; fout?: string }>
+  }
   vasteActiva: {
     list: () => Promise<unknown[]>
     create: (data: unknown) => Promise<unknown>

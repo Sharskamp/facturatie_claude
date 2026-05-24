@@ -15,6 +15,7 @@ import { ExpenseReceiptScanService, HistoricalInvoiceImportService } from '../se
 import { autoUpdater } from 'electron-updater'
 import * as os from 'os'
 import QRCode from 'qrcode'
+import { scanBestandLokaal } from '../lib/lokale-ocr'
 
 app.setName('Streamline Facturatie')
 
@@ -3532,6 +3533,37 @@ function setupIpcHandlers() {
       return { succes: false, fout: 'Bestand kon niet worden gekopieerd. Controleer of er voldoende schijfruimte is.' }
     }
     return { succes: true, pad: doelPad }
+  })
+
+  // ── Scan: OCR van facturen en bonnen ────────────────────────────────────────
+  ipcMain.handle('scan:kiesEnScan', async () => {
+    const venster = BrowserWindow.getFocusedWindow() ?? mainWindow
+    const result = await dialog.showOpenDialog(venster!, {
+      filters: [{ name: 'Facturen & Bonnen', extensions: ['jpg', 'jpeg', 'png', 'webp', 'pdf', 'bmp', 'tiff'] }],
+      properties: ['openFile']
+    })
+    if (result.canceled || !result.filePaths[0]) return { succes: false }
+
+    const bronPad = result.filePaths[0]
+    const ext = extname(bronPad).toLowerCase().slice(1)
+
+    const bonMap = join(app.getPath('userData'), 'bonnen')
+    if (!fs.existsSync(bonMap)) fs.mkdirSync(bonMap, { recursive: true })
+    const doelPad = join(bonMap, `scan-${Date.now()}.${ext}`)
+    try {
+      fs.copyFileSync(bronPad, doelPad)
+    } catch (e) {
+      logSchrijven(`Scan: bestand kopiëren mislukt: ${e}`)
+      return { succes: false, fout: 'Bestand kon niet worden gekopieerd.' }
+    }
+
+    try {
+      const velden = await scanBestandLokaal(bronPad)
+      return { succes: true, velden, bonPad: doelPad }
+    } catch (e) {
+      logSchrijven(`OCR scan fout: ${e}`)
+      return { succes: false, fout: String(e), bonPad: doelPad }
+    }
   })
 
   // ── Producten (catalogus) ──
