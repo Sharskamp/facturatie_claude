@@ -3685,56 +3685,7 @@ function setupIpcHandlers() {
     }
   })
 
-  ipcMain.handle('scan:ocrUitsnede', async (_, {
-    bestandPad, pagina, x, y, breedte, hoogte
-  }: { bestandPad: string; pagina: number; x: number; y: number; breedte: number; hoogte: number }) => {
-    console.log(`\n[OCR-UITSNEDE] ── Nieuwe aanvraag ──`)
-    console.log(`  Bestand : ${bestandPad}`)
-    console.log(`  Pagina  : ${pagina}`)
-    console.log(`  Box (%) : x=${(x*100).toFixed(1)}% y=${(y*100).toFixed(1)}% w=${(breedte*100).toFixed(1)}% h=${(hoogte*100).toFixed(1)}%`)
-    try {
-      const ext = extname(bestandPad).toLowerCase().slice(1)
-
-      if (ext === 'pdf') {
-        // PDF met tekstlaag: gebruik PDF.js tekst-extractie (altijd correct, geen OCR nodig)
-        console.log(`  PDF tekstlaag-extractie...`)
-        const tekst = await uitsnedeTekstVanPdf(bestandPad, pagina - 1, x, y, breedte, hoogte)
-        console.log(`  Tekstlaag resultaat: ${JSON.stringify(tekst)}`)
-        if (!tekst) console.log(`  !! Geen tekst gevonden — PDF heeft mogelijk geen tekstlaag (gescand)`)
-        return { succes: true, tekst }
-      }
-
-      // Afbeelding of gescande PDF: crop + PaddleOCR
-      const pngPad = await haalPngPad(bestandPad, pagina)
-      const fullImg = nativeImage.createFromPath(pngPad)
-      const { width: imgW, height: imgH } = fullImg.getSize()
-      console.log(`  Afbeelding: ${imgW}×${imgH}px`)
-
-      const cropX = Math.max(0, Math.round(x * imgW))
-      const cropY = Math.max(0, Math.round(y * imgH))
-      const cropW = Math.max(4, Math.min(Math.round(breedte * imgW), imgW - cropX))
-      const cropH = Math.max(4, Math.min(Math.round(hoogte * imgH), imgH - cropY))
-      console.log(`  Crop (px): x=${cropX} y=${cropY} w=${cropW} h=${cropH}`)
-
-      const cropped = fullImg.crop({ x: cropX, y: cropY, width: cropW, height: cropH })
-      const tmpPad = join(app.getPath('temp'), `scan_uitsnede_${Date.now()}.png`)
-      fs.writeFileSync(tmpPad, cropped.toPNG())
-
-      const { ocrAfbeelding } = await import('../lib/paddle-ocr')
-      const resultaat = await ocrAfbeelding(tmpPad)
-      try { fs.unlinkSync(tmpPad) } catch { /* */ }
-
-      const tekst = resultaat.tekst?.trim() ?? ''
-      console.log(`  OCR resultaat: ${JSON.stringify(tekst)}`)
-      return { succes: true, tekst }
-    } catch (e) {
-      console.error(`  FOUT in scan:ocrUitsnede:`, e)
-      return { succes: false, tekst: '', fout: String(e) }
-    }
-  })
-
   // ── Producten (catalogus) ──
-  ipcMain.removeHandler('scan:ocrUitsnede')
   ipcMain.handle('scan:ocrUitsnede', async (_, {
     bestandPad, pagina, x, y, breedte, hoogte
   }: { bestandPad: string; pagina: number; x: number; y: number; breedte: number; hoogte: number }) => {
@@ -4002,34 +3953,8 @@ function setupIpcHandlers() {
       }
 
       // Voor handmatige selectie gebruiken we primair exact dezelfde crop als in de preview.
-      // Bij kleine selecties schalen we op zodat OCR minder snel rare tekens teruggeeft.
-      const minDoelGrootte = 220
-      const schaalFactor = Math.max(1, Math.min(4, Math.ceil(minDoelGrootte / Math.max(Math.min(cropW, cropH), 1))))
-      const ocrInput = schaalFactor > 1
-        ? cropped.resize({ width: cropW * schaalFactor, height: cropH * schaalFactor, quality: 'best' })
-        : cropped
-
-      const tmpPad = join(app.getPath('temp'), `scan_uitsnede_${Date.now()}.png`)
-      fs.writeFileSync(tmpPad, ocrInput.toPNG())
-
-      const { ocrAfbeelding } = await import('../lib/paddle-ocr')
-      const resultaat = await ocrAfbeelding(tmpPad)
-      try { fs.unlinkSync(tmpPad) } catch { /* */ }
-
-      const tekst = resultaat.tekst?.trim() ?? ''
-      const matchBoxes = resultaat.woorden.map((woord) => ({
-        tekst: woord.tekst,
-        x: (cropX + (woord.box.x / schaalFactor)) / imgW,
-        y: (cropY + (woord.box.y / schaalFactor)) / imgH,
-        width: (woord.box.width / schaalFactor) / imgW,
-        height: (woord.box.height / schaalFactor) / imgH,
-      }))
-      console.log(`  OCR resultaat: ${JSON.stringify(tekst)}`)
-      if (tekst) {
-        return { succes: true, tekst, bron: 'ocr_preview', debugPreviewBase64, matchBoxes }
-      }
-
-      return { succes: true, tekst: '', bron: 'ocr_preview', debugPreviewBase64, matchBoxes: [] }
+      console.log(`  Alle OCR-methoden leverden geen resultaat op voor deze selectie`)
+      return { succes: true, tekst: '', bron: 'geen_resultaat', debugPreviewBase64, matchBoxes: [] }
     } catch (e) {
       console.error(`  FOUT in scan:ocrUitsnede:`, e)
       return { succes: false, tekst: '', fout: String(e) }
