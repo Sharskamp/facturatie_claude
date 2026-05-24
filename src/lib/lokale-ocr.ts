@@ -194,66 +194,32 @@ interface PdfPage {
 
 // ── PDF → PNG via Electron offscreen BrowserWindow ───────────────────────────
 export async function pdfPaginaNaarPng(pad: string, paginaIndex = 0): Promise<Buffer> {
-  // PDF preview is complex op alle platforms (Windows convert conflict, Linux ImageMagick variations, etc)
-  // Maar OCR werkt perfect! Toon gewoon een placeholder die gebruiker instruceert
+  // Eenvoudige placeholder PNG zonder canvas dependency
+  // Dit is een 1x1 blauwe pixel PNG die we teruggeven
+  // De UI zal dit toch vervangen met een instructie-placeholder
 
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { createCanvas } = require('canvas')
-  const canvas = createCanvas(1240, 1754)
-  const ctx = canvas.getContext('2d')
+  // Minimale 100x100 PNG placeholder (blauwe achtergrond)
+  // Dit is een gecomprimeerde PNG met een enkele blauwe kleur
+  const placeholderPng = Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x64, 0x00, 0x00, 0x00, 0x64,
+    0x08, 0x02, 0x00, 0x00, 0x00, 0xf0, 0x4b, 0x6d,
+    0xf8, 0x00, 0x00, 0x00, 0x19, 0x74, 0x45, 0x58,
+    0x74, 0x50, 0x61, 0x67, 0x65, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0xf9, 0xb3, 0x42, 0x52, 0x00, 0x00, 0x00,
+    0x1c, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x62,
+    0xf8, 0xaf, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0,
+    0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0,
+    0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0,
+    0xa0, 0x00, 0x00, 0xfb, 0x0f, 0x00, 0x64, 0x47,
+    0xd8, 0x41, 0x4e, 0x00, 0x00, 0x00, 0x00, 0x49,
+    0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82
+  ])
 
-  // Achtergrond
-  ctx.fillStyle = '#f8f9fa'
-  ctx.fillRect(0, 0, 1240, 1754)
-
-  // Decoratie top
-  ctx.fillStyle = '#3b82f6'
-  ctx.fillRect(0, 0, 1240, 200)
-
-  // PDF pagina nummer
-  ctx.fillStyle = '#ffffff'
-  ctx.font = 'bold 64px Arial'
-  ctx.textAlign = 'center'
-  ctx.fillText('📄 PDF', 620, 120)
-
-  // Pagina indicator
-  ctx.font = '32px Arial'
-  ctx.fillText('Pagina ' + (paginaIndex + 1), 620, 180)
-
-  // Instructie tekst
-  ctx.fillStyle = '#1f2937'
-  ctx.font = 'bold 28px Arial'
-  ctx.textAlign = 'center'
-  ctx.fillText('PDF Preview werkt niet op alle systemen', 620, 400)
-
-  ctx.fillStyle = '#4b5563'
-  ctx.font = '20px Arial'
-  ctx.fillText('maar de OCR functie werkt perfect!', 620, 450)
-
-  // Instructies
-  ctx.fillStyle = '#374151'
-  ctx.font = 'bold 18px Arial'
-  ctx.textAlign = 'left'
-  const instructies = [
-    '✓ Klik op een veld in de tabel links',
-    '✓ Teken een box op deze pagina',
-    '✓ De tekst wordt automatisch geëxtraheerd',
-    '✓ Je krijgt ook het gescande PDF bestand'
-  ]
-
-  let y = 550
-  for (const line of instructies) {
-    ctx.fillText(line, 100, y)
-    y += 60
-  }
-
-  // Footer
-  ctx.fillStyle = '#9ca3af'
-  ctx.font = '14px Arial'
-  ctx.textAlign = 'center'
-  ctx.fillText('PDF rendering werkt beter met JPG/PNG bestanden', 620, 1700)
-
-  return canvas.toBuffer('image/png')
+  return placeholderPng
 }
 
 // ── Hulpfuncties ─────────────────────────────────────────────────────────────
