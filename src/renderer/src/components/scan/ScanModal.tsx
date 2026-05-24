@@ -398,8 +398,12 @@ export function ScanModal({ open, onClose, onOpslaan }: Props) {
               )}
             </>
           ) : (
-            <div className="flex-1 flex items-center justify-center text-gray-500 text-sm">
-              Geen preview beschikbaar
+            <div className="flex-1 flex flex-col items-center justify-center text-gray-500 text-sm gap-3">
+              <div>Geen preview beschikbaar</div>
+              <div className="text-xs text-gray-400 max-w-md text-center">
+                PDF preview werkt niet goed, maar OCR functie werkt prima!<br/>
+                Klik op een veld en teken een box om tekst te extraheren.
+              </div>
             </div>
           )}
         </div>
