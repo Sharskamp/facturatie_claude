@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import { Loader2, ChevronLeft, ChevronRight, X, FolderOpen, Save, MousePointer, Wand2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
@@ -45,10 +45,15 @@ interface Props {
   onOpslaan: (formulier: ScanFormulier, bonPad: string | null) => Promise<void>
 }
 
+// PDF.js wordt eenmalig geïnitialiseerd
+let pdfjsWorkerInit = false
+
 export function ScanModal({ open, onClose, onOpslaan }: Props) {
   const [bestandPad, setBestandPad] = useState<string | null>(null)
   const [bonPad, setBonPad] = useState<string | null>(null)
-  const [previewBase64, setPreviewBase64] = useState<string | null>(null)
+  const [previewBase64, setPreviewBase64] = useState<string | null>(null) // voor afbeeldingen
+  const [isPdf, setIsPdf] = useState(false)
+  const [previewGeladen, setPreviewGeladen] = useState(false)
   const [aantalPaginas, setAantalPaginas] = useState(1)
   const [huidigePagina, setHuidigePagina] = useState(1)
   const [formulier, setFormulier] = useState<ScanFormulier>(LEEG_SCAN_FORMULIER)
@@ -62,9 +67,11 @@ export function ScanModal({ open, onClose, onOpslaan }: Props) {
   const tekenboxRef = useRef<TekenBox | null>(null)
   const imgWrapperRef = useRef<HTMLDivElement>(null)
   const imgRef = useRef<HTMLImageElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
 
   const resetState = () => {
     setBestandPad(null); setBonPad(null); setPreviewBase64(null)
+    setIsPdf(false); setPreviewGeladen(false)
     setAantalPaginas(1); setHuidigePagina(1)
     setFormulier(LEEG_SCAN_FORMULIER); setGeselecteerdVeld(null)
     setTekenbox(null); tekenStartRef.current = null; tekenboxRef.current = null
@@ -72,16 +79,74 @@ export function ScanModal({ open, onClose, onOpslaan }: Props) {
 
   const handleClose = () => { resetState(); onClose() }
 
+  // ── PDF.js canvas rendering ──────────────────────────────────────────────────
+  const renderPdfKanvas = useCallback(async (pad: string, pagina: number) => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    setLadenPreview(true)
+    setPreviewGeladen(false)
+    try {
+      const lib = await import('pdfjs-dist')
+      if (!pdfjsWorkerInit) {
+        // Gebruik fake worker (geen aparte thread nodig, werkt altijd in Electron)
+        lib.GlobalWorkerOptions.workerSrc = ''
+        pdfjsWorkerInit = true
+      }
+      // Bouw file:// URL (Windows: C:\... → file:///C:/..., Unix: /... → file:///...)
+      const slash = pad.replace(/\\/g, '/')
+      const fileUrl = slash.startsWith('/') ? `file://${slash}` : `file:///${slash}`
+      console.log('[SCAN] PDF.js laden:', fileUrl, 'pagina', pagina)
+
+      const pdfDoc = await lib.getDocument(fileUrl).promise
+      const page = await pdfDoc.getPage(pagina)
+      const viewport = page.getViewport({ scale: 2 }) // 2× voor kwaliteit
+
+      canvas.width  = Math.round(viewport.width)
+      canvas.height = Math.round(viewport.height)
+
+      const ctx = canvas.getContext('2d')!
+      ctx.fillStyle = 'white'
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+      await page.render({ canvasContext: ctx, viewport }).promise
+      await pdfDoc.destroy()
+
+      console.log('[SCAN] PDF canvas klaar:', canvas.width, '×', canvas.height)
+      setPreviewGeladen(true)
+    } catch (e) {
+      console.error('[SCAN] PDF.js render fout:', e)
+    } finally {
+      setLadenPreview(false)
+    }
+  }, [])
+
+  // Herrender bij pagina-wissel
+  useEffect(() => {
+    if (isPdf && bestandPad) renderPdfKanvas(bestandPad, huidigePagina)
+  }, [isPdf, bestandPad, huidigePagina, renderPdfKanvas])
+
+  // ── Bestand openen ───────────────────────────────────────────────────────────
   const openBestand = async () => {
     setLadenPreview(true)
     try {
       const res = await window.api.scan.openEnPreview()
       if (!res.succes) return
-      setBestandPad(res.bestandPad!)
+      const pad = res.bestandPad!
+      const ext = pad.split(/[/\\]/).pop()?.split('.').pop()?.toLowerCase()
+      const pdf = ext === 'pdf'
+
+      setBestandPad(pad)
       setBonPad(res.bonPad!)
-      setPreviewBase64(res.previewBase64!)
       setAantalPaginas(res.aantalPaginas ?? 1)
       setHuidigePagina(1)
+      setIsPdf(pdf)
+
+      if (pdf) {
+        // useEffect pikt de rendering op via isPdf + bestandPad state
+      } else {
+        setPreviewBase64(res.previewBase64!)
+        setPreviewGeladen(!!res.previewBase64)
+      }
+
       if (res.velden && !res.velden.error) {
         const v = res.velden
         setFormulier({
@@ -103,11 +168,14 @@ export function ScanModal({ open, onClose, onOpslaan }: Props) {
   const navigeerPagina = async (richting: 1 | -1) => {
     const nieuw = huidigePagina + richting
     if (nieuw < 1 || nieuw > aantalPaginas || !bestandPad) return
-    setLadenPreview(true)
-    try {
-      const res = await window.api.scan.renderPagina({ bestandPad, pagina: nieuw })
-      if (res.succes) { setPreviewBase64(res.previewBase64!); setHuidigePagina(nieuw) }
-    } finally { setLadenPreview(false) }
+    setHuidigePagina(nieuw) // useEffect herrendert PDF; voor afbeeldingen: aparte fetch
+    if (!isPdf) {
+      setLadenPreview(true)
+      try {
+        const res = await window.api.scan.renderPagina({ bestandPad, pagina: nieuw })
+        if (res.succes) setPreviewBase64(res.previewBase64!)
+      } finally { setLadenPreview(false) }
+    }
   }
 
   // Relatieve positie t.o.v. de image wrapper (0-1)
@@ -122,8 +190,8 @@ export function ScanModal({ open, onClose, onOpslaan }: Props) {
   }, [])
 
   const onMouseDown = (e: React.MouseEvent) => {
-    if (!previewBase64 || e.button !== 0) {
-      console.log('[SCAN] onMouseDown genegeerd — previewBase64:', !!previewBase64, 'button:', e.button)
+    if (!previewGeladen || e.button !== 0) {
+      console.log('[SCAN] onMouseDown genegeerd — previewGeladen:', previewGeladen, 'button:', e.button)
       return
     }
     const pos = getRelPos(e)
@@ -175,12 +243,17 @@ export function ScanModal({ open, onClose, onOpslaan }: Props) {
 
     setLadenOcr(true)
     try {
-      const imgEl = imgRef.current
-      if (imgEl) {
-        console.log('[SCAN] Afbeelding weergave:', imgEl.getBoundingClientRect().width.toFixed(0), '×', imgEl.getBoundingClientRect().height.toFixed(0), 'CSS px')
-        console.log('[SCAN] Afbeelding natuurlijk:', imgEl.naturalWidth, '×', imgEl.naturalHeight, 'px')
-        console.log('[SCAN] devicePixelRatio:', window.devicePixelRatio)
+      if (isPdf) {
+        const c = canvasRef.current
+        if (c) console.log('[SCAN] Canvas:', c.width, '×', c.height, 'px | weergave:', c.getBoundingClientRect().width.toFixed(0), '×', c.getBoundingClientRect().height.toFixed(0), 'CSS px')
+      } else {
+        const imgEl = imgRef.current
+        if (imgEl) {
+          console.log('[SCAN] Afbeelding weergave:', imgEl.getBoundingClientRect().width.toFixed(0), '×', imgEl.getBoundingClientRect().height.toFixed(0), 'CSS px')
+          console.log('[SCAN] Afbeelding natuurlijk:', imgEl.naturalWidth, '×', imgEl.naturalHeight, 'px')
+        }
       }
+      console.log('[SCAN] devicePixelRatio:', window.devicePixelRatio)
       const params = { bestandPad, pagina: huidigePagina, x: box.x, y: box.y, breedte: box.w, hoogte: box.h }
       console.log('[SCAN] IPC scan:ocrUitsnede aanroepen met:', params)
       const res = await window.api.scan.ocrUitsnede(params)
@@ -378,73 +451,83 @@ export function ScanModal({ open, onClose, onOpslaan }: Props) {
         </div>
 
         {/* ── Rechts: document preview ── */}
-        <div className="flex-1 bg-gray-800 flex flex-col min-w-0 overflow-hidden">
-          {ladenPreview ? (
-            <div className="flex-1 flex flex-col items-center justify-center gap-3 text-gray-400">
-              <Loader2 className="h-10 w-10 animate-spin" />
-              <span className="text-sm">Document laden…</span>
-            </div>
-          ) : previewBase64 ? (
-            <>
-              <div className="flex-1 overflow-auto flex items-start justify-center p-6">
-                {/* Wrapper: exact zo groot als de afbeelding, voor correcte box-overlay */}
-                <div
-                  ref={imgWrapperRef}
-                  className="relative inline-block select-none"
-                  style={{ cursor: previewBase64 ? 'crosshair' : 'default' }}
-                  onMouseDown={onMouseDown}
-                >
-                  <img
-                    ref={imgRef}
-                    src={`data:image/png;base64,${previewBase64}`}
-                    alt="Document preview"
-                    className="block shadow-2xl"
-                    style={{ maxHeight: 'calc(100vh - 140px)', maxWidth: '100%' }}
-                    draggable={false}
-                  />
-                  {/* Teken-overlay */}
-                  {tekenbox && (
-                    <div
-                      className="absolute border-2 border-indigo-400 bg-indigo-400/10 pointer-events-none"
-                      style={{
-                        left:   `${tekenbox.x * 100}%`,
-                        top:    `${tekenbox.y * 100}%`,
-                        width:  `${tekenbox.w * 100}%`,
-                        height: `${tekenbox.h * 100}%`,
-                      }}
-                    />
-                  )}
-                </div>
-              </div>
+        <div className="flex-1 bg-gray-800 flex flex-col min-w-0 overflow-hidden relative">
 
-              {/* Paginanavigatie */}
-              {aantalPaginas > 1 && (
-                <div className="flex items-center justify-center gap-3 py-2 bg-gray-900 text-white text-sm shrink-0">
-                  <button
-                    onClick={() => navigeerPagina(-1)}
-                    disabled={huidigePagina <= 1 || ladenPreview}
-                    className="p-1 disabled:opacity-40 hover:text-indigo-300 transition-colors"
-                  >
-                    <ChevronLeft className="h-5 w-5" />
-                  </button>
-                  <span className="text-xs">Pagina {huidigePagina} / {aantalPaginas}</span>
-                  <button
-                    onClick={() => navigeerPagina(1)}
-                    disabled={huidigePagina >= aantalPaginas || ladenPreview}
-                    className="p-1 disabled:opacity-40 hover:text-indigo-300 transition-colors"
-                  >
-                    <ChevronRight className="h-5 w-5" />
-                  </button>
-                </div>
+          {/* Overlay (spinner / geen bestand) — dekt de preview af totdat geladen */}
+          {(!previewGeladen || ladenPreview) && (
+            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-gray-800">
+              {ladenPreview || (bestandPad && !previewGeladen) ? (
+                <>
+                  <Loader2 className="h-10 w-10 animate-spin text-gray-400" />
+                  <span className="text-sm text-gray-400">Document laden…</span>
+                </>
+              ) : (
+                <>
+                  <FolderOpen className="h-12 w-12 text-gray-600" />
+                  <span className="text-sm text-gray-500">Open een bestand om te beginnen</span>
+                </>
               )}
-            </>
-          ) : (
-            <div className="flex-1 flex flex-col items-center justify-center text-gray-500 text-sm gap-3">
-              <div>Geen preview beschikbaar</div>
-              <div className="text-xs text-gray-400 max-w-md text-center">
-                PDF preview werkt niet goed, maar OCR functie werkt prima!<br/>
-                Klik op een veld en teken een box om tekst te extraheren.
-              </div>
+            </div>
+          )}
+
+          {/* Preview content: canvas altijd gerenderd zodat canvasRef beschikbaar is */}
+          <div className="flex-1 overflow-auto flex items-start justify-center p-6">
+            <div
+              ref={imgWrapperRef}
+              className="relative inline-block select-none"
+              style={{ cursor: 'crosshair' }}
+              onMouseDown={onMouseDown}
+            >
+              {/* Canvas: altijd aanwezig (canvasRef), zichtbaar bij PDF */}
+              <canvas
+                ref={canvasRef}
+                className={`block shadow-2xl${isPdf ? '' : ' hidden'}`}
+                style={{ maxHeight: 'calc(100vh - 140px)', maxWidth: '100%' }}
+              />
+              {/* Afbeelding: alleen voor niet-PDF bestanden */}
+              {!isPdf && previewBase64 && (
+                <img
+                  ref={imgRef}
+                  src={`data:image/png;base64,${previewBase64}`}
+                  alt="Document preview"
+                  className="block shadow-2xl"
+                  style={{ maxHeight: 'calc(100vh - 140px)', maxWidth: '100%' }}
+                  draggable={false}
+                />
+              )}
+              {/* Teken-overlay */}
+              {tekenbox && (
+                <div
+                  className="absolute border-2 border-indigo-400 bg-indigo-400/10 pointer-events-none"
+                  style={{
+                    left:   `${tekenbox.x * 100}%`,
+                    top:    `${tekenbox.y * 100}%`,
+                    width:  `${tekenbox.w * 100}%`,
+                    height: `${tekenbox.h * 100}%`,
+                  }}
+                />
+              )}
+            </div>
+          </div>
+
+          {/* Paginanavigatie */}
+          {previewGeladen && aantalPaginas > 1 && (
+            <div className="flex items-center justify-center gap-3 py-2 bg-gray-900 text-white text-sm shrink-0">
+              <button
+                onClick={() => navigeerPagina(-1)}
+                disabled={huidigePagina <= 1 || ladenPreview}
+                className="p-1 disabled:opacity-40 hover:text-indigo-300 transition-colors"
+              >
+                <ChevronLeft className="h-5 w-5" />
+              </button>
+              <span className="text-xs">Pagina {huidigePagina} / {aantalPaginas}</span>
+              <button
+                onClick={() => navigeerPagina(1)}
+                disabled={huidigePagina >= aantalPaginas || ladenPreview}
+                className="p-1 disabled:opacity-40 hover:text-indigo-300 transition-colors"
+              >
+                <ChevronRight className="h-5 w-5" />
+              </button>
             </div>
           )}
         </div>
