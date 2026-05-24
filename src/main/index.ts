@@ -3718,6 +3718,24 @@ function setupIpcHandlers() {
       .filter(r => r.tekst.length > 0)
   }
 
+  function dedupliceerdOcrBoxes(
+    boxes: Array<{ tekst: string; x: number; y: number; width: number; height: number }>
+  ): Array<{ tekst: string; x: number; y: number; width: number; height: number }> {
+    const resultaat: typeof boxes = []
+    for (const box of boxes) {
+      const isDuplicaat = resultaat.some(r => {
+        if (r.tekst !== box.tekst) return false
+        const overlapX = Math.max(0, Math.min(r.x + r.width, box.x + box.width) - Math.max(r.x, box.x))
+        const overlapY = Math.max(0, Math.min(r.y + r.height, box.y + box.height) - Math.max(r.y, box.y))
+        const overlapOpp = overlapX * overlapY
+        const minOpp = Math.min(r.width * r.height, box.width * box.height)
+        return minOpp > 0 && overlapOpp > minOpp * 0.5
+      })
+      if (!isDuplicaat) resultaat.push(box)
+    }
+    return resultaat
+  }
+
   ipcMain.handle('scan:volledigScannen', async (_, { bestandPad, pagina }: { bestandPad: string; pagina: number }) => {
     try {
       const ext = extname(bestandPad).toLowerCase().slice(1)
@@ -3727,30 +3745,86 @@ function setupIpcHandlers() {
         return { succes: true, regels: groeperNaarScanRegels(boxes) }
       }
 
-      // Afbeelding: Windows OCR op volledige afbeelding (max 3000px)
+      // Afbeelding: multi-pass Windows OCR voor maximale dekking (zelfde engine als Knipprogramma)
       const pngPad = await haalPngPad(bestandPad, pagina)
-      const fullImg = nativeImage.createFromPath(pngPad)
-      const { width: imgW, height: imgH } = fullImg.getSize()
-      const MAX_DIM = 3000
-      const schaal = Math.max(imgW, imgH) > MAX_DIM ? MAX_DIM / Math.max(imgW, imgH) : 1
-      const scanImg = schaal < 1
-        ? fullImg.resize({ width: Math.round(imgW * schaal), height: Math.round(imgH * schaal), quality: 'best' })
-        : fullImg
-      const { width: scanW, height: scanH } = scanImg.getSize()
+      const origImg = nativeImage.createFromPath(pngPad)
+      const { width: origW, height: origH } = origImg.getSize()
 
-      const tmpPad = join(app.getPath('temp'), `scan_volledig_${Date.now()}.png`)
-      fs.writeFileSync(tmpPad, scanImg.toPNG())
-      const resultaat = await ocrAfbeeldingWindows(tmpPad)
-      try { fs.unlinkSync(tmpPad) } catch { /* */ }
+      // Windows.Media.Ocr: max 4096px, beste resultaten bij tekens van ≥40px hoog
+      const WINDOWS_OCR_MAX = 4096
+      const STREEF_MIN = 2000 // upscale als kleiner dan dit voor betere tekstherkenning
 
-      const boxes = resultaat.woorden.map(w => ({
-        tekst: w.tekst,
-        x:      w.box.x      / scanW,
-        y:      w.box.y      / scanH,
-        width:  w.box.width  / scanW,
-        height: w.box.height / scanH,
-      }))
-      return { succes: true, regels: groeperNaarScanRegels(boxes) }
+      const maxDim = Math.max(origW, origH)
+      const basisSchaal = maxDim > WINDOWS_OCR_MAX
+        ? WINDOWS_OCR_MAX / maxDim
+        : maxDim < STREEF_MIN
+          ? STREEF_MIN / maxDim
+          : 1
+
+      const schaalW = Math.round(origW * basisSchaal)
+      const schaalH = Math.round(origH * basisSchaal)
+      const basisImg = basisSchaal !== 1
+        ? origImg.resize({ width: schaalW, height: schaalH, quality: 'best' })
+        : origImg
+
+      const alleBoxes: Array<{ tekst: string; x: number; y: number; width: number; height: number }> = []
+
+      // Voer OCR uit op een gedeelte van basisImg (met optionele opschaling) en sla genormaliseerde woorden op
+      const ocrOpGedeelte = async (cropX: number, cropY: number, cropW: number, cropH: number, tegelSchaal: number) => {
+        let img = basisImg.crop({ x: cropX, y: cropY, width: cropW, height: cropH })
+        if (tegelSchaal !== 1) {
+          img = img.resize({
+            width: Math.round(cropW * tegelSchaal),
+            height: Math.round(cropH * tegelSchaal),
+            quality: 'best',
+          })
+        }
+        const tmp = join(app.getPath('temp'), `scan_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.png`)
+        fs.writeFileSync(tmp, img.toPNG())
+        try {
+          const res = await ocrAfbeeldingWindows(tmp)
+          for (const w of res.woorden) {
+            // Zet tegelcoördinaten terug naar genormaliseerde coördinaten van het volledige beeld
+            alleBoxes.push({
+              tekst: w.tekst,
+              x:      (cropX + w.box.x      / tegelSchaal) / schaalW,
+              y:      (cropY + w.box.y      / tegelSchaal) / schaalH,
+              width:  (w.box.width  / tegelSchaal) / schaalW,
+              height: (w.box.height / tegelSchaal) / schaalH,
+            })
+          }
+        } finally {
+          try { fs.unlinkSync(tmp) } catch { /* */ }
+        }
+      }
+
+      // Pass 1: volledige afbeelding
+      await ocrOpGedeelte(0, 0, schaalW, schaalH, 1)
+
+      // Pass 2: 4 overlappende tegels, elk opgeschaald naar max 4096px
+      // Geeft veel betere dekking van kleine tekst (zelfde effect als Knipprogramma zoom-in)
+      if (Math.max(schaalW, schaalH) >= 1200) {
+        const OVERLAP = 0.1
+        const tileW = Math.round(schaalW * (0.5 + OVERLAP))
+        const tileH = Math.round(schaalH * (0.5 + OVERLAP))
+        const offsetX = Math.round(schaalW * (0.5 - OVERLAP))
+        const offsetY = Math.round(schaalH * (0.5 - OVERLAP))
+
+        // Schaal elke tegel zo groot mogelijk op, tot 4096px of 2× (meer dan 2× geeft ruis)
+        const tegelSchaal = Math.min(WINDOWS_OCR_MAX / Math.max(tileW, tileH), 2)
+
+        const tegels = [
+          { x: 0,       y: 0,       w: Math.min(tileW, schaalW),           h: Math.min(tileH, schaalH) },
+          { x: offsetX, y: 0,       w: Math.min(tileW, schaalW - offsetX), h: Math.min(tileH, schaalH) },
+          { x: 0,       y: offsetY, w: Math.min(tileW, schaalW),           h: Math.min(tileH, schaalH - offsetY) },
+          { x: offsetX, y: offsetY, w: Math.min(tileW, schaalW - offsetX), h: Math.min(tileH, schaalH - offsetY) },
+        ].filter(t => t.w >= 50 && t.h >= 50)
+
+        await Promise.all(tegels.map(t => ocrOpGedeelte(t.x, t.y, t.w, t.h, tegelSchaal)))
+      }
+
+      const uniek = dedupliceerdOcrBoxes(alleBoxes)
+      return { succes: true, regels: groeperNaarScanRegels(uniek) }
     } catch (e) {
       console.error('[SCAN:VOLLEDIG]', e)
       return { succes: false, regels: [] }
