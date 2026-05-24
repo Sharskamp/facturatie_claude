@@ -122,9 +122,13 @@ export function ScanModal({ open, onClose, onOpslaan }: Props) {
   }, [])
 
   const onMouseDown = (e: React.MouseEvent) => {
-    if (!previewBase64 || e.button !== 0) return
-    e.preventDefault()
-    tekenStartRef.current = getRelPos(e)
+    if (!previewBase64 || e.button !== 0) {
+      console.log('[SCAN] onMouseDown genegeerd — previewBase64:', !!previewBase64, 'button:', e.button)
+      return
+    }
+    const pos = getRelPos(e)
+    console.log('[SCAN] Tekenen gestart op:', pos, '| modus:', modus, '| geselecteerdVeld:', geselecteerdVeld)
+    tekenStartRef.current = pos
     tekenboxRef.current = null
     setTekenbox(null)
   }
@@ -144,35 +148,58 @@ export function ScanModal({ open, onClose, onOpslaan }: Props) {
   }
 
   const onMouseUp = async (e: React.MouseEvent) => {
-    if (!tekenStartRef.current || !bestandPad) { tekenStartRef.current = null; return }
+    if (!tekenStartRef.current) {
+      console.log('[SCAN] onMouseUp: geen tekenStart, negeer')
+      return
+    }
+    if (!bestandPad) {
+      console.log('[SCAN] onMouseUp: geen bestandPad geladen')
+      tekenStartRef.current = null
+      return
+    }
     const box = tekenboxRef.current
     tekenStartRef.current = null
     tekenboxRef.current = null
-    if (!box || box.w < 0.005 || box.h < 0.005) { setTekenbox(null); return }
+
+    console.log('[SCAN] Box afgerond:', box, '| modus:', modus, '| geselecteerdVeld:', geselecteerdVeld)
+
+    if (!box || box.w < 0.005 || box.h < 0.005) {
+      console.log('[SCAN] Box te klein of null, OCR overgeslagen')
+      setTekenbox(null)
+      return
+    }
+
+    if (modus === 'rij-eerst' && !geselecteerdVeld) {
+      console.log('[SCAN] Rij-eerst modus maar geen veld geselecteerd — valt terug op auto-detectie')
+    }
 
     setLadenOcr(true)
     try {
-      console.log('OCR uitsnede:', { bestandPad, pagina: huidigePagina, x: box.x, y: box.y, breedte: box.w, hoogte: box.h })
-      const res = await window.api.scan.ocrUitsnede({
-        bestandPad,
-        pagina: huidigePagina,
-        x: box.x, y: box.y, breedte: box.w, hoogte: box.h,
-      })
-      console.log('OCR result:', res)
+      const params = { bestandPad, pagina: huidigePagina, x: box.x, y: box.y, breedte: box.w, hoogte: box.h }
+      console.log('[SCAN] IPC scan:ocrUitsnede aanroepen met:', params)
+      const res = await window.api.scan.ocrUitsnede(params)
+      console.log('[SCAN] IPC antwoord:', res)
+
       if (res.succes && res.tekst) {
         const tekst = res.tekst.trim()
-        console.log('Geëxtraheerde tekst:', tekst, 'Modus:', modus, 'Veld:', geselecteerdVeld)
+        console.log('[SCAN] Geëxtraheerde tekst:', JSON.stringify(tekst))
         if (modus === 'rij-eerst' && geselecteerdVeld) {
-          console.log('Zetten veld in rij-eerst modus:', geselecteerdVeld, '=', tekst)
           setFormulier(prev => ({ ...prev, [geselecteerdVeld]: tekst }))
           setGeselecteerdVeld(null)
-        } else if (modus === 'auto') {
+          console.log('[SCAN] Veld ingevuld:', geselecteerdVeld, '=', tekst)
+        } else {
+          // auto-detectie (modus=auto of rij-eerst zonder geselecteerd veld)
           const veldKey = autoDetecteerVeld(tekst)
-          console.log('Auto-detect veld:', veldKey)
-          if (veldKey) setFormulier(prev => ({ ...prev, [veldKey]: tekst }))
+          console.log('[SCAN] Auto-detect veld:', veldKey, 'voor tekst:', JSON.stringify(tekst))
+          if (veldKey) {
+            setFormulier(prev => ({ ...prev, [veldKey]: tekst }))
+            console.log('[SCAN] Auto-detect ingevuld:', veldKey, '=', tekst)
+          } else {
+            console.log('[SCAN] Auto-detect: geen passend veld gevonden voor tekst:', JSON.stringify(tekst))
+          }
         }
       } else {
-        console.log('OCR mislukt of geen tekst:', res)
+        console.log('[SCAN] OCR leverde geen tekst op:', res)
       }
     } finally {
       setLadenOcr(false)

@@ -3646,27 +3646,40 @@ function setupIpcHandlers() {
   ipcMain.handle('scan:ocrUitsnede', async (_, {
     bestandPad, pagina, x, y, breedte, hoogte
   }: { bestandPad: string; pagina: number; x: number; y: number; breedte: number; hoogte: number }) => {
+    console.log(`\n[OCR-UITSNEDE] ── Nieuwe aanvraag ──`)
+    console.log(`  Bestand : ${bestandPad}`)
+    console.log(`  Pagina  : ${pagina}`)
+    console.log(`  Box (%) : x=${(x*100).toFixed(1)}% y=${(y*100).toFixed(1)}% w=${(breedte*100).toFixed(1)}% h=${(hoogte*100).toFixed(1)}%`)
     try {
       const pngPad = await haalPngPad(bestandPad, pagina)
+      console.log(`  PNG pad : ${pngPad}`)
       const fullImg = nativeImage.createFromPath(pngPad)
       const { width: imgW, height: imgH } = fullImg.getSize()
+      console.log(`  Afbeelding: ${imgW}×${imgH}px`)
 
       // Coördinaten zijn percentages (0-1), omzetten naar pixels
       const cropX = Math.max(0, Math.round(x * imgW))
       const cropY = Math.max(0, Math.round(y * imgH))
       const cropW = Math.max(4, Math.min(Math.round(breedte * imgW), imgW - cropX))
       const cropH = Math.max(4, Math.min(Math.round(hoogte * imgH), imgH - cropY))
+      console.log(`  Crop (px): x=${cropX} y=${cropY} w=${cropW} h=${cropH}`)
 
       const cropped = fullImg.crop({ x: cropX, y: cropY, width: cropW, height: cropH })
       const tmpPad = join(app.getPath('temp'), `scan_uitsnede_${Date.now()}.png`)
       fs.writeFileSync(tmpPad, cropped.toPNG())
+      console.log(`  Uitsnede opgeslagen: ${tmpPad}`)
 
+      console.log(`  OCR starten...`)
       const { ocrAfbeelding } = await import('../lib/paddle-ocr')
       const resultaat = await ocrAfbeelding(tmpPad)
       try { fs.unlinkSync(tmpPad) } catch { /* */ }
 
-      return { succes: true, tekst: resultaat.tekst?.trim() ?? '' }
+      const tekst = resultaat.tekst?.trim() ?? ''
+      console.log(`  OCR resultaat: ${JSON.stringify(tekst)}`)
+      if (!tekst) console.log(`  !! Geen tekst gevonden in uitsnede`)
+      return { succes: true, tekst }
     } catch (e) {
+      console.error(`  FOUT in scan:ocrUitsnede:`, e)
       return { succes: false, tekst: '', fout: String(e) }
     }
   })
