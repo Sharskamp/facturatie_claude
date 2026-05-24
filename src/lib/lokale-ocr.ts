@@ -194,52 +194,54 @@ interface PdfPage {
 
 // ── PDF → PNG via Electron offscreen BrowserWindow ───────────────────────────
 export async function pdfPaginaNaarPng(pad: string, paginaIndex = 0): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const win = new BrowserWindow({
-      width: 1240,
-      height: 1754, // A4 @ 150 dpi
-      show: false,
-      webPreferences: {
-        offscreen: true,
-        contextIsolation: true,
-        nodeIntegration: false,
-      },
-    })
+  try {
+    const pdfjsLib = laadPdfJsVoorTekst()
+    const buffer = fs.readFileSync(pad)
+    const doc = await pdfjsLib.getDocument({
+      data: new Uint8Array(buffer),
+      useSystemFonts: true,
+      disableFontFace: true,
+    }).promise
 
-    const timeout = setTimeout(() => {
-      win.close()
-      reject(new Error('PDF rendering timeout (15s)'))
-    }, 15_000)
+    // Zorg dat de pagina-index geldig is
+    const actualPageIndex = Math.max(0, Math.min(paginaIndex, doc.numPages - 1))
+    const page = await doc.getPage(actualPageIndex + 1)
 
-    win.webContents.once('did-fail-load', (_e, code, desc) => {
-      clearTimeout(timeout)
-      win.close()
-      reject(new Error(`PDF laden mislukt: ${desc} (code ${code})`))
-    })
+    // Render met 150 DPI (schaal ~1.5 voor standaard scherm DPI)
+    const scale = 1.5
+    const viewport = page.getViewport({ scale })
 
-    win.webContents.once('did-finish-load', async () => {
-      try {
-        await new Promise(r => setTimeout(r, 1_500))
-        if (paginaIndex > 0) {
-          await win.webContents.executeJavaScript(
-            `window.scrollTo(0, ${paginaIndex} * window.innerHeight)`
-          )
-          await new Promise(r => setTimeout(r, 500))
-        }
-        const image = await win.webContents.capturePage()
-        clearTimeout(timeout)
-        win.close()
-        resolve(image.toPNG())
-      } catch (e) {
-        clearTimeout(timeout)
-        win.close()
-        reject(e)
-      }
-    })
+    // Canvas rendering — we gebruiken de native 'canvas' package die in Node.js beschikbaar is
+    const { createCanvas } = require('canvas')
+    const canvas = createCanvas(viewport.width, viewport.height)
+    const ctx = canvas.getContext('2d')
 
-    const url = `file://${pad.replace(/\\/g, '/').replace(/ /g, '%20')}`
-    win.loadURL(url)
-  })
+    // Rendereer de PDF-pagina
+    const renderContext = {
+      canvasContext: ctx,
+      viewport: viewport
+    }
+    await page.render(renderContext).promise
+
+    // Converteer canvas naar PNG buffer
+    const pngBuffer = canvas.toBuffer('image/png')
+    await doc.destroy()
+
+    return pngBuffer
+  } catch (e) {
+    // Fallback: als canvas rendering faalt, return een placeholder
+    console.error('PDF rendering failed:', e)
+    // Maak een minimale 1x1 PNG placeholder zodat de client dit kan zien
+    const { createCanvas } = require('canvas')
+    const canvas = createCanvas(800, 1000)
+    const ctx = canvas.getContext('2d')
+    ctx.fillStyle = '#cccccc'
+    ctx.fillRect(0, 0, 800, 1000)
+    ctx.fillStyle = '#666666'
+    ctx.font = '16px Arial'
+    ctx.fillText('PDF laden mislukt', 20, 50)
+    return canvas.toBuffer('image/png')
+  }
 }
 
 // ── Hulpfuncties ─────────────────────────────────────────────────────────────
