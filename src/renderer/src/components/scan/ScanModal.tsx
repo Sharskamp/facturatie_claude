@@ -175,6 +175,12 @@ export function ScanModal({ open, onClose, onOpslaan }: Props) {
 
     setLadenOcr(true)
     try {
+      const imgEl = imgRef.current
+      if (imgEl) {
+        console.log('[SCAN] Afbeelding weergave:', imgEl.getBoundingClientRect().width.toFixed(0), '×', imgEl.getBoundingClientRect().height.toFixed(0), 'CSS px')
+        console.log('[SCAN] Afbeelding natuurlijk:', imgEl.naturalWidth, '×', imgEl.naturalHeight, 'px')
+        console.log('[SCAN] devicePixelRatio:', window.devicePixelRatio)
+      }
       const params = { bestandPad, pagina: huidigePagina, x: box.x, y: box.y, breedte: box.w, hoogte: box.h }
       console.log('[SCAN] IPC scan:ocrUitsnede aanroepen met:', params)
       const res = await window.api.scan.ocrUitsnede(params)
@@ -191,12 +197,8 @@ export function ScanModal({ open, onClose, onOpslaan }: Props) {
           // auto-detectie (modus=auto of rij-eerst zonder geselecteerd veld)
           const veldKey = autoDetecteerVeld(tekst)
           console.log('[SCAN] Auto-detect veld:', veldKey, 'voor tekst:', JSON.stringify(tekst))
-          if (veldKey) {
-            setFormulier(prev => ({ ...prev, [veldKey]: tekst }))
-            console.log('[SCAN] Auto-detect ingevuld:', veldKey, '=', tekst)
-          } else {
-            console.log('[SCAN] Auto-detect: geen passend veld gevonden voor tekst:', JSON.stringify(tekst))
-          }
+          setFormulier(prev => ({ ...prev, [veldKey]: tekst }))
+          console.log('[SCAN] Auto-detect ingevuld:', veldKey, '=', tekst)
         }
       } else {
         console.log('[SCAN] OCR leverde geen tekst op:', res)
@@ -207,26 +209,24 @@ export function ScanModal({ open, onClose, onOpslaan }: Props) {
     }
   }
 
-  const autoDetecteerVeld = (tekst: string): keyof ScanFormulier | null => {
+  const autoDetecteerVeld = (tekst: string): keyof ScanFormulier => {
     const schoon = tekst.replace(/[€\s]/g, '').trim()
     // Datum: dd-mm-yyyy of yyyy-mm-dd
     if (/^\d{2}[-./]\d{2}[-./]\d{4}$|^\d{4}[-./]\d{2}[-./]\d{2}$/.test(schoon)) {
-      if (!formulier.datum) return 'datum'
-      if (!formulier.vervaldatum) return 'vervaldatum'
-      return 'datum'
+      return formulier.datum ? 'vervaldatum' : 'datum'
     }
-    // Bedrag
+    // Bedrag (ook als veld al gevuld is — overschrijf totaal als fallback)
     const bedrag = parseFloat(schoon.replace(',', '.'))
     if (!isNaN(bedrag) && bedrag > 0) {
-      if (!formulier.totaal)     return 'totaal'
-      if (!formulier.subtotaal)  return 'subtotaal'
-      if (!formulier.btwBedrag)  return 'btwBedrag'
+      if (!formulier.totaal)    return 'totaal'
+      if (!formulier.subtotaal) return 'subtotaal'
+      if (!formulier.btwBedrag) return 'btwBedrag'
+      return 'totaal'
     }
     // Factuurnummer: alfanumeriek met streepje
-    if (/^[A-Z0-9][-A-Z0-9/_.]{1,25}$/i.test(schoon) && !formulier.nummer) return 'nummer'
-    // Naam
-    if (tekst.length > 1 && tekst.length < 80 && !formulier.klantNaam) return 'klantNaam'
-    return null
+    if (/^[A-Z0-9][-A-Z0-9/_.]{1,25}$/i.test(schoon)) return 'nummer'
+    // Alles wat overblijft → naam/leverancier
+    return 'klantNaam'
   }
 
   const handleOpslaan = async () => {
