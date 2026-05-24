@@ -153,6 +153,7 @@ contextBridge.exposeInMainWorld('api', {
     openEnPreview: () => ipcRenderer.invoke('scan:openEnPreview'),
     renderPagina: (data: unknown) => ipcRenderer.invoke('scan:renderPagina', data),
     ocrUitsnede: (data: unknown) => ipcRenderer.invoke('scan:ocrUitsnede', data),
+    volledigScannen: (data: unknown) => ipcRenderer.invoke('scan:volledigScannen', data),
   },
   vasteActiva: {
     list: () => ipcRenderer.invoke('vasteActiva:list'),

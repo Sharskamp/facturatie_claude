@@ -3685,6 +3685,78 @@ function setupIpcHandlers() {
     }
   })
 
+  function groeperNaarScanRegels(
+    boxes: Array<{ tekst: string; x: number; y: number; width: number; height: number }>
+  ): Array<{ tekst: string; x: number; y: number; width: number; height: number }> {
+    const gesorteerd = [...boxes].sort((a, b) => a.y - b.y || a.x - b.x)
+    const regels: Array<{
+      items: typeof gesorteerd; x: number; y: number; maxX: number; maxY: number
+    }> = []
+    for (const box of gesorteerd) {
+      const midden = box.y + box.height / 2
+      const bestaand = regels.find(r => {
+        const h = r.maxY - r.y
+        return Math.abs((r.y + h / 2) - midden) < Math.max(box.height, h) * 0.55
+      })
+      if (bestaand) {
+        bestaand.items.push(box)
+        bestaand.x    = Math.min(bestaand.x, box.x)
+        bestaand.y    = Math.min(bestaand.y, box.y)
+        bestaand.maxX = Math.max(bestaand.maxX, box.x + box.width)
+        bestaand.maxY = Math.max(bestaand.maxY, box.y + box.height)
+      } else {
+        regels.push({ items: [box], x: box.x, y: box.y, maxX: box.x + box.width, maxY: box.y + box.height })
+      }
+    }
+    return regels
+      .map(r => ({
+        tekst: r.items.sort((a, b) => a.x - b.x).map(b => b.tekst).join(' ').trim(),
+        x: r.x, y: r.y,
+        width:  r.maxX - r.x,
+        height: r.maxY - r.y,
+      }))
+      .filter(r => r.tekst.length > 0)
+  }
+
+  ipcMain.handle('scan:volledigScannen', async (_, { bestandPad, pagina }: { bestandPad: string; pagina: number }) => {
+    try {
+      const ext = extname(bestandPad).toLowerCase().slice(1)
+
+      if (ext === 'pdf') {
+        const { boxes } = await uitsnedeTekstMetBoxesVanPdf(bestandPad, pagina - 1, 0, 0, 1, 1)
+        return { succes: true, regels: groeperNaarScanRegels(boxes) }
+      }
+
+      // Afbeelding: Windows OCR op volledige afbeelding (max 3000px)
+      const pngPad = await haalPngPad(bestandPad, pagina)
+      const fullImg = nativeImage.createFromPath(pngPad)
+      const { width: imgW, height: imgH } = fullImg.getSize()
+      const MAX_DIM = 3000
+      const schaal = Math.max(imgW, imgH) > MAX_DIM ? MAX_DIM / Math.max(imgW, imgH) : 1
+      const scanImg = schaal < 1
+        ? fullImg.resize({ width: Math.round(imgW * schaal), height: Math.round(imgH * schaal), quality: 'best' })
+        : fullImg
+      const { width: scanW, height: scanH } = scanImg.getSize()
+
+      const tmpPad = join(app.getPath('temp'), `scan_volledig_${Date.now()}.png`)
+      fs.writeFileSync(tmpPad, scanImg.toPNG())
+      const resultaat = await ocrAfbeeldingWindows(tmpPad)
+      try { fs.unlinkSync(tmpPad) } catch { /* */ }
+
+      const boxes = resultaat.woorden.map(w => ({
+        tekst: w.tekst,
+        x:      w.box.x      / scanW,
+        y:      w.box.y      / scanH,
+        width:  w.box.width  / scanW,
+        height: w.box.height / scanH,
+      }))
+      return { succes: true, regels: groeperNaarScanRegels(boxes) }
+    } catch (e) {
+      console.error('[SCAN:VOLLEDIG]', e)
+      return { succes: false, regels: [] }
+    }
+  })
+
   // ── Producten (catalogus) ──
   ipcMain.handle('scan:ocrUitsnede', async (_, {
     bestandPad, pagina, x, y, breedte, hoogte

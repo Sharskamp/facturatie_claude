@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from 'react'
-import { Loader2, ChevronLeft, ChevronRight, X, FolderOpen, Save, MousePointer, Wand2 } from 'lucide-react'
+import { Loader2, ChevronLeft, ChevronRight, X, FolderOpen, Save, MousePointer, ScanText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 export interface ScanFormulier {
@@ -78,6 +78,8 @@ export function ScanModal({ open, onClose, onOpslaan }: Props) {
   const [laatsteDebugPreview, setLaatsteDebugPreview] = useState<string | null>(null)
   const [laatsteDebugTekst, setLaatsteDebugTekst] = useState('')
   const [laatsteDebugBron, setLaatsteDebugBron] = useState<string | null>(null)
+  const [ocrRegels, setOcrRegels] = useState<MatchBox[]>([])
+  const [ladenVolledigeScan, setLadenVolledigeScan] = useState(false)
   const tekenStartRef = useRef<{ x: number; y: number } | null>(null)
   const tekenboxRef = useRef<TekenBox | null>(null)
   const imgWrapperRef = useRef<HTMLDivElement>(null)
@@ -99,9 +101,22 @@ export function ScanModal({ open, onClose, onOpslaan }: Props) {
     setLaatsteDebugPreview(null)
     setLaatsteDebugTekst('')
     setLaatsteDebugBron(null)
+    setOcrRegels([])
+    setLadenVolledigeScan(false)
     tekenStartRef.current = null
     tekenboxRef.current = null
   }
+
+  const triggerVolledigeScan = useCallback(async (pad: string, pagina: number) => {
+    setLadenVolledigeScan(true)
+    setOcrRegels([])
+    try {
+      const res = await window.api.scan.volledigScannen({ bestandPad: pad, pagina })
+      if (res.succes) setOcrRegels(res.regels)
+    } catch { /* stil falen */ } finally {
+      setLadenVolledigeScan(false)
+    }
+  }, [])
 
   const handleClose = () => {
     resetState()
@@ -126,6 +141,7 @@ export function ScanModal({ open, onClose, onOpslaan }: Props) {
       setIsPdf(ext === 'pdf')
       setPreviewBase64(res.previewBase64 ?? null)
       setPreviewGeladen(!!res.previewBase64)
+      triggerVolledigeScan(pad, 1)
 
       if (res.velden && !res.velden.error) {
         const v = res.velden
@@ -158,6 +174,7 @@ export function ScanModal({ open, onClose, onOpslaan }: Props) {
         setHuidigePagina(nieuw)
         setPreviewBase64(res.previewBase64)
         setPreviewGeladen(true)
+        triggerVolledigeScan(bestandPad!, nieuw)
       }
     } finally {
       setLadenPreview(false)
@@ -279,6 +296,18 @@ export function ScanModal({ open, onClose, onOpslaan }: Props) {
     }
   }
 
+  const klikOpOcrRegel = (tekst: string) => {
+    const trimmed = tekst.trim()
+    if (!trimmed) return
+    if (modus === 'rij-eerst' && geselecteerdVeld) {
+      setFormulier(prev => ({ ...prev, [geselecteerdVeld]: trimmed }))
+      setGeselecteerdVeld(null)
+    } else {
+      const veld = autoDetecteerVeld(trimmed)
+      setFormulier(prev => ({ ...prev, [veld]: trimmed }))
+    }
+  }
+
   const autoDetecteerVeld = (tekst: string): keyof ScanFormulier => {
     const schoon = tekst.replace(/[€\s]/g, '').trim()
 
@@ -335,8 +364,8 @@ export function ScanModal({ open, onClose, onOpslaan }: Props) {
               }`}
             >
               {modus === 'rij-eerst'
-                ? <><MousePointer className="h-3 w-3" /> Rij {'->'} Box</>
-                : <><Wand2 className="h-3 w-3" /> Auto-detecteer</>}
+                ? <><MousePointer className="h-3 w-3" /> Rij {'→'} Klik</>
+                : <><ScanText className="h-3 w-3" /> Auto-detecteer</>}
             </button>
           )}
           <button onClick={handleClose} className="rounded p-1.5 transition-colors hover:bg-gray-700">
@@ -368,24 +397,29 @@ export function ScanModal({ open, onClose, onOpslaan }: Props) {
                     <Loader2 className="h-3 w-3 animate-spin text-indigo-500" />
                     <span className="text-indigo-600">OCR bezig...</span>
                   </>
+                ) : ladenVolledigeScan ? (
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin text-sky-500" />
+                    <span className="text-sky-600">Tekst herkennen...</span>
+                  </>
                 ) : modus === 'rij-eerst' ? (
                   geselecteerdVeld ? (
                     <>
                       <span className="h-2 w-2 shrink-0 rounded-full bg-indigo-500" />
                       <span>
-                        <strong>{VELDEN.find((v) => v.key === geselecteerdVeld)?.label}</strong> geselecteerd - teken nu een box in de preview
+                        <strong>{VELDEN.find((v) => v.key === geselecteerdVeld)?.label}</strong> — klik op tekst in de preview
                       </span>
                     </>
                   ) : (
                     <>
                       <span className="h-2 w-2 shrink-0 rounded-full bg-gray-300" />
-                      Klik een veld aan, teken dan een box in de preview
+                      Klik een veld aan, klik dan op tekst in de preview
                     </>
                   )
                 ) : (
                   <>
                     <span className="h-2 w-2 shrink-0 rounded-full bg-amber-400" />
-                    Teken een box - veld wordt automatisch herkend
+                    Klik op tekst of teken een box — veld wordt automatisch herkend
                   </>
                 )}
               </div>
@@ -521,6 +555,23 @@ export function ScanModal({ open, onClose, onOpslaan }: Props) {
                       width: `${box.width * 100}%`,
                       height: `${box.height * 100}%`,
                     }}
+                  />
+                ))}
+
+                {/* Klikbare tekst-regels van de volledige scan */}
+                {ocrRegels.map((regel, i) => (
+                  <div
+                    key={i}
+                    className="group absolute cursor-pointer rounded-[2px] border border-sky-400/30 bg-sky-400/5 transition-colors hover:border-sky-400/80 hover:bg-sky-400/20"
+                    style={{
+                      left:   `${regel.x * 100}%`,
+                      top:    `${regel.y * 100}%`,
+                      width:  `${regel.width * 100}%`,
+                      height: `${regel.height * 100}%`,
+                    }}
+                    title={regel.tekst}
+                    onMouseDown={e => e.stopPropagation()}
+                    onClick={() => klikOpOcrRegel(regel.tekst)}
                   />
                 ))}
 
