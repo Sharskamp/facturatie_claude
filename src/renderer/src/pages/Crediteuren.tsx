@@ -121,8 +121,15 @@ export default function CrediteurenPage() {
     setScanBezig(true);
     try {
       const res = await window.api.scan.kiesEnScan();
-      if (!res.succes) return;
+      if (!res.succes) {
+        if (res.fout) alert(`Scan mislukt: ${res.fout}`);
+        return;
+      }
       const v = res.velden!;
+      if (!v || v.error) {
+        alert(`OCR fout: ${v?.error || 'Kon gegevens niet lezen. Probeer een beter afbeelding.'}`);
+        return;
+      }
       let btwPercentage = 21;
       if (v.subtotaal != null && v.btwBedrag != null && v.subtotaal > 0) {
         const berekend = Math.round((v.btwBedrag / v.subtotaal) * 100);
@@ -143,7 +150,7 @@ export default function CrediteurenPage() {
       });
       setModalOpen(true);
     } catch {
-      // stil falen
+      alert('Scan mislukt');
     } finally {
       setScanBezig(false);
     }
