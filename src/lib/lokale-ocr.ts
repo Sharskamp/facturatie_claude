@@ -224,7 +224,9 @@ interface PdfPage {
 export async function renderPdfPagina(pad: string, paginaIndex = 0): Promise<Buffer> {
   const pdfjsLib = laadPdfJsVoorTekst()
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { createCanvas } = require('canvas') as typeof import('canvas')
+  const canvasMod = require('canvas') as typeof import('canvas')
+  if (!canvasMod?.createCanvas) throw new Error('canvas module niet beschikbaar')
+  const { createCanvas } = canvasMod
 
   const buffer = fs.readFileSync(pad)
   const doc = await pdfjsLib.getDocument({

@@ -3576,7 +3576,15 @@ function setupIpcHandlers() {
     let pngPad: string
 
     if (ext === 'pdf') {
-      const pngBuffer = await renderPdfPagina(bestandPad, pagina - 1)
+      let pngBuffer: Buffer
+      try {
+        pngBuffer = await renderPdfPagina(bestandPad, pagina - 1)
+        console.log(`[SCAN] PDF rendered via PDF.js+canvas (pagina ${pagina})`)
+      } catch (canvasErr) {
+        console.warn(`[SCAN] PDF.js+canvas mislukt (${canvasErr}), fallback naar Chromium viewer`)
+        const { pdfPaginaNaarPng } = await import('../lib/lokale-ocr')
+        pngBuffer = await pdfPaginaNaarPng(bestandPad, pagina - 1)
+      }
       pngPad = join(app.getPath('temp'), `scan_p${pagina}_${Date.now()}.png`)
       fs.writeFileSync(pngPad, pngBuffer)
     } else {
