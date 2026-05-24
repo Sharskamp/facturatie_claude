@@ -221,41 +221,62 @@ interface PdfPage {
 
 // ── PDF → PNG via Electron offscreen BrowserWindow ───────────────────────────
 export async function pdfPaginaNaarPng(pad: string, paginaIndex = 0): Promise<Buffer> {
-  // Genereer een simpele grijze placeholder PNG - geen complexiteit nodig
-  // De OCR werkt perfect, dus preview is niet kritisch
-  // We gebruiken een minimale PNG encoder voor een 1x1 grijze pixel
-  // dat de browser automatisch zal oprekken naar het beschikbare ruimte
+  // Gebruik Electron's ingebouwde PDF viewer om PDF naar image te renderen
+  const { BrowserWindow } = require('electron')
 
-  // Dit is een geldige PNG: 1x1 pixel, lichtgrijs (#d1d5db)
-  // Format: PNG signature + IHDR chunk + IDAT chunk + IEND chunk
-  const png = Buffer.from([
-    // PNG signature
-    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-    // IHDR chunk (13 bytes data + 12 bytes header/crc)
-    0x00, 0x00, 0x00, 0x0d,
-    0x49, 0x48, 0x44, 0x52,
-    0x00, 0x00, 0x00, 0x01, // width = 1
-    0x00, 0x00, 0x00, 0x01, // height = 1
-    0x08, // bit depth = 8
-    0x02, // color type = RGB
-    0x00, // compression method
-    0x00, // filter method
-    0x00, // interlace method
-    0x90, 0x77, 0x53, 0xde, // CRC
-    // IDAT chunk
-    0x00, 0x00, 0x00, 0x0c,
-    0x49, 0x44, 0x41, 0x54,
-    0x08, 0x99, 0x63, 0xf8, 0xaf, 0xa0, 0xa0, 0xa0, // compressed data
-    0xa0, 0xa0, 0xa0, 0xa0,
-    0x00, 0x00, 0xfb, 0x0f, 0x00, 0x64, // more compressed data
-    0x47, 0xd8, 0x41, 0x4e, // CRC
-    // IEND chunk
-    0x00, 0x00, 0x00, 0x00,
-    0x49, 0x45, 0x4e, 0x44,
-    0xae, 0x42, 0x60, 0x82
-  ])
+  return new Promise((resolve, reject) => {
+    const win = new BrowserWindow({
+      width: 1240,
+      height: 1754,
+      show: false,
+      webPreferences: {
+        offscreen: true,
+        sandbox: true,
+        nodeIntegration: false,
+      },
+    })
 
-  return png
+    const timeout = setTimeout(() => {
+      win.destroy()
+      reject(new Error('PDF rendering timeout'))
+    }, 20000)
+
+    win.webContents.on('did-fail-load', (e) => {
+      clearTimeout(timeout)
+      win.destroy()
+      reject(new Error(`PDF load failed: ${e}`))
+    })
+
+    let loaded = false
+    win.webContents.on('did-finish-load', async () => {
+      if (loaded) return
+      loaded = true
+
+      try {
+        await new Promise(r => setTimeout(r, 2000))
+
+        if (paginaIndex > 0) {
+          await win.webContents.executeJavaScript(
+            `document.querySelector('.page').style.transform = 'translateY(${-paginaIndex * 100}%)'`
+          )
+          await new Promise(r => setTimeout(r, 500))
+        }
+
+        const image = await win.webContents.capturePage()
+        clearTimeout(timeout)
+        win.destroy()
+        resolve(image.toPNG())
+      } catch (e) {
+        clearTimeout(timeout)
+        win.destroy()
+        reject(e)
+      }
+    })
+
+    // Load PDF met Chromium's ingebouwde PDF viewer
+    const fileUrl = `file://${pad.replace(/\\/g, '/')}`
+    win.loadURL(fileUrl)
+  })
 }
 
 // ── Hulpfuncties ─────────────────────────────────────────────────────────────

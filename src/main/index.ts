@@ -3614,16 +3614,13 @@ function setupIpcHandlers() {
     const aantalPaginas = ext === 'pdf' ? await getPdfAantalPaginas(bronPad) : 1
 
     let previewBase64 = ''
-    // Skip preview generation voor PDFs — OCR werkt prima zonder
-    if (ext !== 'pdf') {
-      try {
-        const pngPad = await haalPngPad(bronPad, 1)
-        previewBase64 = fs.readFileSync(pngPad).toString('base64')
-      } catch (e) {
-        logSchrijven(`Scan preview mislukt: ${e}`)
-        // Niet falen, gewoon zonder preview doorgaan
-        previewBase64 = ''
-      }
+    try {
+      const pngPad = await haalPngPad(bronPad, 1)
+      previewBase64 = fs.readFileSync(pngPad).toString('base64')
+    } catch (e) {
+      logSchrijven(`Scan preview mislukt: ${e}`)
+      // Niet falen, gewoon zonder preview doorgaan
+      previewBase64 = ''
     }
 
     // Auto-fill via OCR
