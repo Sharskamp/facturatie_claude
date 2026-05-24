@@ -140,6 +140,9 @@ contextBridge.exposeInMainWorld('api', {
     delete: (id: string) => ipcRenderer.invoke('producten:delete', id),
     prijsHistorie: (productId: string) => ipcRenderer.invoke('producten:prijsHistorie', productId),
   },
+  scan: {
+    kiesEnScan: () => ipcRenderer.invoke('scan:kiesEnScan'),
+  },
   vasteActiva: {
     list: () => ipcRenderer.invoke('vasteActiva:list'),
     create: (data: unknown) => ipcRenderer.invoke('vasteActiva:create', data),

@@ -6,7 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Modal, ModalContent, ModalHeader, ModalTitle, ModalFooter } from "@/components/ui/modal";
-import { Loader2, Plus, CheckCircle, Trash2, FileText } from "lucide-react";
+import { Loader2, Plus, CheckCircle, Trash2, FileText, ScanLine } from "lucide-react";
 import { formatBedrag, formatDatum } from "@/lib/utils";
 
 interface Crediteur {
@@ -44,6 +44,7 @@ export default function CrediteurenPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [formulier, setFormulier] = useState(leegFormulier);
   const [opslaan, setOpslaan] = useState(false);
+  const [scanBezig, setScanBezig] = useState(false);
 
   const laadCrediteuren = useCallback(async () => {
     setLoading(true);
@@ -116,6 +117,38 @@ export default function CrediteurenPage() {
     laadCrediteuren();
   }
 
+  const scanFactuur = async () => {
+    setScanBezig(true);
+    try {
+      const res = await window.api.scan.kiesEnScan();
+      if (!res.succes) return;
+      const v = res.velden!;
+      let btwPercentage = 21;
+      if (v.subtotaal != null && v.btwBedrag != null && v.subtotaal > 0) {
+        const berekend = Math.round((v.btwBedrag / v.subtotaal) * 100);
+        if (berekend <= 2) btwPercentage = 0;
+        else if (berekend <= 14) btwPercentage = 9;
+        else btwPercentage = 21;
+      }
+      const factuurdatum = v.datum ?? new Date().toISOString().slice(0, 10);
+      const vervaldatum = v.vervaldatum ?? new Date(new Date(factuurdatum).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      setFormulier({
+        leverancier: v.klantNaam ?? '',
+        factuurNummer: v.nummer ?? '',
+        factuurdatum,
+        vervaldatum,
+        bedrag: v.subtotaal != null ? String(v.subtotaal) : (v.totaal != null ? String(v.totaal) : ''),
+        btwPercentage: String(btwPercentage),
+        notities: '',
+      });
+      setModalOpen(true);
+    } catch {
+      // stil falen
+    } finally {
+      setScanBezig(false);
+    }
+  };
+
   const totaalOpenstaand = crediteuren
     .filter((c) => c.status === "OPENSTAAND")
     .reduce((som, c) => som + c.bedrag + c.btwBedrag, 0);
@@ -135,9 +168,15 @@ export default function CrediteurenPage() {
         titel="Crediteuren"
         subtitel="Inkomende leveranciersfacturen"
         acties={
-          <Button onClick={() => setModalOpen(true)}>
-            <Plus className="h-4 w-4" /> Nieuwe factuur
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={scanFactuur} disabled={scanBezig}>
+              {scanBezig ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanLine className="h-4 w-4" />}
+              {scanBezig ? 'Scannen...' : 'Scan factuur'}
+            </Button>
+            <Button onClick={() => setModalOpen(true)}>
+              <Plus className="h-4 w-4" /> Nieuwe factuur
+            </Button>
+          </div>
         }
       />
 
