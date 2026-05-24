@@ -300,6 +300,26 @@ function detecteerBedragKolom(regels: SpatialRegel[]): { drempel: number } | nul
 }
 
 // ── Factuurvelden extraheren ─────────────────────────────────────────────────
+// Helper: zoek bedrag-label paar door spatiaal te kijken (label links, bedrag rechts)
+function vindLabelBedragPaar(spatialRegels: SpatialRegel[], label: RegExp): number | null {
+  for (let i = 0; i < spatialRegels.length; i++) {
+    const r = spatialRegels[i]
+    if (label.test(r.tekst)) {
+      // Bedrag kan op dezelfde regel (rechts) of volgende regel staan
+      let bedrag = laatsteBedragIn(r.tekst)
+      if (!bedrag && i + 1 < spatialRegels.length) {
+        const volgende = spatialRegels[i + 1]
+        // Alleen volgende regel als het duidelijk een bedrag-regel is
+        if (/^\s*[€$]?\s*[\d.,\-]+\s*$/.test(volgende.tekst.trim())) {
+          bedrag = laatsteBedragIn(volgende.tekst)
+        }
+      }
+      if (bedrag !== null && bedrag > 0) return bedrag
+    }
+  }
+  return null
+}
+
 export function extraheerFactuurVelden(
   woordRegels: OcrWoord[][],
   ruweTekst: string,
@@ -552,20 +572,8 @@ export function extraheerFactuurVelden(
   // ── Totaalbedrag ──────────────────────────────────────────────────────────
   let totaal: number | null = null
 
-  // Stap 1: zoek "Totaal te voldoen" label — bedrag kan op dezelfde of volgende regel staan
-  const totaalRegelIdx = spatialRegels.findIndex(r =>
-    /\b(?:totaal\s+te\s+voldoen|grand\s+total|te\s+betalen|amount\s+due|total\s+amount)\b/i.test(r.tekst)
-  )
-  if (totaalRegelIdx >= 0) {
-    totaal = laatsteBedragIn(spatialRegels[totaalRegelIdx].tekst)
-    // Bedrag staat soms op een aparte regel direct na het label
-    if (totaal === null || totaal === 0) {
-      for (let j = totaalRegelIdx + 1; j <= Math.min(totaalRegelIdx + 3, spatialRegels.length - 1); j++) {
-        const b = laatsteBedragIn(spatialRegels[j].tekst)
-        if (b !== null && b > 0) { totaal = b; break }
-      }
-    }
-  }
+  // Stap 1: Sterke label-zoek via spatiaal (label links, bedrag rechts)
+  totaal = vindLabelBedragPaar(spatialRegels, /\b(?:totaal\s+te\s+(?:voldoen|betalen)|grand\s+total|amount\s+due|total\s+amount)\b/i)
 
   // Stap 2: generieke "totaal"-regel
   if (totaal === null) {
@@ -600,39 +608,13 @@ export function extraheerFactuurVelden(
     btwBedrag = 0
     subtotaal = totaal
   } else {
-    // Zoek eerst Subtotaal label — dat is 80% betrouwbaarder
-    for (const r of tekstRegels) {
-      if (/\b(?:subtotaal|netto(?:bedrag)?|excl\.?\s*btw)\b/i.test(r) && /\d/.test(r)) {
-        subtotaal = laatsteBedragIn(r)
-        if (subtotaal !== null && subtotaal > 0) break
-      }
-    }
+    // Stap 1: Zoek Subtotaal via label-bedrag paar (sterker)
+    subtotaal = vindLabelBedragPaar(spatialRegels, /\b(?:subtotaal|netto(?:bedrag)?|excl\.?(\s*btw)?)\b/i)
 
-    // Zoek BTW-bedrag
-    let totaleBtw = 0
-    let btwGevonden = false
-    for (const r of tekstRegels) {
-      if (/\b(?:btw|omzetbelasting|vat|tax)\b/i.test(r) &&
-          !/excl|exclu|tarief|percentage/i.test(r) && /\d/.test(r)) {
-        const b = laatsteBedragIn(r)
-        if (b !== null && b >= 0 && b < (totaal ?? 999999)) {
-          totaleBtw += b
-          btwGevonden = true
-        }
-      }
-    }
-    if (btwGevonden) btwBedrag = Math.round(totaleBtw * 100) / 100
+    // Stap 2: Zoek BTW-bedrag via label
+    btwBedrag = vindLabelBedragPaar(spatialRegels, /\b(?:btw|omzetbelasting|vat|tax)\b/i)
 
-    // Zoek ook Korting (kan in groene tekst staan)
-    let kortingBedrag = 0
-    for (const r of tekstRegels) {
-      if (/\b(?:korting|discount|reduction)\b/i.test(r) && /\d/.test(r)) {
-        const k = laatsteBedragIn(r)
-        if (k !== null && k > 0) kortingBedrag = k
-      }
-    }
-
-    // Afleid ontbrekende waarden
+    // Stap 3: Afleid ontbrekende waarden
     if (totaal !== null && subtotaal !== null && btwBedrag === null)
       btwBedrag = Math.round((totaal - subtotaal) * 100) / 100
     else if (totaal !== null && btwBedrag !== null && subtotaal === null)
