@@ -10,6 +10,9 @@ import {
   Upload,
   Settings2,
   ScanLine,
+  ChevronLeft,
+  ChevronRight,
+  FileText,
 } from "lucide-react";
 import { ScanModal, type ScanFormulier } from "@/components/scan/ScanModal";
 import { Header } from "@/components/layout/header";
@@ -87,6 +90,15 @@ interface BonScanResult {
   };
 }
 
+interface BonPreviewResult {
+  succes: boolean;
+  previewBase64?: string;
+  aantalPaginas?: number;
+  pagina?: number;
+  isPdf?: boolean;
+  fout?: string;
+}
+
 const BTW_OPTIES = [
   { waarde: "21", label: "21% BTW" },
   { waarde: "9", label: "9% BTW" },
@@ -135,6 +147,122 @@ const ALLE_UITGAVEN_VELDEN = [
   { id: 'categorie', label: 'Categorie' },
   { id: 'btw', label: 'BTW' },
 ];
+
+function BonPreview({ pad }: { pad: string }) {
+  const [previewBase64, setPreviewBase64] = useState<string | null>(null);
+  const [aantalPaginas, setAantalPaginas] = useState(1);
+  const [huidigePagina, setHuidigePagina] = useState(1);
+  const [isPdf, setIsPdf] = useState(false);
+  const [laden, setLaden] = useState(true);
+  const [fout, setFout] = useState<string | null>(null);
+
+  useEffect(() => {
+    setHuidigePagina(1);
+  }, [pad]);
+
+  useEffect(() => {
+    let geannuleerd = false;
+
+    const laadPreview = async () => {
+      setLaden(true);
+      setFout(null);
+
+      try {
+        const res = await window.api.uitgaven.previewBon({ pad, pagina: huidigePagina }) as BonPreviewResult;
+        if (geannuleerd) return;
+
+        if (!res.succes || !res.previewBase64) {
+          setPreviewBase64(null);
+          setFout(res.fout ?? "Kon geen preview van deze bon laden.");
+          return;
+        }
+
+        setPreviewBase64(res.previewBase64);
+        setAantalPaginas(res.aantalPaginas ?? 1);
+        setIsPdf(Boolean(res.isPdf));
+
+        if (res.pagina && res.pagina !== huidigePagina) {
+          setHuidigePagina(res.pagina);
+        }
+      } catch {
+        if (!geannuleerd) {
+          setPreviewBase64(null);
+          setFout("Kon geen preview van deze bon laden.");
+        }
+      } finally {
+        if (!geannuleerd) {
+          setLaden(false);
+        }
+      }
+    };
+
+    laadPreview();
+
+    return () => {
+      geannuleerd = true;
+    };
+  }, [pad, huidigePagina]);
+
+  const bestandsnaam = pad.split(/[/\\]/).pop() ?? "Bon";
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white overflow-hidden">
+      <div className="flex items-center justify-between gap-3 border-b border-gray-200 bg-gray-50 px-4 py-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-gray-900">Preview</p>
+          <p className="truncate text-xs text-gray-500">{bestandsnaam}</p>
+        </div>
+        <Badge variant="info">{isPdf ? "PDF" : "Afbeelding"}</Badge>
+      </div>
+
+      <div className="bg-gray-100 p-4">
+        {laden ? (
+          <div className="flex min-h-64 items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 bg-white text-sm text-gray-500">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Preview laden...
+          </div>
+        ) : fout ? (
+          <div className="flex min-h-64 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-red-200 bg-red-50 px-4 text-center text-sm text-red-700">
+            <FileText className="h-5 w-5" />
+            <p>{fout}</p>
+          </div>
+        ) : previewBase64 ? (
+          <img
+            src={`data:image/png;base64,${previewBase64}`}
+            alt={`Preview van ${bestandsnaam}`}
+            className="max-h-[28rem] w-full rounded-lg border border-gray-200 bg-white object-contain shadow-sm"
+          />
+        ) : null}
+      </div>
+
+      {aantalPaginas > 1 && (
+        <div className="flex items-center justify-center gap-3 border-t border-gray-200 bg-white px-4 py-2">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            type="button"
+            disabled={laden || huidigePagina <= 1}
+            onClick={() => setHuidigePagina((pagina) => Math.max(1, pagina - 1))}
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <span className="text-xs text-gray-500">
+            Pagina {huidigePagina} van {aantalPaginas}
+          </span>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            type="button"
+            disabled={laden || huidigePagina >= aantalPaginas}
+            onClick={() => setHuidigePagina((pagina) => Math.min(aantalPaginas, pagina + 1))}
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function UitgavenPagina() {
   const [uitgaven, setUitgaven] = useState<Uitgave[]>([]);
@@ -709,7 +837,7 @@ export default function UitgavenPagina() {
           if (!o) resetFormulier();
         }}
       >
-        <ModalContent className="max-w-xl max-h-[90vh] overflow-y-auto">
+        <ModalContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <ModalHeader>
             <ModalTitle>{bewerkenId ? "Uitgave bewerken" : "Uitgave toevoegen"}</ModalTitle>
           </ModalHeader>
@@ -888,6 +1016,7 @@ export default function UitgavenPagina() {
                       </Button>
                     </div>
                   </div>
+                  <BonPreview pad={(huidigeBon || pendingBonPad)!} />
                 </div>
               ) : (
                 <div className="border-2 border-dashed border-gray-200 rounded-lg p-4 text-center">
@@ -921,7 +1050,7 @@ export default function UitgavenPagina() {
 
       {/* Detail Modal */}
       <Modal open={detailOpen} onOpenChange={(o) => { setDetailOpen(o); if (!o) setDetailItem(null); }}>
-        <ModalContent className="max-w-xl max-h-[90vh] overflow-y-auto">
+        <ModalContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           {detailItem && (() => {
             return (
               <>
@@ -983,17 +1112,20 @@ export default function UitgavenPagina() {
                   {detailItem.bonBestand && (
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1">Bon</p>
-                      <div className="flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2">
-                        <span className="text-sm text-gray-700 truncate">
-                          {detailItem.bonBestand.split(/[/\\]/).pop()}
-                        </span>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => window.api.uitgaven.openBon({ pad: detailItem.bonBestand! })}
-                        >
-                          Openen
-                        </Button>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2">
+                          <span className="text-sm text-gray-700 truncate">
+                            {detailItem.bonBestand.split(/[/\\]/).pop()}
+                          </span>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => window.api.uitgaven.openBon({ pad: detailItem.bonBestand! })}
+                          >
+                            Openen
+                          </Button>
+                        </div>
+                        <BonPreview pad={detailItem.bonBestand} />
                       </div>
                     </div>
                   )}

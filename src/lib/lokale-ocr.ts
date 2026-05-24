@@ -40,6 +40,14 @@ export interface OcrVelden {
   error?: string
 }
 
+export interface GenormaliseerdeTekstBox {
+  tekst: string
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 // ── PDF tekstextractie via pdfjs-dist (CJS legacy build) ─────────────────────
 
 /** Extraheer tekst met posities uit een PDF via PDF.js — werkt voor gedrukte/programmatische PDFs */
@@ -289,8 +297,24 @@ export async function uitsnedeTekstVanPdf(
     const wn = itemW / pdfW
     const hn = itemH / pdfH
 
-    // Overlap-check met de geselecteerde box
-    if (xn < x + w && xn + wn > x && yn < y + h && yn + hn > y) {
+    const centrumX = xn + (wn / 2)
+    const centrumY = yn + (hn / 2)
+    const centrumBinnenBox =
+      centrumX >= x &&
+      centrumX <= x + w &&
+      centrumY >= y &&
+      centrumY <= y + h
+
+    const overlapW = Math.max(0, Math.min(xn + wn, x + w) - Math.max(xn, x))
+    const overlapH = Math.max(0, Math.min(yn + hn, y + h) - Math.max(yn, y))
+    const overlapOppervlak = overlapW * overlapH
+    const woordOppervlak = wn * hn
+    const overlapRatio = woordOppervlak > 0 ? overlapOppervlak / woordOppervlak : 0
+
+    // Voor handmatige selectie willen we streng zijn:
+    // neem woorden alleen mee als hun middelpunt binnen de box valt,
+    // of bijna het hele woord in de box ligt.
+    if (centrumBinnenBox || overlapRatio >= 0.85) {
       gevonden.push({ tekst: item.str.trim(), xn, yn })
     }
   }
@@ -298,6 +322,71 @@ export async function uitsnedeTekstVanPdf(
   // Sorteer: boven → onder, dan links → rechts
   gevonden.sort((a, b) => Math.abs(a.yn - b.yn) > 0.005 ? a.yn - b.yn : a.xn - b.xn)
   return gevonden.map(i => i.tekst).join(' ').trim()
+}
+
+export async function uitsnedeTekstMetBoxesVanPdf(
+  pad: string, paginaIndex: number,
+  x: number, y: number, w: number, h: number,
+): Promise<{ tekst: string; boxes: GenormaliseerdeTekstBox[] }> {
+  const pdfjsLib = laadPdfJsVoorTekst()
+  const buffer = fs.readFileSync(pad)
+  const doc = await pdfjsLib.getDocument({
+    data: new Uint8Array(buffer),
+    useSystemFonts: true,
+    disableFontFace: true,
+  }).promise
+
+  const page = await (doc as PdfDoc).getPage(paginaIndex + 1)
+  const viewport = page.getViewport({ scale: 1.0 })
+  const pdfW = viewport.width
+  const pdfH = viewport.height
+
+  const content = await page.getTextContent({ normalizeWhitespace: false })
+  await (doc as PdfDoc).destroy()
+
+  const gevonden: GenormaliseerdeTekstBox[] = []
+
+  for (const raw of content.items) {
+    const item = raw as { str: string; transform: number[]; width: number; height: number }
+    if (!item.str?.trim()) continue
+
+    const itemH = Math.max(4, Math.abs(item.transform[3]) || Math.abs(item.height) || 10)
+    const itemW = Math.max(4, Math.abs(item.width) || item.str.length * 6)
+    const screenX = item.transform[4]
+    const screenY = pdfH - item.transform[5] - itemH
+
+    const xn = screenX / pdfW
+    const yn = screenY / pdfH
+    const wn = itemW / pdfW
+    const hn = itemH / pdfH
+
+    const centrumX = xn + (wn / 2)
+    const centrumY = yn + (hn / 2)
+    const centrumBinnenBox =
+      centrumX >= x &&
+      centrumX <= x + w &&
+      centrumY >= y &&
+      centrumY <= y + h
+
+    const overlapW = Math.max(0, Math.min(xn + wn, x + w) - Math.max(xn, x))
+    const overlapH = Math.max(0, Math.min(yn + hn, y + h) - Math.max(yn, y))
+    const overlapOppervlak = overlapW * overlapH
+    const woordOppervlak = wn * hn
+    const overlapRatio = woordOppervlak > 0 ? overlapOppervlak / woordOppervlak : 0
+
+    if (centrumBinnenBox || overlapRatio >= 0.85) {
+      gevonden.push({
+        tekst: item.str.trim(),
+        x: xn,
+        y: yn,
+        width: wn,
+        height: hn,
+      })
+    }
+  }
+
+  gevonden.sort((a, b) => Math.abs(a.y - b.y) > 0.005 ? a.y - b.y : a.x - b.x)
+  return { tekst: gevonden.map((i) => i.tekst).join(' ').trim(), boxes: gevonden }
 }
 
 // ── Detecteer en crop naar de witte PDF-pagina binnen de Chromium viewer ────────
@@ -318,23 +407,103 @@ function cropNaarPdfPagina(img: {
     return bmp[i] > 230 && bmp[i + 1] > 230 && bmp[i + 2] > 230
   }
 
-  // Gebruik het horizontale midden voor verticale scan (buiten de zijbalk)
-  const cx = imgW >> 1
+  const stapX = Math.max(1, Math.floor(imgW / 200))
+  const stapY = Math.max(1, Math.floor(imgH / 200))
+  const minimaleRijRatio = 0.7
+  const minimaleKolomRatio = 0.85
+  const benodigdeRijen = Math.max(3, Math.floor(12 / stapY))
+  const benodigdeKolommen = Math.max(3, Math.floor(12 / stapX))
+
+  const rijRatio = (y: number): number => {
+    let wit = 0
+    let totaal = 0
+    for (let x = 0; x < imgW; x += stapX) {
+      totaal++
+      if (isWit(x, y)) wit++
+    }
+    return totaal > 0 ? wit / totaal : 0
+  }
+
+  const kolomRatio = (x: number, yTop: number, yBot: number): number => {
+    let wit = 0
+    let totaal = 0
+    for (let y = yTop; y <= yBot; y += stapY) {
+      totaal++
+      if (isWit(x, y)) wit++
+    }
+    return totaal > 0 ? wit / totaal : 0
+  }
 
   let yTop = 0
-  for (let y = 0; y < imgH; y++) { if (isWit(cx, y)) { yTop = y; break } }
+  for (let y = 0; y < imgH - benodigdeRijen * stapY; y += stapY) {
+    let aaneengesloten = 0
+    for (let yy = y; yy < imgH; yy += stapY) {
+      if (rijRatio(yy) >= minimaleRijRatio) {
+        aaneengesloten++
+        if (aaneengesloten >= benodigdeRijen) {
+          yTop = y
+          break
+        }
+      } else {
+        aaneengesloten = 0
+      }
+    }
+    if (yTop !== 0 || rijRatio(0) >= minimaleRijRatio) break
+  }
 
   let yBot = imgH - 1
-  for (let y = imgH - 1; y >= 0; y--) { if (isWit(cx, y)) { yBot = y; break } }
+  for (let y = imgH - 1; y >= benodigdeRijen * stapY; y -= stapY) {
+    let aaneengesloten = 0
+    for (let yy = y; yy >= 0; yy -= stapY) {
+      if (rijRatio(yy) >= minimaleRijRatio) {
+        aaneengesloten++
+        if (aaneengesloten >= benodigdeRijen) {
+          yBot = y
+          break
+        }
+      } else {
+        aaneengesloten = 0
+      }
+    }
+    if (yBot !== imgH - 1 || rijRatio(imgH - 1) >= minimaleRijRatio) break
+  }
 
-  // Gebruik het verticale midden van de gevonden content voor horizontale scan
-  const cy = (yTop + yBot) >> 1
+  const scanTop = Math.max(0, yTop + Math.floor((yBot - yTop) * 0.2))
+  const scanBot = Math.min(imgH - 1, yBot - Math.floor((yBot - yTop) * 0.2))
 
   let xLeft = 0
-  for (let x = 0; x < imgW; x++) { if (isWit(x, cy)) { xLeft = x; break } }
+  for (let x = 0; x < imgW - benodigdeKolommen * stapX; x += stapX) {
+    let aaneengesloten = 0
+    for (let xx = x; xx < imgW; xx += stapX) {
+      if (kolomRatio(xx, scanTop, scanBot) >= minimaleKolomRatio) {
+        aaneengesloten++
+        if (aaneengesloten >= benodigdeKolommen) {
+          xLeft = x
+          break
+        }
+      } else {
+        aaneengesloten = 0
+      }
+    }
+    if (xLeft !== 0 || kolomRatio(0, scanTop, scanBot) >= minimaleKolomRatio) break
+  }
 
   let xRight = imgW - 1
-  for (let x = imgW - 1; x >= 0; x--) { if (isWit(x, cy)) { xRight = x; break } }
+  for (let x = imgW - 1; x >= benodigdeKolommen * stapX; x -= stapX) {
+    let aaneengesloten = 0
+    for (let xx = x; xx >= 0; xx -= stapX) {
+      if (kolomRatio(xx, scanTop, scanBot) >= minimaleKolomRatio) {
+        aaneengesloten++
+        if (aaneengesloten >= benodigdeKolommen) {
+          xRight = x
+          break
+        }
+      } else {
+        aaneengesloten = 0
+      }
+    }
+    if (xRight !== imgW - 1 || kolomRatio(imgW - 1, scanTop, scanBot) >= minimaleKolomRatio) break
+  }
 
   const w = xRight - xLeft + 1
   const h = yBot - yTop + 1
@@ -348,6 +517,125 @@ function cropNaarPdfPagina(img: {
   }
 
   return img.crop({ x: xLeft, y: yTop, width: w, height: h }).toPNG()
+}
+
+export function detecteerPdfPaginaRect(img: {
+  getSize(): { width: number; height: number }
+  getBitmap(): Buffer
+}): { x: number; y: number; width: number; height: number } | null {
+  const { width: imgW, height: imgH } = img.getSize()
+  const bmp = img.getBitmap()
+
+  const isWit = (x: number, y: number): boolean => {
+    const i = (y * imgW + x) * 4
+    return bmp[i] > 230 && bmp[i + 1] > 230 && bmp[i + 2] > 230
+  }
+
+  const stapX = Math.max(1, Math.floor(imgW / 200))
+  const stapY = Math.max(1, Math.floor(imgH / 200))
+  const minimaleRijRatio = 0.7
+  const minimaleKolomRatio = 0.85
+  const benodigdeRijen = Math.max(3, Math.floor(12 / stapY))
+  const benodigdeKolommen = Math.max(3, Math.floor(12 / stapX))
+
+  const rijRatio = (y: number): number => {
+    let wit = 0
+    let totaal = 0
+    for (let x = 0; x < imgW; x += stapX) {
+      totaal++
+      if (isWit(x, y)) wit++
+    }
+    return totaal > 0 ? wit / totaal : 0
+  }
+
+  const kolomRatio = (x: number, yTop: number, yBot: number): number => {
+    let wit = 0
+    let totaal = 0
+    for (let y = yTop; y <= yBot; y += stapY) {
+      totaal++
+      if (isWit(x, y)) wit++
+    }
+    return totaal > 0 ? wit / totaal : 0
+  }
+
+  let yTop = 0
+  for (let y = 0; y < imgH - benodigdeRijen * stapY; y += stapY) {
+    let aaneengesloten = 0
+    for (let yy = y; yy < imgH; yy += stapY) {
+      if (rijRatio(yy) >= minimaleRijRatio) {
+        aaneengesloten++
+        if (aaneengesloten >= benodigdeRijen) {
+          yTop = y
+          break
+        }
+      } else {
+        aaneengesloten = 0
+      }
+    }
+    if (yTop !== 0 || rijRatio(0) >= minimaleRijRatio) break
+  }
+
+  let yBot = imgH - 1
+  for (let y = imgH - 1; y >= benodigdeRijen * stapY; y -= stapY) {
+    let aaneengesloten = 0
+    for (let yy = y; yy >= 0; yy -= stapY) {
+      if (rijRatio(yy) >= minimaleRijRatio) {
+        aaneengesloten++
+        if (aaneengesloten >= benodigdeRijen) {
+          yBot = y
+          break
+        }
+      } else {
+        aaneengesloten = 0
+      }
+    }
+    if (yBot !== imgH - 1 || rijRatio(imgH - 1) >= minimaleRijRatio) break
+  }
+
+  const scanTop = Math.max(0, yTop + Math.floor((yBot - yTop) * 0.2))
+  const scanBot = Math.min(imgH - 1, yBot - Math.floor((yBot - yTop) * 0.2))
+
+  let xLeft = 0
+  for (let x = 0; x < imgW - benodigdeKolommen * stapX; x += stapX) {
+    let aaneengesloten = 0
+    for (let xx = x; xx < imgW; xx += stapX) {
+      if (kolomRatio(xx, scanTop, scanBot) >= minimaleKolomRatio) {
+        aaneengesloten++
+        if (aaneengesloten >= benodigdeKolommen) {
+          xLeft = x
+          break
+        }
+      } else {
+        aaneengesloten = 0
+      }
+    }
+    if (xLeft !== 0 || kolomRatio(0, scanTop, scanBot) >= minimaleKolomRatio) break
+  }
+
+  let xRight = imgW - 1
+  for (let x = imgW - 1; x >= benodigdeKolommen * stapX; x -= stapX) {
+    let aaneengesloten = 0
+    for (let xx = x; xx >= 0; xx -= stapX) {
+      if (kolomRatio(xx, scanTop, scanBot) >= minimaleKolomRatio) {
+        aaneengesloten++
+        if (aaneengesloten >= benodigdeKolommen) {
+          xRight = x
+          break
+        }
+      } else {
+        aaneengesloten = 0
+      }
+    }
+    if (xRight !== imgW - 1 || kolomRatio(imgW - 1, scanTop, scanBot) >= minimaleKolomRatio) break
+  }
+
+  const width = xRight - xLeft + 1
+  const height = yBot - yTop + 1
+  if (width < imgW * 0.3 || height < imgH * 0.3) {
+    return null
+  }
+
+  return { x: xLeft, y: yTop, width, height }
 }
 
 // ── PDF → PNG via Electron offscreen BrowserWindow ───────────────────────────

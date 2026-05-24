@@ -10,7 +10,9 @@ import * as net from 'net'
 import { DOMParser } from '@xmldom/xmldom'
 import { verstuurEmail, maakFactuurEmailHtml } from '../lib/email'
 import { haalAgendaAfspraken, haalKalenderLijst, maakGoogleAfspraak, wijzigGoogleAfspraak, verwijderGoogleAfspraak, maakGoogleAuthUrl, wisselCodeVoorTokens, vernieuwAccessToken } from '../lib/google-calendar'
-import { scanBestandLokaal, pdfPaginaNaarPng, renderPdfPagina, uitsnedeTekstVanPdf } from '../lib/lokale-ocr'
+import { scanBestandLokaal, pdfPaginaNaarPng, uitsnedeTekstMetBoxesVanPdf, detecteerPdfPaginaRect } from '../lib/lokale-ocr'
+import { ocrAfbeeldingWindows } from '../lib/windows-ocr'
+import { maakOcrAfbeeldingVarianten, scoreOcrTekst } from '../lib/ocr-image-variants'
 import { ExpenseReceiptScanService, HistoricalInvoiceImportService } from '../services/invoice'
 import { autoUpdater } from 'electron-updater'
 import * as os from 'os'
@@ -3482,6 +3484,30 @@ function setupIpcHandlers() {
     return { succes: true }
   })
 
+  ipcMain.handle('uitgaven:previewBon', async (_, { pad, pagina = 1 }: { pad: string; pagina?: number }) => {
+    try {
+      if (!pad || !fs.existsSync(pad)) {
+        return { succes: false, fout: 'Bonbestand niet gevonden.' }
+      }
+
+      const ext = extname(pad).toLowerCase().slice(1)
+      const aantalPaginas = ext === 'pdf' ? await getPdfAantalPaginas(pad) : 1
+      const veiligePagina = Math.min(Math.max(pagina, 1), aantalPaginas)
+      const pngPad = await haalPngPad(pad, veiligePagina)
+      const previewBase64 = fs.readFileSync(pngPad).toString('base64')
+
+      return {
+        succes: true,
+        previewBase64,
+        aantalPaginas,
+        pagina: veiligePagina,
+        isPdf: ext === 'pdf',
+      }
+    } catch (e) {
+      return { succes: false, fout: String(e) }
+    }
+  })
+
   ipcMain.handle('uitgaven:scanBon', async (_, { pad }: { pad: string }) => {
     if (!pad || !fs.existsSync(pad)) {
       return { succes: false, fout: 'Bonbestand niet gevonden.' }
@@ -3590,6 +3616,22 @@ function setupIpcHandlers() {
     return pngPad
   }
 
+  async function maakBestandPreview(bestandPad: string, pagina: number) {
+    const ext = extname(bestandPad).toLowerCase().slice(1)
+    const aantalPaginas = ext === 'pdf' ? await getPdfAantalPaginas(bestandPad) : 1
+    const veiligePagina = Math.min(Math.max(pagina, 1), aantalPaginas)
+    const pngPad = await haalPngPad(bestandPad, veiligePagina)
+    const previewBase64 = fs.readFileSync(pngPad).toString('base64')
+
+    return {
+      succes: true,
+      previewBase64,
+      aantalPaginas,
+      pagina: veiligePagina,
+      isPdf: ext === 'pdf',
+    }
+  }
+
   ipcMain.handle('scan:openEnPreview', async () => {
     const venster = BrowserWindow.getFocusedWindow() ?? mainWindow
     const result = await dialog.showOpenDialog(venster!, {
@@ -3611,12 +3653,12 @@ function setupIpcHandlers() {
 
     scanCacheOpruimen()
 
-    const aantalPaginas = ext === 'pdf' ? await getPdfAantalPaginas(bronPad) : 1
-
     let previewBase64 = ''
+    let aantalPaginas = 1
     try {
-      const pngPad = await haalPngPad(bronPad, 1)
-      previewBase64 = fs.readFileSync(pngPad).toString('base64')
+      const preview = await maakBestandPreview(bronPad, 1)
+      previewBase64 = preview.previewBase64
+      aantalPaginas = preview.aantalPaginas
     } catch (e) {
       logSchrijven(`Scan preview mislukt: ${e}`)
       // Niet falen, gewoon zonder preview doorgaan
@@ -3692,6 +3734,308 @@ function setupIpcHandlers() {
   })
 
   // ── Producten (catalogus) ──
+  ipcMain.removeHandler('scan:ocrUitsnede')
+  ipcMain.handle('scan:ocrUitsnede', async (_, {
+    bestandPad, pagina, x, y, breedte, hoogte
+  }: { bestandPad: string; pagina: number; x: number; y: number; breedte: number; hoogte: number }) => {
+    console.log(`\n[OCR-UITSNEDE] Nieuwe aanvraag`)
+    console.log(`  Bestand : ${bestandPad}`)
+    console.log(`  Pagina  : ${pagina}`)
+    console.log(`  Box (%) : x=${(x * 100).toFixed(1)}% y=${(y * 100).toFixed(1)}% w=${(breedte * 100).toFixed(1)}% h=${(hoogte * 100).toFixed(1)}%`)
+    try {
+      const pngPad = await haalPngPad(bestandPad, pagina)
+      const fullImg = nativeImage.createFromPath(pngPad)
+      const { width: imgW, height: imgH } = fullImg.getSize()
+      console.log(`  Afbeelding: ${imgW}x${imgH}px`)
+
+      const cropX = Math.max(0, Math.round(x * imgW))
+      const cropY = Math.max(0, Math.round(y * imgH))
+      const cropW = Math.max(4, Math.min(Math.round(breedte * imgW), imgW - cropX))
+      const cropH = Math.max(4, Math.min(Math.round(hoogte * imgH), imgH - cropY))
+      console.log(`  Crop (px): x=${cropX} y=${cropY} w=${cropW} h=${cropH}`)
+
+      const cropped = fullImg.crop({ x: cropX, y: cropY, width: cropW, height: cropH })
+      const debugPreviewBase64 = cropped.toPNG().toString('base64')
+      const ext = extname(bestandPad).toLowerCase().slice(1)
+
+      const selectieRect = { x: cropX, y: cropY, width: cropW, height: cropH }
+      const woordValtBinnenSelectie = (woord: { x: number; y: number; width: number; height: number }) => {
+        const middenX = woord.x + (woord.width / 2)
+        const middenY = woord.y + (woord.height / 2)
+        const middenBinnen =
+          middenX >= selectieRect.x &&
+          middenX <= selectieRect.x + selectieRect.width &&
+          middenY >= selectieRect.y &&
+          middenY <= selectieRect.y + selectieRect.height
+
+        if (middenBinnen) return true
+
+        const overlapLinks = Math.max(selectieRect.x, woord.x)
+        const overlapBoven = Math.max(selectieRect.y, woord.y)
+        const overlapRechts = Math.min(selectieRect.x + selectieRect.width, woord.x + woord.width)
+        const overlapOnder = Math.min(selectieRect.y + selectieRect.height, woord.y + woord.height)
+
+        if (overlapRechts <= overlapLinks || overlapOnder <= overlapBoven) return false
+
+        const overlapOppervlak = (overlapRechts - overlapLinks) * (overlapOnder - overlapBoven)
+        const woordOppervlak = Math.max(woord.width * woord.height, 1)
+        return (overlapOppervlak / woordOppervlak) >= 0.55
+      }
+
+      if (ext !== 'pdf') {
+        try {
+          const cropPadding = Math.max(4, Math.min(16, Math.round(Math.min(cropW, cropH) * 0.1)))
+          const paddedX = Math.max(0, cropX - cropPadding)
+          const paddedY = Math.max(0, cropY - cropPadding)
+          const paddedW = Math.min(imgW - paddedX, cropW + (cropPadding * 2))
+          const paddedH = Math.min(imgH - paddedY, cropH + (cropPadding * 2))
+          const paddedCrop = fullImg.crop({ x: paddedX, y: paddedY, width: paddedW, height: paddedH })
+
+          const cropVarianten = await maakOcrAfbeeldingVarianten(
+            paddedCrop,
+            Math.max(320, Math.min(520, Math.round(Math.max(cropH, 1) * 5)))
+          )
+
+          let besteKandidaat: null | {
+            tekst: string
+            score: number
+            bron: 'windows_ocr'
+            matchBoxes: Array<{ tekst: string; x: number; y: number; width: number; height: number }>
+          } = null
+
+          const evalueerWindowsVariant = async (
+            variantNaam: string,
+            bronX: number,
+            bronY: number,
+            variantImage: Electron.NativeImage,
+            scaleFactor: number
+          ) => {
+            const tmpPad = join(app.getPath('temp'), `scan_windows_ocr_${variantNaam}_${Date.now()}.png`)
+            fs.writeFileSync(tmpPad, variantImage.toPNG())
+
+            try {
+              const resultaat = await ocrAfbeeldingWindows(tmpPad)
+              const matchedWoorden = resultaat.woorden
+                .map((woord) => ({
+                  tekst: woord.tekst,
+                  x: bronX + (woord.box.x / scaleFactor),
+                  y: bronY + (woord.box.y / scaleFactor),
+                  width: woord.box.width / scaleFactor,
+                  height: woord.box.height / scaleFactor,
+                }))
+                .filter((woord) => woordValtBinnenSelectie(woord))
+
+              const tekst = matchedWoorden
+                .sort((a, b) => {
+                  const deltaY = Math.abs(a.y - b.y)
+                  if (deltaY > Math.max(a.height, b.height) * 0.6) return a.y - b.y
+                  return a.x - b.x
+                })
+                .map((woord) => woord.tekst.trim())
+                .filter(Boolean)
+                .join(' ')
+                .trim()
+
+              const score = scoreOcrTekst(tekst)
+              console.log(`  Windows OCR (${variantNaam}): ${JSON.stringify(tekst)} | score=${score}`)
+
+              if (!tekst) return
+
+              const matchBoxes = matchedWoorden.map((woord) => ({
+                tekst: woord.tekst,
+                x: woord.x / imgW,
+                y: woord.y / imgH,
+                width: woord.width / imgW,
+                height: woord.height / imgH,
+              }))
+
+              if (!besteKandidaat || score > besteKandidaat.score) {
+                besteKandidaat = {
+                  tekst,
+                  score,
+                  bron: 'windows_ocr',
+                  matchBoxes,
+                }
+              }
+            } finally {
+              try { fs.unlinkSync(tmpPad) } catch { /* */ }
+            }
+          }
+
+          for (const variant of cropVarianten) {
+            await evalueerWindowsVariant(`crop_${variant.naam}`, paddedX, paddedY, variant.image, variant.scaleFactor)
+          }
+
+          if (!besteKandidaat) {
+            const gewensteSchaal = Math.max(1, Math.min(4, Math.ceil(72 / Math.max(cropH, 1))))
+            const minKorteZijde = Math.min(
+              2200,
+              Math.max(900, Math.round(Math.min(imgW, imgH) * gewensteSchaal))
+            )
+            const beeldVarianten = await maakOcrAfbeeldingVarianten(fullImg, minKorteZijde)
+            for (const variant of beeldVarianten) {
+              await evalueerWindowsVariant(`full_${variant.naam}`, 0, 0, variant.image, variant.scaleFactor)
+            }
+          }
+
+          if (besteKandidaat) {
+            return {
+              succes: true,
+              tekst: besteKandidaat.tekst,
+              bron: besteKandidaat.bron,
+              debugPreviewBase64,
+              matchBoxes: besteKandidaat.matchBoxes,
+            }
+          }
+        } catch (imageOcrFout) {
+          console.warn('  Afbeelding OCR-verbetering fallback nodig:', imageOcrFout)
+        }
+      }
+
+      try {
+        const padding = Math.max(2, Math.min(6, Math.round(Math.min(cropW, cropH) * 0.04)))
+        const paddedX = Math.max(0, cropX - padding)
+        const paddedY = Math.max(0, cropY - padding)
+        const paddedW = Math.min(imgW - paddedX, cropW + (padding * 2))
+        const paddedH = Math.min(imgH - paddedY, cropH + (padding * 2))
+        const paddedCrop = fullImg.crop({ x: paddedX, y: paddedY, width: paddedW, height: paddedH })
+
+        const minDoelGrootte = 260
+        const schaalFactor = Math.max(1, Math.min(6, Math.ceil(minDoelGrootte / Math.max(Math.min(paddedW, paddedH), 1))))
+        const windowsInput = schaalFactor > 1
+          ? paddedCrop.resize({ width: paddedW * schaalFactor, height: paddedH * schaalFactor, quality: 'best' })
+          : paddedCrop
+
+        const windowsTmpPad = join(app.getPath('temp'), `scan_windows_ocr_${Date.now()}.png`)
+        fs.writeFileSync(windowsTmpPad, windowsInput.toPNG())
+
+        try {
+          const resultaat = await ocrAfbeeldingWindows(windowsTmpPad)
+          const matchedWoorden = resultaat.woorden
+            .map((woord) => ({
+              tekst: woord.tekst,
+              x: paddedX + (woord.box.x / schaalFactor),
+              y: paddedY + (woord.box.y / schaalFactor),
+              width: woord.box.width / schaalFactor,
+              height: woord.box.height / schaalFactor,
+            }))
+            .filter((woord) => woordValtBinnenSelectie(woord))
+
+          const tekst = matchedWoorden
+            .map((woord) => woord.tekst.trim())
+            .filter(Boolean)
+            .join(' ')
+            .trim()
+
+          const matchBoxes = matchedWoorden.map((woord) => ({
+            tekst: woord.tekst,
+            x: woord.x / imgW,
+            y: woord.y / imgH,
+            width: woord.width / imgW,
+            height: woord.height / imgH,
+          }))
+
+          console.log(`  Windows OCR resultaat: ${JSON.stringify(resultaat.tekst)}`)
+          console.log(`  Windows OCR selectie: ${JSON.stringify(tekst)}`)
+
+          if (tekst) {
+            return { succes: true, tekst, bron: 'windows_ocr', debugPreviewBase64, matchBoxes }
+          }
+        } finally {
+          try { fs.unlinkSync(windowsTmpPad) } catch { /* */ }
+        }
+      } catch (windowsOcrFout) {
+        console.warn('  Windows OCR fallback nodig:', windowsOcrFout)
+      }
+
+      if (ext === 'pdf') {
+        const paginaRect = detecteerPdfPaginaRect(fullImg)
+        if (paginaRect) {
+          const selectieLinks = x * imgW
+          const selectieBoven = y * imgH
+          const selectieRechts = (x + breedte) * imgW
+          const selectieOnder = (y + hoogte) * imgH
+
+          const overlapLinks = Math.max(selectieLinks, paginaRect.x)
+          const overlapBoven = Math.max(selectieBoven, paginaRect.y)
+          const overlapRechts = Math.min(selectieRechts, paginaRect.x + paginaRect.width)
+          const overlapOnder = Math.min(selectieOnder, paginaRect.y + paginaRect.height)
+
+          if (overlapRechts > overlapLinks && overlapOnder > overlapBoven) {
+            console.log(`  PDF tekstlaag-extractie...`)
+            const basisX = (overlapLinks - paginaRect.x) / paginaRect.width
+            const basisY = (overlapBoven - paginaRect.y) / paginaRect.height
+            const basisW = (overlapRechts - overlapLinks) / paginaRect.width
+            const basisH = (overlapOnder - overlapBoven) / paginaRect.height
+
+            for (const marge of [0.001, 0.003, 0.006, 0.01, 0.016]) {
+              const selectX = Math.max(0, basisX - marge)
+              const selectY = Math.max(0, basisY - marge)
+              const selectW = Math.min(1 - selectX, basisW + marge * 2)
+              const selectH = Math.min(1 - selectY, basisH + marge * 2)
+
+              const pdfSelectie = await uitsnedeTekstMetBoxesVanPdf(bestandPad, pagina - 1, selectX, selectY, selectW, selectH)
+              console.log(`  Tekstlaag resultaat (marge ${marge.toFixed(3)}): ${JSON.stringify(pdfSelectie.tekst)}`)
+
+              if (pdfSelectie.tekst.trim()) {
+                const matchBoxes = pdfSelectie.boxes.map((box) => ({
+                  tekst: box.tekst,
+                  x: (paginaRect.x + (box.x * paginaRect.width)) / imgW,
+                  y: (paginaRect.y + (box.y * paginaRect.height)) / imgH,
+                  width: (box.width * paginaRect.width) / imgW,
+                  height: (box.height * paginaRect.height) / imgH,
+                }))
+
+                return {
+                  succes: true,
+                  tekst: pdfSelectie.tekst.trim(),
+                  bron: 'pdf_textlaag',
+                  debugPreviewBase64,
+                  matchBoxes,
+                }
+              }
+            }
+          }
+        }
+
+        console.log(`  Geen bruikbare tekstlaag gevonden, fallback naar OCR op preview-PNG`)
+      }
+
+      // Voor handmatige selectie gebruiken we primair exact dezelfde crop als in de preview.
+      // Bij kleine selecties schalen we op zodat OCR minder snel rare tekens teruggeeft.
+      const minDoelGrootte = 220
+      const schaalFactor = Math.max(1, Math.min(4, Math.ceil(minDoelGrootte / Math.max(Math.min(cropW, cropH), 1))))
+      const ocrInput = schaalFactor > 1
+        ? cropped.resize({ width: cropW * schaalFactor, height: cropH * schaalFactor, quality: 'best' })
+        : cropped
+
+      const tmpPad = join(app.getPath('temp'), `scan_uitsnede_${Date.now()}.png`)
+      fs.writeFileSync(tmpPad, ocrInput.toPNG())
+
+      const { ocrAfbeelding } = await import('../lib/paddle-ocr')
+      const resultaat = await ocrAfbeelding(tmpPad)
+      try { fs.unlinkSync(tmpPad) } catch { /* */ }
+
+      const tekst = resultaat.tekst?.trim() ?? ''
+      const matchBoxes = resultaat.woorden.map((woord) => ({
+        tekst: woord.tekst,
+        x: (cropX + (woord.box.x / schaalFactor)) / imgW,
+        y: (cropY + (woord.box.y / schaalFactor)) / imgH,
+        width: (woord.box.width / schaalFactor) / imgW,
+        height: (woord.box.height / schaalFactor) / imgH,
+      }))
+      console.log(`  OCR resultaat: ${JSON.stringify(tekst)}`)
+      if (tekst) {
+        return { succes: true, tekst, bron: 'ocr_preview', debugPreviewBase64, matchBoxes }
+      }
+
+      return { succes: true, tekst: '', bron: 'ocr_preview', debugPreviewBase64, matchBoxes: [] }
+    } catch (e) {
+      console.error(`  FOUT in scan:ocrUitsnede:`, e)
+      return { succes: false, tekst: '', fout: String(e) }
+    }
+  })
+
   ipcMain.handle('producten:list', async () => {
     return prisma.product.findMany({ where: { actief: true }, orderBy: { naam: 'asc' } })
   })

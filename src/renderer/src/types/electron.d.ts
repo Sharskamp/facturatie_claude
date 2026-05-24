@@ -61,6 +61,7 @@ interface ElectronAPI {
     uploadBon: (data: unknown) => Promise<unknown>
     kiesBon: () => Promise<unknown>
     openBon: (data: unknown) => Promise<unknown>
+    previewBon: (data: { pad: string; pagina?: number }) => Promise<{ succes: boolean; previewBase64?: string; aantalPaginas?: number; pagina?: number; isPdf?: boolean; fout?: string }>
     scanBon: (data: unknown) => Promise<unknown>
   }
   categorien: {
@@ -141,7 +142,7 @@ interface ElectronAPI {
       fout?: string
     }>
     renderPagina: (data: { bestandPad: string; pagina: number }) => Promise<{ succes: boolean; previewBase64?: string; fout?: string }>
-    ocrUitsnede: (data: { bestandPad: string; pagina: number; x: number; y: number; breedte: number; hoogte: number }) => Promise<{ succes: boolean; tekst: string; fout?: string }>
+    ocrUitsnede: (data: { bestandPad: string; pagina: number; x: number; y: number; breedte: number; hoogte: number }) => Promise<{ succes: boolean; tekst: string; bron?: 'windows_ocr' | 'pdf_textlaag' | 'ocr_preview'; debugPreviewBase64?: string; matchBoxes?: Array<{ tekst: string; x: number; y: number; width: number; height: number }>; fout?: string }>
   }
   vasteActiva: {
     list: () => Promise<unknown[]>
