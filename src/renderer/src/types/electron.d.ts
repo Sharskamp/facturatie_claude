@@ -29,6 +29,13 @@ interface ElectronAPI {
     maakCreditnota: (id: string) => Promise<string>
     stuurHerinneringen: () => Promise<unknown>
     stuurHerinnering: (id: string) => Promise<{ succes: boolean }>
+    importeerHistorisch: (data: unknown) => Promise<unknown>
+    kiesBestanden: () => Promise<Array<{ pad: string; naam: string }>>
+    scanPdf: (filePath: string) => Promise<unknown>
+    scanPdfLokaal: (filePath: string) => Promise<unknown>
+    startHistorischeImport: (filePaths: string[]) => Promise<unknown>
+    historischeImportStatus: (jobId: string) => Promise<unknown>
+    retryHistorischeImportItem: (jobId: string, itemId: string) => Promise<unknown>
     openBronBestand: (id: string) => Promise<{ succes: boolean; fout?: string }>
     planVerzending: (id: string, geplandOp: string | null) => Promise<{ succes: boolean }>
   }
@@ -52,7 +59,9 @@ interface ElectronAPI {
     update: (id: string, data: unknown) => Promise<unknown>
     delete: (id: string) => Promise<{ succes: boolean }>
     uploadBon: (data: unknown) => Promise<unknown>
+    kiesBon: () => Promise<unknown>
     openBon: (data: unknown) => Promise<unknown>
+    scanBon: (data: unknown) => Promise<unknown>
   }
   categorien: {
     list: () => Promise<unknown[]>

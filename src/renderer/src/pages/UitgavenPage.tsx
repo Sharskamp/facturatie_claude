@@ -66,6 +66,25 @@ interface Uitgave {
   tegenrekening?: string | null;
 }
 
+interface BonScanResult {
+  succes: boolean;
+  fout?: string;
+  warnings?: string[];
+  duplicate?: { id: string; label: string; type: string } | null;
+  status?: "pending" | "processing" | "parsed" | "needs_review" | "failed" | "imported";
+  suggestion?: {
+    leverancier?: string;
+    datum?: string;
+    bedrag?: number;
+    btwBedrag?: number;
+    btwPercentage?: number;
+    totaal?: number;
+    valuta?: string;
+    omschrijving?: string;
+    betalingsreferentie?: string;
+  };
+}
+
 const BTW_OPTIES = [
   { waarde: "21", label: "21% BTW" },
   { waarde: "9", label: "9% BTW" },
@@ -136,6 +155,8 @@ export default function UitgavenPagina() {
   const [formulier, setFormulier] = useState(LEEG_FORMULIER);
   const [huidigeBon, setHuidigeBon] = useState<string | null>(null);
   const [pendingBonPad, setPendingBonPad] = useState<string | null>(null);
+  const [bonScanLaden, setBonScanLaden] = useState(false);
+  const [bonScanFeedback, setBonScanFeedback] = useState<{ warnings: string[]; duplicate?: string | null } | null>(null);
 
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailItem, setDetailItem] = useState<Uitgave | null>(null);
@@ -202,6 +223,7 @@ export default function UitgavenPagina() {
     setBewerkenId(null);
     setHuidigeBon(null);
     setPendingBonPad(null);
+    setBonScanFeedback(null);
   };
 
   const openDetail = (item: Uitgave) => {
@@ -280,16 +302,59 @@ export default function UitgavenPagina() {
   };
 
   const kiesBonHandler = async () => {
+    const pasScanToe = (scan: BonScanResult) => {
+      const btwPercentage = scan.suggestion?.btwPercentage
+        ? String(Math.round(scan.suggestion.btwPercentage))
+        : scan.suggestion?.bedrag && scan.suggestion?.btwBedrag
+          ? String(Math.round((scan.suggestion.btwBedrag / scan.suggestion.bedrag) * 100))
+          : undefined;
+
+      setFormulier(prev => ({
+        ...prev,
+        datum: scan.suggestion?.datum || prev.datum,
+        omschrijving: prev.omschrijving || scan.suggestion?.omschrijving || "",
+        bedrag: scan.suggestion?.bedrag !== undefined ? scan.suggestion.bedrag.toFixed(2) : prev.bedrag,
+        btwPercentage: btwPercentage || prev.btwPercentage,
+        leverancier: prev.leverancier || scan.suggestion?.leverancier || "",
+        notities: [
+          prev.notities,
+          scan.suggestion?.betalingsreferentie ? `Betalingsreferentie: ${scan.suggestion.betalingsreferentie}` : "",
+        ].filter(Boolean).join("\n"),
+      }));
+      setBonScanFeedback({
+        warnings: scan.warnings ?? [],
+        duplicate: scan.duplicate?.label ?? null,
+      });
+      toonMelding("succes", scan.status === "needs_review" ? "Bon gescand. Controleer de herkende velden." : "Bon gescand en velden ingevuld.");
+    };
+
+    const scanBon = async (pad: string) => {
+      setBonScanLaden(true);
+      try {
+        const scan = await window.api.uitgaven.scanBon({ pad }) as BonScanResult;
+        if (!scan.succes) {
+          toonMelding("fout", scan.fout ?? "Bon scannen mislukt");
+          setBonScanFeedback(scan.warnings?.length ? { warnings: scan.warnings } : null);
+          return;
+        }
+        pasScanToe(scan);
+      } finally {
+        setBonScanLaden(false);
+      }
+    };
+
     if (bewerkenId) {
       const res = await window.api.uitgaven.uploadBon({ uitgaveId: bewerkenId }) as { succes: boolean; pad?: string };
       if (res.succes && res.pad) {
         setHuidigeBon(res.pad);
         haalUitgavenOp();
+        await scanBon(res.pad);
       }
     } else {
-      const res = await window.api.uitgaven.kiesBon();
+      const res = await window.api.uitgaven.kiesBon() as { succes: boolean; pad?: string };
       if (res.succes && res.pad) {
         setPendingBonPad(res.pad);
+        await scanBon(res.pad);
       }
     }
   };
@@ -747,6 +812,14 @@ export default function UitgavenPagina() {
             {/* Bon uploaden (werkt voor zowel nieuwe als bestaande uitgaven) */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Bon / factuur</label>
+              {bonScanFeedback && (
+                <div className={`mb-2 rounded-lg border px-3 py-2 text-xs ${bonScanFeedback.duplicate ? "border-amber-200 bg-amber-50 text-amber-800" : "border-blue-200 bg-blue-50 text-blue-800"}`}>
+                  {bonScanFeedback.duplicate && <p className="font-medium mb-1">{bonScanFeedback.duplicate}</p>}
+                  {bonScanFeedback.warnings.map((warning, index) => (
+                    <p key={`${warning}-${index}`}>{warning}</p>
+                  ))}
+                </div>
+              )}
               {(huidigeBon || pendingBonPad) ? (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between rounded-lg border border-green-200 bg-green-50 px-3 py-2">
@@ -767,7 +840,7 @@ export default function UitgavenPagina() {
                           Openen
                         </Button>
                       )}
-                      <Button variant="outline" size="sm" type="button" onClick={kiesBonHandler}>
+                      <Button variant="outline" size="sm" type="button" onClick={kiesBonHandler} loading={bonScanLaden}>
                         Vervangen
                       </Button>
                     </div>
@@ -784,8 +857,9 @@ export default function UitgavenPagina() {
                     className="mt-2"
                     type="button"
                     onClick={kiesBonHandler}
+                    loading={bonScanLaden}
                   >
-                    Bestand kiezen
+                    Bon kiezen en scannen
                   </Button>
                 </div>
               )}

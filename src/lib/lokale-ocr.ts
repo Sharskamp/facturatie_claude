@@ -36,27 +36,41 @@ export interface OcrVelden {
   regels?: OcrRegel[]
   /** Type document: "factuur" of "bon" (kassabon) */
   documentType?: 'factuur' | 'bon'
+  rawText?: string | null
   error?: string
 }
 
 // ── PDF tekstextractie via pdfjs-dist (CJS legacy build) ─────────────────────
 
 /** Extraheer tekst met posities uit een PDF via PDF.js — werkt voor gedrukte/programmatische PDFs */
+type PdfJsTekstLib = {
+  getDocument: (src: {
+    data: Uint8Array
+    useSystemFonts?: boolean
+    disableFontFace?: boolean
+  }) => { promise: Promise<PdfDoc> }
+  GlobalWorkerOptions: { workerSrc: unknown }
+}
+
+let pdfJsTekstLib: PdfJsTekstLib | null = null
+
+function laadPdfJsVoorTekst(): PdfJsTekstLib {
+  if (pdfJsTekstLib) return pdfJsTekstLib
+
+  const globals = globalThis as Record<string, unknown>
+  // PDF.js probeert anders de native `canvas` package te laden. Voor tekstextractie gebruiken we geen canvas-rendering.
+  globals.DOMMatrix ??= class DOMMatrix {}
+  globals.Path2D ??= class Path2D {}
+
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  pdfJsTekstLib = require('pdfjs-dist/legacy/build/pdf.js') as PdfJsTekstLib
+  pdfJsTekstLib.GlobalWorkerOptions.workerSrc = ''
+  return pdfJsTekstLib
+}
+
 async function extraheerPdfAlsRegels(pad: string): Promise<OcrWoord[][] | null> {
   try {
-    // Lazy load om startup-tijd te beperken; legacy/build/pdf.js is CJS
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js') as {
-      getDocument: (src: {
-        data: Uint8Array
-        useSystemFonts?: boolean
-        disableFontFace?: boolean
-      }) => { promise: Promise<PdfDoc> }
-      GlobalWorkerOptions: { workerSrc: unknown }
-    }
-    // Geen worker nodig voor tekst-extractie — fake-worker mode (main thread)
-    pdfjsLib.GlobalWorkerOptions.workerSrc = ''
-
+    const pdfjsLib = laadPdfJsVoorTekst()
     const buffer = fs.readFileSync(pad)
     const doc = await pdfjsLib.getDocument({
       data: new Uint8Array(buffer),
@@ -69,9 +83,6 @@ async function extraheerPdfAlsRegels(pad: string): Promise<OcrWoord[][] | null> 
     const pdfH = viewport.height
 
     const content = await page.getTextContent({ normalizeWhitespace: false })
-    await doc.destroy()
-
-    if (content.items.length < 5) return null
 
     // Converteer PDF-items naar OcrWoord
     // PDF-coördinaten: origin linksonder, Y omhoog → omdraaien naar scherm-Y
@@ -98,6 +109,37 @@ async function extraheerPdfAlsRegels(pad: string): Promise<OcrWoord[][] | null> 
       })
     }
 
+    for (let pagina = 2; pagina <= doc.numPages; pagina++) {
+      const extraPage = await doc.getPage(pagina)
+      const extraViewport = extraPage.getViewport({ scale: 1.0 })
+      const extraPdfH = extraViewport.height
+      const extraContent = await extraPage.getTextContent({ normalizeWhitespace: false })
+      const paginaOffsetY = (pagina - 1) * (pdfH + 40)
+
+      for (const raw of extraContent.items) {
+        const item = raw as {
+          str: string
+          transform: number[]
+          width: number
+          height: number
+        }
+        if (!item.str?.trim()) continue
+        const itemH = Math.max(4, Math.round(Math.abs(item.transform[3]) || Math.abs(item.height) || 10))
+        woorden.push({
+          tekst: item.str.trim(),
+          box: {
+            x: Math.round(item.transform[4]),
+            y: Math.round(paginaOffsetY + extraPdfH - item.transform[5] - itemH),
+            width: Math.max(4, Math.round(Math.abs(item.width) || item.str.length * 5)),
+            height: itemH,
+          },
+          confidence: 1.0,
+        })
+      }
+    }
+
+    await doc.destroy()
+
     if (woorden.length < 5) return null
 
     // Sorteer op y (boven → onder), dan x (links → rechts)
@@ -122,8 +164,26 @@ async function extraheerPdfAlsRegels(pad: string): Promise<OcrWoord[][] | null> 
   }
 }
 
+async function telPdfPaginas(pad: string): Promise<number> {
+  try {
+    const pdfjsLib = laadPdfJsVoorTekst()
+    const buffer = fs.readFileSync(pad)
+    const doc = await pdfjsLib.getDocument({
+      data: new Uint8Array(buffer),
+      useSystemFonts: true,
+      disableFontFace: true,
+    }).promise
+    const aantal = doc.numPages || 1
+    await doc.destroy()
+    return aantal
+  } catch {
+    return 1
+  }
+}
+
 // Minimal types voor pdfjs-dist page/doc objecten
 interface PdfDoc {
+  numPages: number
   getPage(n: number): Promise<PdfPage>
   destroy(): Promise<void>
 }
@@ -220,26 +280,44 @@ void eersteBedragIn
 
 const MAANDEN: Record<string, string> = {
   jan: '01', feb: '02', mrt: '03', maa: '03', apr: '04', mei: '05',
-  jun: '06', jul: '07', aug: '08', sep: '09', okt: '10', nov: '11', dec: '12',
+  jun: '06', juni: '06', jul: '07', juli: '07', aug: '08', augustus: '08',
+  sep: '09', sept: '09', okt: '10', oktober: '10', nov: '11', dec: '12',
   january: '01', february: '02', march: '03', april: '04', may: '05', june: '06',
   july: '07', august: '08', september: '09', october: '10', november: '11', december: '12',
   januari: '01', februari: '02', maart: '03',
 }
 
+function maakIsoDatum(jaar: string, maand: string, dag: string): string | null {
+  const y = jaar.length === 2 ? Number(`20${jaar}`) : Number(jaar)
+  const m = Number(maand)
+  const d = Number(dag)
+  if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(d)) return null
+  const dt = new Date(Date.UTC(y, m - 1, d))
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d) return null
+  return `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+}
+
 function normaliseerDatum(s: string): string | null {
   s = s.trim()
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s
+  const ymd = s.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/)
+  if (ymd) return maakIsoDatum(ymd[1], ymd[2], ymd[3])
   const dm = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})$/)
   if (dm) {
-    const jaar = dm[3].length === 2 ? `20${dm[3]}` : dm[3]
-    return `${jaar}-${dm[2].padStart(2, '0')}-${dm[1].padStart(2, '0')}`
+    return maakIsoDatum(dm[3], dm[2], dm[1])
   }
-  const wm = s.match(/^(\d{1,2})\s+([a-zà-ü]+)\.?\s+(\d{2,4})$/i)
+  const wm = s.match(/^(\d{1,2})\s+([\p{L}]+)\.?\s+(\d{2,4})$/iu)
   if (wm) {
     const mn = MAANDEN[wm[2].toLowerCase()] ?? MAANDEN[wm[2].toLowerCase().slice(0, 3)]
     if (mn) {
-      const jaar = wm[3].length === 2 ? `20${wm[3]}` : wm[3]
-      return `${jaar}-${mn}-${wm[1].padStart(2, '0')}`
+      return maakIsoDatum(wm[3], mn, wm[1])
+    }
+  }
+  const mw = s.match(/^([\p{L}]+)\.?\s+(\d{1,2}),?\s+(\d{2,4})$/iu)
+  if (mw) {
+    const mn = MAANDEN[mw[1].toLowerCase()] ?? MAANDEN[mw[1].toLowerCase().slice(0, 3)]
+    if (mn) {
+      return maakIsoDatum(mw[3], mn, mw[2])
     }
   }
   return null
@@ -247,9 +325,10 @@ function normaliseerDatum(s: string): string | null {
 
 function vindDatumInRegel(r: string): string | null {
   for (const pat of [
-    /\b(\d{4}-\d{2}-\d{2})\b/,
+    /\b(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})\b/,
     /\b(\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})\b/,
-    /\b(\d{1,2}\s+[a-zA-Zà-ü]{3,9}\.?\s+\d{2,4})\b/i,
+    /\b(\d{1,2}\s+[\p{L}]{3,12}\.?\s+\d{2,4})\b/iu,
+    /\b([\p{L}]{3,12}\.?\s+\d{1,2},?\s+\d{2,4})\b/iu,
   ]) {
     const m = r.match(pat)
     if (m) {
@@ -258,6 +337,31 @@ function vindDatumInRegel(r: string): string | null {
     }
   }
   return null
+}
+
+function vindDatumsInRegel(r: string): string[] {
+  const gevonden = new Set<string>()
+  const patronen = [
+    /\b(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})\b/g,
+    /\b(\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})\b/g,
+    /\b(\d{1,2}\s+[\p{L}]{3,12}\.?\s+\d{2,4})\b/giu,
+    /\b([\p{L}]{3,12}\.?\s+\d{1,2},?\s+\d{2,4})\b/giu,
+  ]
+
+  for (const patroon of patronen) {
+    patroon.lastIndex = 0
+    let m: RegExpExecArray | null
+    while ((m = patroon.exec(r)) !== null) {
+      const datum = normaliseerDatum(m[1])
+      if (datum) gevonden.add(datum)
+    }
+  }
+
+  return [...gevonden]
+}
+
+function datumNaOfGelijk(a: string, b: string): boolean {
+  return new Date(a).getTime() >= new Date(b).getTime()
 }
 
 // ── Spatial helpers: gebruik bounding-box geometrie ──────────────────────────
@@ -300,6 +404,234 @@ function detecteerBedragKolom(regels: SpatialRegel[]): { drempel: number } | nul
 }
 
 // ── Factuurvelden extraheren ─────────────────────────────────────────────────
+const FACTUURNUMMER_LABEL = /\b(?:factuur\s*(?:nummer|nr\.?|no\.?)?|factuurnummer|invoice\s*(?:number|no\.?|#)?|inv\.?\s*(?:no\.?|nr\.?)?|nota\s*(?:nummer|nr\.?)?|document\s*(?:number|no\.?)?|referentie|kenmerk)\b/i
+
+function kandidaatNummerTokens(tekst: string, context = tekst): string[] {
+  const tokens = tekst.match(/[A-Z]{0,8}\d[A-Z0-9._/-]{1,35}/gi) ?? []
+  return [...new Set(tokens
+    .map(t => t.replace(/^[#:\s-]+|[.,;:)]+$/g, '').trim())
+    .filter(t => !lijktOngeldigeNummerKandidaat(t, context)))]
+}
+
+function lijktOngeldigeNummerKandidaat(kandidaat: string, context = ''): boolean {
+  const k = kandidaat.trim()
+  if (k.length < 3 || k.length > 35) return true
+  if (!/\d/.test(k)) return true
+  if (normaliseerDatum(k)) return true
+  if (/^\d+[.,]\d{2}$/.test(k)) return true
+  if (/^[A-Z]{2}\d{2}[A-Z0-9]{10,}$/i.test(k)) return true
+  if (/\b(?:iban|btw|vat|tax|kvk|kamer\s+van\s+koophandel|tel|phone|postcode|zip)\b/i.test(context) &&
+      !FACTUURNUMMER_LABEL.test(context)) return true
+  if (/^(?:202\d|20\d{2})$/.test(k)) return true
+  return false
+}
+
+function labelX(regel: SpatialRegel, label: RegExp): number {
+  const segment = regel.segmenten.find(w => label.test(w.tekst))
+  return segment?.box.x ?? regel.x
+}
+
+function kandidaatX(regel: SpatialRegel, kandidaat: string): number {
+  const segment = regel.segmenten.find(w => w.tekst.includes(kandidaat) || kandidaat.includes(w.tekst))
+  return segment?.box.x ?? regel.x
+}
+
+function vindFactuurnummerSlim(regels: SpatialRegel[], alles: string): string | null {
+  for (let i = 0; i < regels.length; i++) {
+    const regel = regels[i]
+    if (!FACTUURNUMMER_LABEL.test(regel.tekst)) continue
+
+    const naLabel = regel.tekst.replace(/^.*?(?:factuur\s*(?:nummer|nr\.?|no\.?)?|factuurnummer|invoice\s*(?:number|no\.?|#)?|inv\.?\s*(?:no\.?|nr\.?)?|nota\s*(?:nummer|nr\.?)?|document\s*(?:number|no\.?)?|referentie|kenmerk)\s*[:#-]?\s*/i, '')
+    const direct = kandidaatNummerTokens(naLabel, regel.tekst)[0]
+    if (direct) return direct
+
+    const xLabel = labelX(regel, FACTUURNUMMER_LABEL)
+    const volgendeKandidaten = regels.slice(i + 1, Math.min(i + 4, regels.length))
+      .flatMap(r => kandidaatNummerTokens(r.tekst, regel.tekst).map(k => ({
+        waarde: k,
+        afstand: Math.abs(kandidaatX(r, k) - xLabel),
+      })))
+      .sort((a, b) => a.afstand - b.afstand)
+    if (volgendeKandidaten[0]) return volgendeKandidaten[0].waarde
+  }
+
+  const directMatch = alles.match(/(?:factuur\s*(?:nummer|nr\.?|no\.?)?|factuurnummer|invoice\s*(?:number|no\.?|#)?|inv\.?\s*(?:no\.?|nr\.?)?|nota\s*(?:nummer|nr\.?)?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9._/-]{2,35})/i)
+  if (directMatch && !lijktOngeldigeNummerKandidaat(directMatch[1], directMatch[0])) return directMatch[1]
+
+  let beste: { waarde: string; score: number } | null = null
+  for (const regel of regels.slice(0, 25)) {
+    for (const kandidaat of kandidaatNummerTokens(regel.tekst, regel.tekst)) {
+      let score = 0
+      if (/[A-Z]/i.test(kandidaat) && /\d/.test(kandidaat)) score += 8
+      if (/[-/_]/.test(kandidaat)) score += 6
+      if (/20\d{2}[-/_]?\d{2,}/.test(kandidaat)) score += 5
+      if (regel.y < 350) score += 4
+      if (/factuur|invoice|nota|declaratie/i.test(regel.tekst)) score += 12
+      if (/^\d{6,}$/.test(kandidaat) && !/factuur|invoice|nota/i.test(regel.tekst)) score -= 8
+      if (!beste || score > beste.score) beste = { waarde: kandidaat, score }
+    }
+  }
+
+  return beste && beste.score >= 8 ? beste.waarde : null
+}
+
+interface DatumKandidaat {
+  datum: string
+  regelIndex: number
+  x: number
+  y: number
+  tekst: string
+}
+
+function datumKandidaten(regels: SpatialRegel[]): DatumKandidaat[] {
+  const kandidaten: DatumKandidaat[] = []
+  for (let i = 0; i < regels.length; i++) {
+    const regel = regels[i]
+    const datums = vindDatumsInRegel(regel.tekst)
+    for (const datum of datums) {
+      const seg = regel.segmenten.find(w => vindDatumsInRegel(w.tekst).includes(datum))
+      kandidaten.push({ datum, regelIndex: i, x: seg?.box.x ?? regel.x, y: regel.y, tekst: regel.tekst })
+    }
+  }
+  return kandidaten
+}
+
+function vindDatumVeldenSlim(regels: SpatialRegel[]): { datum: string | null; vervaldatum: string | null } {
+  const kandidaten = datumKandidaten(regels)
+  let datum: string | null = null
+  let vervaldatum: string | null = null
+
+  const datumsRondRegel = (idx: number) => kandidaten
+    .filter(k => k.regelIndex >= idx && k.regelIndex <= idx + 2)
+    .sort((a, b) => a.y !== b.y ? a.y - b.y : a.x - b.x)
+
+  const gecombineerdeIdx = regels.findIndex(r =>
+    /factuur\s*datum|invoice\s*date|datum/i.test(r.tekst) &&
+    /verval|due|betaal(?:termijn|datum)|payment/i.test(r.tekst)
+  )
+  if (gecombineerdeIdx >= 0) {
+    const dichtbij = datumsRondRegel(gecombineerdeIdx)
+    if (dichtbij.length >= 2) {
+      datum = dichtbij[0].datum
+      vervaldatum = dichtbij.find(k => k.datum !== datum && datumNaOfGelijk(k.datum, datum))?.datum ?? dichtbij[1].datum
+    }
+  }
+
+  for (let i = 0; i < regels.length; i++) {
+    if (vervaldatum) break
+    if (/verval|due\s*date|betaal.*voor|uiterlijk|payment\s*due|betaal(?:termijn|datum)/i.test(regels[i].tekst)) {
+      const dichtbij = datumsRondRegel(i)
+      if (dichtbij.length > 0) vervaldatum = dichtbij[dichtbij.length - 1].datum
+    }
+  }
+
+  for (let i = 0; i < regels.length; i++) {
+    if (datum) break
+    if (/factuur\s*datum|invoice\s*date|bill\s*date|document\s*date|^datum\b|\bdatum:/i.test(regels[i].tekst)) {
+      const dichtbij = datumsRondRegel(i).filter(k => k.datum !== vervaldatum)
+      if (dichtbij.length > 0) datum = dichtbij[0].datum
+    }
+  }
+
+  if ((!datum || !vervaldatum) && kandidaten.length >= 2) {
+    const gesorteerd = [...kandidaten].sort((a, b) => a.y !== b.y ? a.y - b.y : a.x - b.x)
+    const paar = gesorteerd.find((k, idx) => {
+      const volgende = gesorteerd[idx + 1]
+      return Boolean(volgende && Math.abs(volgende.y - k.y) < 80 && datumNaOfGelijk(volgende.datum, k.datum))
+    })
+    if (paar) {
+      const idx = gesorteerd.indexOf(paar)
+      datum ??= gesorteerd[idx].datum
+      vervaldatum ??= gesorteerd[idx + 1].datum
+    }
+  }
+
+  if (!datum) datum = kandidaten.find(k => k.datum !== vervaldatum)?.datum ?? null
+  if (!vervaldatum && datum) {
+    vervaldatum = kandidaten.find(k => k.datum !== datum && datumNaOfGelijk(k.datum, datum))?.datum ?? null
+  }
+
+  return { datum, vervaldatum }
+}
+
+function laatsteBedragInfo(regel: SpatialRegel): { bedrag: number; index: number; raw: string; x: number } | null {
+  const matches = [...regel.tekst.matchAll(BEDRAG_RGX_GLOBAL)]
+  const geldige = matches
+    .map(m => ({
+      bedrag: parseerBedrag(m[1]),
+      index: m.index ?? 0,
+      raw: m[0],
+    }))
+    .filter((m): m is { bedrag: number; index: number; raw: string } => m.bedrag !== null)
+  const laatste = geldige.at(-1)
+  if (!laatste) return null
+  const segment = regel.segmenten.find(w => w.tekst.includes(laatste.raw.trim()) || laatste.raw.includes(w.tekst))
+  return { ...laatste, x: segment?.box.x ?? Math.max(regel.x, regel.xEinde - 90) }
+}
+
+function parseerDynamischeFactuurregel(regel: SpatialRegel): (OcrRegel & { bedragX: number }) | null {
+  const info = laatsteBedragInfo(regel)
+  if (!info || info.bedrag <= 0) return null
+  if (/\b(?:subtotaal|totaal|btw|vat|tax|korting|discount|te\s+betalen|amount\s+due|payment|iban|kvk|factuur(?:nummer|datum)?|invoice|verval|due\s*date)\b/i.test(regel.tekst)) return null
+
+  const matches = [...regel.tekst.matchAll(BEDRAG_RGX_GLOBAL)]
+  const eersteMatch = matches[0]
+  if (!eersteMatch || eersteMatch.index === undefined) return null
+
+  let omschrijving = regel.tekst.slice(0, eersteMatch.index).replace(/\s+/g, ' ').trim()
+  if (omschrijving.length < 2 || /^\d[\d\s.,/-]*$/.test(omschrijving)) return null
+
+  let aantal = 1
+  const explicietAantal = omschrijving.match(/^(.+?)\s+(\d+(?:[,.]\d+)?)\s*(?:x|st\.?|stuks?|uur|uren|u|pcs?)$/i)
+  if (explicietAantal) {
+    omschrijving = explicietAantal[1].trim()
+    aantal = parseFloat(explicietAantal[2].replace(',', '.')) || 1
+  } else if (matches.length >= 2) {
+    const losAantal = omschrijving.match(/^(.+?)\s+(\d+(?:[,.]\d+)?)$/)
+    if (losAantal) {
+      const mogelijkAantal = parseFloat(losAantal[2].replace(',', '.'))
+      if (mogelijkAantal > 0 && mogelijkAantal < 10000) {
+        omschrijving = losAantal[1].trim()
+        aantal = mogelijkAantal
+      }
+    }
+  }
+
+  const eersteBedrag = parseerBedrag(eersteMatch[1])
+  const bedrag = matches.length >= 2 && eersteBedrag !== null ? eersteBedrag : Math.round((info.bedrag / aantal) * 100) / 100
+  return { omschrijving, bedrag, aantal, totaal: info.bedrag, bedragX: info.x }
+}
+
+function detecteerDynamischeFactuurregels(regels: SpatialRegel[]): OcrRegel[] {
+  const kandidaten = regels
+    .map((regel, index) => ({ regel: parseerDynamischeFactuurregel(regel), index, y: regel.y }))
+    .filter((k): k is { regel: OcrRegel & { bedragX: number }; index: number; y: number } => Boolean(k.regel))
+
+  if (kandidaten.length < 2) return []
+
+  const groepen: typeof kandidaten[] = []
+  for (const kandidaat of kandidaten) {
+    const laatsteGroep = groepen.at(-1)
+    const vorige = laatsteGroep?.at(-1)
+    if (vorige && Math.abs(vorige.regel.bedragX - kandidaat.regel.bedragX) < 90 && kandidaat.y - vorige.y < 110) {
+      laatsteGroep!.push(kandidaat)
+    } else {
+      groepen.push([kandidaat])
+    }
+  }
+
+  const beste = groepen
+    .filter(g => g.length >= 2)
+    .sort((a, b) => b.length - a.length || a[0].y - b[0].y)[0]
+
+  return beste ? beste.map(k => ({
+    omschrijving: k.regel.omschrijving,
+    bedrag: k.regel.bedrag,
+    aantal: k.regel.aantal,
+    totaal: k.regel.totaal,
+  })) : []
+}
+
 export function extraheerFactuurVelden(
   woordRegels: OcrWoord[][],
   ruweTekst: string,
@@ -336,6 +668,9 @@ export function extraheerFactuurVelden(
     /(?:factuurnummer|invoicenumber|bonnummer|rekeningnummer)\s+([A-Z0-9][-A-Z0-9/_.]{2,25})/i
   )
   if (nummerMatch) nummer = nummerMatch[1].trim()
+  if (!nummer || lijktOngeldigeNummerKandidaat(nummer, nummerMatch?.[0] ?? alles)) {
+    nummer = vindFactuurnummerSlim(spatialRegels, alles)
+  }
 
   // ── Datums ────────────────────────────────────────────────────────────────
   // Strategie: zoek label + datum op dezelfde regel; als datum ontbreekt, kijk ook op de volgende regel.
@@ -365,6 +700,9 @@ export function extraheerFactuurVelden(
       if (d && d !== vervaldatum) { datum = d; break }
     }
   }
+  const slimmeDatums = vindDatumVeldenSlim(spatialRegels)
+  if (slimmeDatums.datum) datum = slimmeDatums.datum
+  if (slimmeDatums.vervaldatum) vervaldatum = slimmeDatums.vervaldatum
 
   // ── E-mail ────────────────────────────────────────────────────────────────
   // Verzamel alle e-mailadressen, sla eigen bedrijfse-mail over
@@ -466,11 +804,11 @@ export function extraheerFactuurVelden(
   const bedragKolom = detecteerBedragKolom(spatialRegels)
 
   const tabelHeaderIdx = spatialRegels.findIndex(r =>
-    /omschrijving|description|product|artikel/i.test(r.tekst) &&
-    /bedrag|prijs|price|totaal|amount/i.test(r.tekst)
+    /omschrijving|description|product|artikel|dienst|service|werkzaamheden/i.test(r.tekst) &&
+    /bedrag|prijs|price|totaal|amount|aantal|qty|quantity/i.test(r.tekst)
   )
   const tabelFooterIdx = spatialRegels.findIndex(r =>
-    /\btotaal\s+te\s+voldoen\b|\bgrand\s+total\b|\bte\s+betalen\b|\btotal\s+amount\b/i.test(r.tekst)
+    /\btotaal\s+te\s+voldoen\b|\bgrand\s+total\b|\bte\s+betalen\b|\btotal\s+amount\b|\bamount\s+due\b|\bfactuurbedrag\b|\bverschuldigd\b|\bsubtotaal\b|\bbtw\b/i.test(r.tekst)
   )
 
   if (tabelHeaderIdx >= 0 && documentType === 'factuur') {
@@ -539,11 +877,15 @@ export function extraheerFactuurVelden(
   }
 
   // ── Totaalbedrag ──────────────────────────────────────────────────────────
+  if (documentType === 'factuur' && geextraheerdRegels.length === 0) {
+    geextraheerdRegels.push(...detecteerDynamischeFactuurregels(spatialRegels))
+  }
+
   let totaal: number | null = null
 
   // Stap 1: zoek "Totaal te voldoen" label — bedrag kan op dezelfde of volgende regel staan
   const totaalRegelIdx = spatialRegels.findIndex(r =>
-    /\b(?:totaal\s+te\s+voldoen|grand\s+total|te\s+betalen|amount\s+due|total\s+amount)\b/i.test(r.tekst)
+    /\b(?:totaal\s+te\s+voldoen|totaal\s+incl\.?\s*btw|totaalbedrag|factuurbedrag|grand\s+total|te\s+betalen|verschuldigd|amount\s+due|balance\s+due|total\s+due|total\s+amount)\b/i.test(r.tekst)
   )
   if (totaalRegelIdx >= 0) {
     totaal = laatsteBedragIn(spatialRegels[totaalRegelIdx].tekst)
@@ -559,7 +901,9 @@ export function extraheerFactuurVelden(
   // Stap 2: generieke "totaal"-regel
   if (totaal === null) {
     const totaalRegel = tekstRegels.find(r =>
-      /\btotaal\b/i.test(r) && !/subtotaal|excl|btw\s*hoog|btw\s*laag/i.test(r) && /\d/.test(r)
+      /\btotaal\b|\btotal\b|\bfactuurbedrag\b|\bverschuldigd\b/i.test(r) &&
+      !/subtotaal|excl|btw\s*hoog|btw\s*laag|omschrijving|description|aantal|qty|prijs|price/i.test(r) &&
+      /\d/.test(r)
     )
     if (totaalRegel) totaal = laatsteBedragIn(totaalRegel)
   }
@@ -647,6 +991,7 @@ export function extraheerFactuurVelden(
     omschrijving,
     regels: geextraheerdRegels.length > 0 ? geextraheerdRegels : undefined,
     documentType,
+    rawText: ruweTekst,
   }
 }
 
@@ -663,7 +1008,7 @@ export async function scanBestandLokaal(
   }
 
   let beeldPad = pad
-  let tmpPng: string | null = null
+  const tmpPaden: string[] = []
 
   try {
     // ── Primair pad: PDF-tekstlaag via pdfjs-dist ──────────────────────────
@@ -677,10 +1022,33 @@ export async function scanBestandLokaal(
 
     // ── Fallback: PaddleOCR via ONNX Runtime (voor gescande PDFs / afbeeldingen) ──
     if (ext === 'pdf') {
-      const pngBuffer = await pdfPaginaNaarPng(pad)
-      tmpPng = path.join(os.tmpdir(), `sf_ocr_${Date.now()}.png`)
-      fs.writeFileSync(tmpPng, pngBuffer)
-      beeldPad = tmpPng
+      const aantalPaginas = await telPdfPaginas(pad)
+      const alleRegels: OcrWoord[][] = []
+      const tekstDelen: string[] = []
+
+      for (let paginaIndex = 0; paginaIndex < aantalPaginas; paginaIndex++) {
+        const pngBuffer = await pdfPaginaNaarPng(pad, paginaIndex)
+        const tmpPng = path.join(os.tmpdir(), `sf_ocr_${Date.now()}_${paginaIndex}.png`)
+        tmpPaden.push(tmpPng)
+        fs.writeFileSync(tmpPng, pngBuffer)
+
+        const resultaat = await ocrAfbeelding(tmpPng)
+        if (!resultaat.tekst?.trim()) continue
+
+        const paginaOffsetY = paginaIndex * 2000
+        alleRegels.push(...resultaat.regels.map(regel => regel.map(w => ({
+          ...w,
+          box: { ...w.box, y: w.box.y + paginaOffsetY },
+        }))))
+        tekstDelen.push(resultaat.tekst)
+      }
+
+      const tekst = tekstDelen.join('\n')
+      if (!tekst || tekst.trim().length < 5) {
+        return { error: 'OCR heeft geen bruikbare tekst gevonden. Probeer een hogere resolutie of betere belichting.' }
+      }
+
+      return extraheerFactuurVelden(alleRegels, tekst, opties)
     }
 
     const resultaat = await ocrAfbeelding(beeldPad)
@@ -692,8 +1060,8 @@ export async function scanBestandLokaal(
   } catch (e: unknown) {
     return { error: e instanceof Error ? e.message : 'Lokale scan mislukt' }
   } finally {
-    if (tmpPng) {
-      try { fs.unlinkSync(tmpPng) } catch { /* */ }
+    for (const tmpPad of tmpPaden) {
+      try { fs.unlinkSync(tmpPad) } catch { /* */ }
     }
   }
 }

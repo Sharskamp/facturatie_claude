@@ -10,6 +10,8 @@ import * as net from 'net'
 import { DOMParser } from '@xmldom/xmldom'
 import { verstuurEmail, maakFactuurEmailHtml } from '../lib/email'
 import { haalAgendaAfspraken, haalKalenderLijst, maakGoogleAfspraak, wijzigGoogleAfspraak, verwijderGoogleAfspraak, maakGoogleAuthUrl, wisselCodeVoorTokens, vernieuwAccessToken } from '../lib/google-calendar'
+import { scanBestandLokaal } from '../lib/lokale-ocr'
+import { ExpenseReceiptScanService, HistoricalInvoiceImportService } from '../services/invoice'
 import { autoUpdater } from 'electron-updater'
 import * as os from 'os'
 import QRCode from 'qrcode'
@@ -20,6 +22,89 @@ let prisma: PrismaClient
 let mainWindow: BrowserWindow | null = null
 let bankWatcher: fs.FSWatcher | null = null
 const geimporteerdeBank = new Set<string>()
+let historicalInvoiceImportService: HistoricalInvoiceImportService | null = null
+let expenseReceiptScanService: ExpenseReceiptScanService | null = null
+
+function getHistoricalInvoiceImportService() {
+  historicalInvoiceImportService ??= new HistoricalInvoiceImportService(prisma)
+  return historicalInvoiceImportService
+}
+
+function getExpenseReceiptScanService() {
+  expenseReceiptScanService ??= new ExpenseReceiptScanService(prisma)
+  return expenseReceiptScanService
+}
+
+async function maakInvoiceScanContext(modus: 'historical' | 'expense') {
+  const user = await prisma.user.findFirst({
+    select: { naam: true, bedrijfsnaam: true, email: true, aiModel: true }
+  })
+
+  return {
+    mode: modus,
+    eigenBedrijfsnaam: user?.bedrijfsnaam ?? user?.naam ?? undefined,
+    eigenEmail: user?.email ?? undefined,
+    ollamaModel: user?.aiModel && !['claude', 'openai'].includes(user.aiModel.toLowerCase())
+      ? user.aiModel
+      : 'qwen2.5:7b',
+    useOllama: true,
+  } as const
+}
+
+async function scanFactuurBestandLokaal(filePath: string) {
+  if (!filePath || !fs.existsSync(filePath)) {
+    return { succes: false, fout: 'Bestand niet gevonden' }
+  }
+
+  const context = await maakInvoiceScanContext('historical')
+  const parser = getHistoricalInvoiceImportService()
+  const scan = await parser.scanFile(filePath, context)
+
+  if (scan.errors.length > 0 || !scan.parsedInvoice) {
+    return {
+      succes: false,
+      fout: scan.errors[0]?.message ?? 'Scan mislukt',
+      pad: filePath,
+      naam: basename(filePath),
+    }
+  }
+
+  const parsed = scan.parsedInvoice
+  const fallbackOcr = await scanBestandLokaal(filePath, {
+    eigenBedrijfsnaam: context.eigenBedrijfsnaam,
+    eigenEmail: context.eigenEmail,
+  })
+
+  return {
+    succes: true,
+    pad: filePath,
+    naam: basename(filePath),
+    nummer: parsed.invoiceNumber ?? fallbackOcr.nummer ?? null,
+    klantNaam: parsed.customerName ?? fallbackOcr.klantNaam ?? null,
+    klantEmail: fallbackOcr.klantEmail ?? null,
+    klantAdres: fallbackOcr.klantAdres ?? null,
+    datum: parsed.invoiceDate ?? fallbackOcr.datum ?? null,
+    vervaldatum: parsed.dueDate ?? fallbackOcr.vervaldatum ?? null,
+    subtotaal: parsed.subtotal ?? fallbackOcr.subtotaal ?? null,
+    btwBedrag: parsed.vatTotal ?? fallbackOcr.btwBedrag ?? null,
+    totaal: parsed.total ?? fallbackOcr.totaal ?? null,
+    status: fallbackOcr.status ?? 'BETAALD',
+    notities: fallbackOcr.notities ?? null,
+    omschrijving: fallbackOcr.omschrijving ?? parsed.lineItems?.[0]?.description ?? null,
+    regels: parsed.lineItems.map(regel => ({
+      omschrijving: regel.description ?? 'Regel',
+      bedrag: regel.unitPrice ?? regel.total ?? 0,
+      aantal: regel.quantity ?? 1,
+      totaal: regel.total ?? regel.unitPrice ?? 0,
+    })),
+    parsedInvoice: parsed,
+    warnings: scan.warnings.map(w => w.message),
+    duplicate: scan.duplicate ?? null,
+    rawText: parsed.rawOcrText ?? fallbackOcr.rawText ?? null,
+    importStatus: scan.status,
+    source: scan.source,
+  }
+}
 
 async function startBankWatcher() {
   if (bankWatcher) { bankWatcher.close(); bankWatcher = null }
@@ -3162,6 +3247,42 @@ function setupIpcHandlers() {
   })
 
   // ── Historische facturen importeren ──
+  ipcMain.handle('facturen:kiesBestanden', async () => {
+    const venster = BrowserWindow.getFocusedWindow() ?? mainWindow
+    const result = await dialog.showOpenDialog(venster!, {
+      title: 'Kies PDF-facturen',
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: 'Facturen', extensions: ['pdf'] },
+        { name: 'Alle ondersteunde bestanden', extensions: ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'bmp', 'tiff', 'tif'] },
+      ],
+    })
+    if (result.canceled || result.filePaths.length === 0) return []
+    return result.filePaths.map(pad => ({ pad, naam: basename(pad) }))
+  })
+
+  ipcMain.handle('facturen:scanPdfLokaal', async (_, filePath: string) => {
+    return scanFactuurBestandLokaal(filePath)
+  })
+
+  ipcMain.handle('facturen:scanPdf', async (_, filePath: string) => {
+    return scanFactuurBestandLokaal(filePath)
+  })
+
+  ipcMain.handle('facturen:startHistorischeImport', async (_, filePaths: string[]) => {
+    const context = await maakInvoiceScanContext('historical')
+    return getHistoricalInvoiceImportService().startJob(filePaths, context)
+  })
+
+  ipcMain.handle('facturen:historischeImportStatus', async (_, jobId: string) => {
+    return getHistoricalInvoiceImportService().getJob(jobId)
+  })
+
+  ipcMain.handle('facturen:retryHistorischeImportItem', async (_, jobId: string, itemId: string) => {
+    const context = await maakInvoiceScanContext('historical')
+    return getHistoricalInvoiceImportService().retryItem(jobId, itemId, context)
+  })
+
   ipcMain.handle('facturen:importeerHistorisch', async (_, payload: {
     nummer: string
     klantId: string
@@ -3359,6 +3480,33 @@ function setupIpcHandlers() {
   ipcMain.handle('uitgaven:openBon', async (_, { pad }: { pad: string }) => {
     await shell.openPath(pad)
     return { succes: true }
+  })
+
+  ipcMain.handle('uitgaven:scanBon', async (_, { pad }: { pad: string }) => {
+    if (!pad || !fs.existsSync(pad)) {
+      return { succes: false, fout: 'Bonbestand niet gevonden.' }
+    }
+
+    const context = await maakInvoiceScanContext('expense')
+    const result = await getExpenseReceiptScanService().scanReceipt(pad, context)
+    if (result.errors.length > 0 || !result.parsedInvoice) {
+      return {
+        succes: false,
+        fout: result.errors[0]?.message ?? 'Bon scannen mislukt.',
+        warnings: result.warnings.map(w => w.message),
+      }
+    }
+
+    return {
+      succes: true,
+      pad,
+      parsedInvoice: result.parsedInvoice,
+      suggestion: result.suggestion,
+      warnings: result.warnings.map(w => w.message),
+      duplicate: result.duplicate ?? null,
+      status: result.status,
+      source: result.source,
+    }
   })
 
   // Opens a file dialog and copies the selected file to the bonnen folder.

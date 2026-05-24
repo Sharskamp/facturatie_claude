@@ -15,6 +15,9 @@ interface Klant {
   naam: string;
   bedrijf?: string | null;
   email?: string | null;
+  adres?: string | null;
+  postcode?: string | null;
+  stad?: string | null;
 }
 
 interface Regel {
@@ -50,6 +53,36 @@ interface CsvRij {
   isNieuweKlant?: boolean;
   nieuweKlantAanmaken?: boolean;
   geextraheerdRegels?: Array<{ omschrijving: string; bedrag: number; aantal: number; totaal: number }>;
+  scanWaarschuwingen?: string[];
+  duplicateMelding?: string;
+}
+
+interface GekozenBestand {
+  pad: string;
+  naam: string;
+}
+
+interface ScanPdfResultaat {
+  succes: boolean;
+  fout?: string;
+  pad?: string;
+  naam?: string;
+  nummer?: string | null;
+  klantNaam?: string | null;
+  klantEmail?: string | null;
+  klantAdres?: string | null;
+  datum?: string | null;
+  vervaldatum?: string | null;
+  subtotaal?: number | null;
+  btwBedrag?: number | null;
+  totaal?: number | null;
+  status?: string | null;
+  notities?: string | null;
+  omschrijving?: string | null;
+  regels?: Array<{ omschrijving: string; bedrag: number; aantal: number; totaal: number }>;
+  warnings?: string[];
+  duplicate?: { id: string; label: string; type: string } | null;
+  importStatus?: "pending" | "processing" | "parsed" | "needs_review" | "failed" | "imported";
 }
 
 function vandaagString() {
@@ -86,6 +119,31 @@ function kolomWaarde(rij: string[], headers: string[], ...namen: string[]): stri
     if (idx >= 0 && rij[idx]) return rij[idx].trim();
   }
   return "";
+}
+
+function parseBedragInput(waarde: string): number {
+  return parseFloat((waarde || "0").replace(",", ".")) || 0;
+}
+
+function bedragVoorInput(waarde: number | null | undefined): string {
+  return Number.isFinite(waarde ?? NaN) ? String(Number(waarde).toFixed(2)) : "0.00";
+}
+
+function splitsKlantAdres(adres?: string | null): { adres?: string; postcode?: string; stad?: string } {
+  const regels = (adres ?? "").split(/\r?\n|,/).map(r => r.trim()).filter(Boolean);
+  if (regels.length === 0) return {};
+
+  const postcodeIndex = regels.findIndex(r => /\b\d{4}\s?[A-Z]{2}\b/i.test(r));
+  if (postcodeIndex >= 0) {
+    const match = regels[postcodeIndex].match(/\b(\d{4}\s?[A-Z]{2})\b\s*(.*)$/i);
+    return {
+      adres: regels.filter((_, i) => i !== postcodeIndex).join(", ") || undefined,
+      postcode: match?.[1]?.toUpperCase(),
+      stad: match?.[2]?.trim() || undefined,
+    };
+  }
+
+  return { adres: regels.join(", ") };
 }
 
 const VOORBEELD_CSV = `nummer;klant;datum;vervaldatum;totaal;btw_bedrag;subtotaal;status;notities
@@ -180,6 +238,11 @@ export default function FactuurImportHistorischPage() {
   const [bulkLaden, setBulkLaden] = useState(false);
   const [bulkResultaat, setBulkResultaat] = useState<{ succes: number; fouten: string[] } | null>(null);
   const [bulkStatusKiezer, setBulkStatusKiezer] = useState("BETAALD");
+  const [pdfRijen, setPdfRijen] = useState<CsvRij[]>([]);
+  const [pdfFout, setPdfFout] = useState<string | null>(null);
+  const [pdfLaden, setPdfLaden] = useState(false);
+  const [pdfImportLaden, setPdfImportLaden] = useState(false);
+  const [pdfResultaat, setPdfResultaat] = useState<{ succes: number; fouten: string[] } | null>(null);
 
   function verwerkCsvBestand(bestand: File) {
     setCsvFout(null); setBulkResultaat(null);
@@ -236,6 +299,120 @@ export default function FactuurImportHistorischPage() {
     setCsvRijen(prev => prev.map(r => r._id === id ? { ...r, [veld]: waarde, fout: undefined } : r));
   }
 
+  function updatePdfRij(id: string, veld: keyof CsvRij, waarde: string | boolean) {
+    setPdfRijen(prev => prev.map(r => r._id === id ? { ...r, [veld]: waarde as never, fout: undefined } : r));
+  }
+
+  function matchKlant(naam?: string | null, email?: string | null): Klant | undefined {
+    const naamNorm = (naam ?? "").trim().toLowerCase();
+    const emailNorm = (email ?? "").trim().toLowerCase();
+    return klanten.find(k => {
+      const klantNaam = k.naam.toLowerCase();
+      const bedrijf = (k.bedrijf ?? "").toLowerCase();
+      const klantEmail = (k.email ?? "").toLowerCase();
+      return Boolean(
+        (emailNorm && klantEmail === emailNorm) ||
+        (naamNorm && (klantNaam === naamNorm || bedrijf === naamNorm))
+      );
+    });
+  }
+
+  function rijUitScan(bestand: GekozenBestand, scan: ScanPdfResultaat): CsvRij {
+    const totaal = scan.totaal ?? 0;
+    const btw = scan.btwBedrag ?? 0;
+    const subtotaal = scan.subtotaal ?? (totaal - btw);
+    const klant = matchKlant(scan.klantNaam, scan.klantEmail);
+    const nummerUitNaam = bestand.naam.replace(/\.[^.]+$/, "");
+
+    return {
+      _id: crypto.randomUUID(),
+      nummer: scan.nummer ?? nummerUitNaam,
+      klantNaam: scan.klantNaam ?? "",
+      klantId: klant?.id ?? "",
+      datum: scan.datum ?? vandaagString(),
+      vervaldatum: scan.vervaldatum ?? scan.datum ?? vandaagString(),
+      subtotaal: bedragVoorInput(subtotaal),
+      btwBedrag: bedragVoorInput(btw),
+      totaal: bedragVoorInput(totaal),
+      status: scan.status ?? "BETAALD",
+      notities: scan.notities ?? scan.omschrijving ?? "",
+      bronBestand: bestand.pad,
+      bronNaam: bestand.naam,
+      scanStatus: "klaar",
+      klantEmail: scan.klantEmail ?? "",
+      klantAdres: scan.klantAdres ?? "",
+      isNieuweKlant: !klant,
+      nieuweKlantAanmaken: !klant,
+      geextraheerdRegels: scan.regels ?? [],
+      scanWaarschuwingen: scan.warnings ?? [],
+      duplicateMelding: scan.duplicate?.label,
+      fout: scan.duplicate?.label ?? (!scan.nummer ? "Factuurnummer controleren" : !scan.datum ? "Factuurdatum controleren" : scan.importStatus === "needs_review" ? (scan.warnings?.[0] ?? "Controleer de herkende gegevens") : undefined),
+    };
+  }
+
+  async function scanPdfBestanden() {
+    if (pdfLaden) return;
+    setPdfFout(null);
+    setPdfResultaat(null);
+    const api = window.api.facturen as unknown as {
+      kiesBestanden: () => Promise<GekozenBestand[]>;
+      scanPdfLokaal: (pad: string) => Promise<ScanPdfResultaat>;
+    };
+
+    const bestanden = await api.kiesBestanden();
+    if (!bestanden.length) return;
+
+    const startRijen: CsvRij[] = bestanden.map(bestand => ({
+      _id: crypto.randomUUID(),
+      nummer: bestand.naam.replace(/\.[^.]+$/, ""),
+      klantNaam: "",
+      klantId: "",
+      datum: vandaagString(),
+      vervaldatum: vandaagString(),
+      subtotaal: "0.00",
+      btwBedrag: "0.00",
+      totaal: "0.00",
+      status: "BETAALD",
+      notities: "",
+      bronBestand: bestand.pad,
+      bronNaam: bestand.naam,
+      scanStatus: "wacht",
+      nieuweKlantAanmaken: false,
+    }));
+
+    setPdfRijen(prev => [...prev, ...startRijen]);
+    setPdfLaden(true);
+
+    for (let i = 0; i < bestanden.length; i++) {
+      const bestand = bestanden[i];
+      const rijId = startRijen[i]._id;
+      setPdfRijen(prev => prev.map(r => r._id === rijId ? { ...r, scanStatus: "bezig", scanFout: undefined } : r));
+
+      try {
+        const scan = await api.scanPdfLokaal(bestand.pad);
+        if (!scan.succes) {
+          setPdfRijen(prev => prev.map(r => r._id === rijId ? {
+            ...r,
+            scanStatus: "fout",
+            scanFout: scan.fout ?? "Scan mislukt",
+          } : r));
+          continue;
+        }
+
+        const gescand = rijUitScan(bestand, scan);
+        setPdfRijen(prev => prev.map(r => r._id === rijId ? { ...gescand, _id: rijId } : r));
+      } catch (e: unknown) {
+        setPdfRijen(prev => prev.map(r => r._id === rijId ? {
+          ...r,
+          scanStatus: "fout",
+          scanFout: e instanceof Error ? e.message : "Scan mislukt",
+        } : r));
+      }
+    }
+
+    setPdfLaden(false);
+  }
+
   async function importeerAlles() {
     const ongeldig = csvRijen.filter(r => !r.nummer || !r.klantId || !r.datum || !r.vervaldatum);
     if (ongeldig.length > 0) {
@@ -271,9 +448,122 @@ export default function FactuurImportHistorischPage() {
     if (fouten.length === 0) setCsvRijen([]);
   }
 
+  async function zorgVoorPdfKlant(rij: CsvRij): Promise<string> {
+    if (rij.klantId) return rij.klantId;
+    if (!rij.nieuweKlantAanmaken) {
+      throw new Error("Kies een klant of vink 'nieuwe klant aanmaken' aan.");
+    }
+
+    const naam = rij.klantNaam.trim();
+    if (!naam) throw new Error("Klantnaam ontbreekt.");
+
+    const adresVelden = splitsKlantAdres(rij.klantAdres);
+    const nieuweKlant = await window.api.klanten.create({
+      naam,
+      email: rij.klantEmail?.trim() || undefined,
+      ...adresVelden,
+      land: "Nederland",
+      taal: "nl",
+    }) as Klant;
+
+    setKlanten(prev => [...prev, nieuweKlant].sort((a, b) => a.naam.localeCompare(b.naam)));
+    setPdfRijen(prev => prev.map(r => r._id === rij._id ? {
+      ...r,
+      klantId: nieuweKlant.id,
+      isNieuweKlant: false,
+      nieuweKlantAanmaken: false,
+    } : r));
+
+    return nieuweKlant.id;
+  }
+
+  async function importeerPdfRijen() {
+    const rijen = pdfRijen.filter(r => r.scanStatus !== "fout");
+    if (rijen.length === 0) {
+      setPdfFout("Er zijn geen gescande PDF-facturen klaar om te importeren.");
+      return;
+    }
+
+    setPdfImportLaden(true);
+    setPdfFout(null);
+    setPdfResultaat(null);
+
+    const importFn = (window.api.facturen as unknown as { importeerHistorisch: (d: unknown) => Promise<{ id: string; nummer: string }> }).importeerHistorisch;
+    const fouten: string[] = [];
+    const foutenPerRij = new Map<string, string>();
+    const geimporteerd = new Set<string>();
+    let succesCount = 0;
+
+    for (const rij of rijen) {
+      try {
+        if (!rij.nummer || !rij.datum || !rij.vervaldatum) {
+          throw new Error("Factuurnummer, factuurdatum en vervaldatum zijn verplicht.");
+        }
+
+        const klantIdVoorImport = await zorgVoorPdfKlant(rij);
+        const totaal = parseBedragInput(rij.totaal);
+        const btw = parseBedragInput(rij.btwBedrag);
+        const subtotaal = parseBedragInput(rij.subtotaal) || (totaal - btw);
+        const btwPercentage = subtotaal > 0 && btw > 0 ? (btw / subtotaal) * 100 : 0;
+        const regels = rij.geextraheerdRegels?.length
+          ? rij.geextraheerdRegels.map(regel => {
+              const aantal = regel.aantal || 1;
+              const regelTotaal = regel.totaal || regel.bedrag || 0;
+              return {
+                omschrijving: regel.omschrijving || `Factuur ${rij.nummer}`,
+                aantal,
+                prijs: aantal > 0 ? (regel.bedrag || regelTotaal) / aantal : regelTotaal,
+                btwPercentage: 0,
+                kortingPercentage: 0,
+                totaal: regelTotaal,
+              };
+            })
+          : [{
+              omschrijving: rij.notities || `Factuur ${rij.nummer}`,
+              aantal: 1,
+              prijs: subtotaal,
+              btwPercentage,
+              kortingPercentage: 0,
+              totaal,
+            }];
+
+        await importFn({
+          nummer: rij.nummer,
+          klantId: klantIdVoorImport,
+          datum: rij.datum,
+          vervaldatum: rij.vervaldatum,
+          status: rij.status,
+          subtotaal,
+          btwBedrag: btw,
+          totaal,
+          handmatigBedrag: true,
+          notities: rij.notities || undefined,
+          bronBestandPad: rij.bronBestand,
+          verzondenOp: rij.status !== "CONCEPT" ? rij.datum : undefined,
+          betaaldOp: rij.status === "BETAALD" ? rij.datum : undefined,
+          regels,
+        });
+
+        succesCount++;
+        geimporteerd.add(rij._id);
+      } catch (e: unknown) {
+        const melding = e instanceof Error ? e.message : "Import mislukt";
+        fouten.push(`${rij.nummer || rij.bronNaam || "PDF"}: ${melding}`);
+        foutenPerRij.set(rij._id, melding);
+      }
+    }
+
+    setPdfRijen(prev => prev
+      .filter(r => !geimporteerd.has(r._id))
+      .map(r => foutenPerRij.has(r._id) ? { ...r, fout: foutenPerRij.get(r._id) } : r));
+    setPdfResultaat({ succes: succesCount, fouten });
+    setPdfImportLaden(false);
+  }
+
   const MODI = [
     { id: "handmatig" as const, label: "Eén factuur" },
     { id: "bulk" as const, label: "Bulk via CSV" },
+    { id: "pdf" as const, label: "PDF-facturen" },
   ];
 
   return (
@@ -630,6 +920,227 @@ export default function FactuurImportHistorischPage() {
                   <Button onClick={importeerAlles} loading={bulkLaden} size="lg">
                     <CheckCircle className="h-4 w-4" />
                     Importeer {csvRijen.length} facturen
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* PDF FACTUREN */}
+        {modus === "pdf" && (
+          <div className="space-y-6">
+            {pdfFout && (
+              <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700 flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0" />{pdfFout}
+              </div>
+            )}
+
+            {pdfResultaat && (
+              <div className={`rounded-lg border px-4 py-4 text-sm space-y-2 ${pdfResultaat.fouten.length === 0 ? "bg-green-50 border-green-200 text-green-800" : "bg-amber-50 border-amber-200 text-amber-800"}`}>
+                <p className="font-semibold flex items-center gap-2">
+                  <CheckCircle className="h-4 w-4" />
+                  {pdfResultaat.succes} factuur{pdfResultaat.succes !== 1 ? "en" : ""} succesvol geimporteerd
+                </p>
+                {pdfResultaat.fouten.length > 0 && (
+                  <ul className="list-disc list-inside space-y-0.5 text-xs">
+                    {pdfResultaat.fouten.map((f, i) => <li key={i}>{f}</li>)}
+                  </ul>
+                )}
+                {pdfResultaat.fouten.length === 0 && pdfRijen.length === 0 && (
+                  <Button size="sm" variant="outline" onClick={() => navigate("/facturen")}>Ga naar facturen</Button>
+                )}
+              </div>
+            )}
+
+            <Card>
+              <CardHeader>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <CardTitle className="flex items-center gap-2"><FileText className="h-5 w-5" />PDF-facturen inlezen</CardTitle>
+                    <CardDescription>Selecteer een of meerdere PDF-facturen. Tekstlagen worden direct gelezen; gescande PDF's gaan via lokale OCR.</CardDescription>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {pdfRijen.length > 0 && (
+                      <Button variant="outline" onClick={() => { setPdfRijen([]); setPdfResultaat(null); }} disabled={pdfLaden || pdfImportLaden}>
+                        Lijst leegmaken
+                      </Button>
+                    )}
+                    <Button variant="outline" onClick={scanPdfBestanden} loading={pdfLaden} disabled={pdfLaden || pdfImportLaden}>
+                      <Upload className="h-4 w-4" />
+                      PDF kiezen
+                    </Button>
+                    {pdfRijen.length > 0 && (
+                      <Button onClick={importeerPdfRijen} loading={pdfImportLaden} disabled={pdfLaden || pdfImportLaden}>
+                        <CheckCircle className="h-4 w-4" />
+                        Importeer {pdfRijen.filter(r => r.scanStatus !== "fout").length} facturen
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </CardHeader>
+              {pdfRijen.length === 0 && (
+                <CardContent>
+                  <div
+                    onClick={scanPdfBestanden}
+                    className="border-2 border-dashed border-gray-300 rounded-xl p-10 text-center cursor-pointer hover:border-indigo-400 hover:bg-indigo-50/40 transition-colors"
+                  >
+                    <Upload className="h-8 w-8 text-gray-400 mx-auto mb-3" />
+                    <p className="text-sm font-medium text-gray-700">Klik om PDF-facturen te selecteren</p>
+                    <p className="text-xs text-gray-500 mt-1">Je kunt meerdere bestanden tegelijk kiezen. De gegevens blijven corrigeerbaar voor import.</p>
+                  </div>
+                </CardContent>
+              )}
+            </Card>
+
+            {pdfRijen.length > 0 && (
+              <div className="space-y-3">
+                {pdfRijen.map(rij => {
+                  const isBezig = rij.scanStatus === "wacht" || rij.scanStatus === "bezig";
+                  const mistKlant = !rij.klantId && !rij.nieuweKlantAanmaken;
+                  const heeftFout = rij.scanStatus === "fout" || !rij.nummer || !rij.datum || !rij.vervaldatum || mistKlant || Boolean(rij.fout);
+                  const statusTekst = rij.scanStatus === "bezig" ? "Bezig" : rij.scanStatus === "wacht" ? "Wacht" : rij.scanStatus === "fout" ? "Fout" : "Klaar";
+                  const statusClass = rij.scanStatus === "fout"
+                    ? "bg-red-50 text-red-700 border-red-200"
+                    : rij.scanStatus === "klaar"
+                      ? "bg-green-50 text-green-700 border-green-200"
+                      : "bg-gray-50 text-gray-600 border-gray-200";
+
+                  return (
+                    <div key={rij._id} className={`rounded-xl border p-4 space-y-4 ${heeftFout ? "border-amber-300 bg-amber-50/40" : "border-gray-200 bg-white"}`}>
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="font-medium text-gray-900">{rij.bronNaam ?? rij.nummer}</p>
+                          <p className="text-xs text-gray-500 break-all">{rij.bronBestand}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium ${statusClass}`}>
+                            {rij.scanStatus === "bezig" && <Loader2 className="h-3 w-3 animate-spin" />}
+                            {statusTekst}
+                          </span>
+                          <button
+                            onClick={() => setPdfRijen(prev => prev.filter(r => r._id !== rij._id))}
+                            className="h-8 w-8 flex items-center justify-center rounded-lg border border-gray-200 text-gray-400 hover:text-red-500 hover:border-red-200"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {(rij.scanFout || rij.fout) && (
+                        <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
+                          {rij.scanFout || rij.fout}
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">Factuurnummer *</label>
+                          <input value={rij.nummer} disabled={isBezig} onChange={e => updatePdfRij(rij._id, "nummer", e.target.value)} className={`w-full h-8 rounded-lg border px-3 text-sm ${!rij.nummer ? "border-red-300 bg-red-50" : "border-gray-300"} focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:bg-gray-100`} />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">Factuurdatum *</label>
+                          <input type="date" value={rij.datum} disabled={isBezig} onChange={e => updatePdfRij(rij._id, "datum", e.target.value)} className={`w-full h-8 rounded-lg border px-3 text-sm ${!rij.datum ? "border-red-300 bg-red-50" : "border-gray-300"} focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:bg-gray-100`} />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">Vervaldatum *</label>
+                          <input type="date" value={rij.vervaldatum} disabled={isBezig} onChange={e => updatePdfRij(rij._id, "vervaldatum", e.target.value)} className={`w-full h-8 rounded-lg border px-3 text-sm ${!rij.vervaldatum ? "border-red-300 bg-red-50" : "border-gray-300"} focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:bg-gray-100`} />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">Status</label>
+                          <select value={rij.status} disabled={isBezig} onChange={e => updatePdfRij(rij._id, "status", e.target.value)} className="w-full h-8 rounded-lg border border-gray-300 px-2 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:bg-gray-100">
+                            <option value="BETAALD">Betaald</option>
+                            <option value="VERZONDEN">Verzonden</option>
+                            <option value="VERLOPEN">Verlopen</option>
+                            <option value="CONCEPT">Concept</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div className="sm:col-span-2">
+                          <label className="block text-xs text-gray-500 mb-1">
+                            Klant * {rij.klantNaam && <span className="text-gray-400">- gevonden: {rij.klantNaam}</span>}
+                          </label>
+                          <select
+                            value={rij.klantId}
+                            disabled={isBezig}
+                            onChange={e => {
+                              const gekozenKlantId = e.target.value;
+                              setPdfRijen(prev => prev.map(r => r._id === rij._id ? {
+                                ...r,
+                                klantId: gekozenKlantId,
+                                nieuweKlantAanmaken: gekozenKlantId ? false : r.nieuweKlantAanmaken,
+                                fout: undefined,
+                              } : r));
+                            }}
+                            className={`w-full h-8 rounded-lg border px-2 text-sm ${mistKlant ? "border-red-300 bg-red-50" : "border-gray-300"} focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:bg-gray-100`}
+                          >
+                            <option value="">Kies bestaande klant...</option>
+                            {klanten.map(k => <option key={k.id} value={k.id}>{k.bedrijf ?? k.naam}</option>)}
+                          </select>
+                        </div>
+                        <label className="flex items-end gap-2 text-sm text-gray-700 pb-1">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(rij.nieuweKlantAanmaken)}
+                            disabled={isBezig || Boolean(rij.klantId)}
+                            onChange={e => updatePdfRij(rij._id, "nieuweKlantAanmaken", e.target.checked)}
+                            className="h-4 w-4 text-indigo-600 rounded"
+                          />
+                          Nieuwe klant aanmaken
+                        </label>
+                      </div>
+
+                      {rij.nieuweKlantAanmaken && !rij.klantId && (
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 rounded-lg border border-indigo-100 bg-indigo-50/40 p-3">
+                          <div>
+                            <label className="block text-xs text-gray-500 mb-1">Nieuwe klantnaam *</label>
+                            <input value={rij.klantNaam} disabled={isBezig} onChange={e => updatePdfRij(rij._id, "klantNaam", e.target.value)} className={`w-full h-8 rounded-lg border px-3 text-sm ${!rij.klantNaam ? "border-red-300 bg-red-50" : "border-gray-300"} focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:bg-gray-100`} />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-500 mb-1">E-mail</label>
+                            <input value={rij.klantEmail ?? ""} disabled={isBezig} onChange={e => updatePdfRij(rij._id, "klantEmail", e.target.value)} className="w-full h-8 rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:bg-gray-100" />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-500 mb-1">Adres</label>
+                            <input value={rij.klantAdres ?? ""} disabled={isBezig} onChange={e => updatePdfRij(rij._id, "klantAdres", e.target.value)} className="w-full h-8 rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:bg-gray-100" />
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">Subtotaal</label>
+                          <input type="number" step="0.01" value={rij.subtotaal} disabled={isBezig} onChange={e => updatePdfRij(rij._id, "subtotaal", e.target.value)} className="w-full h-8 rounded-lg border border-gray-300 px-3 text-sm text-right focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:bg-gray-100" />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">BTW-bedrag</label>
+                          <input type="number" step="0.01" value={rij.btwBedrag} disabled={isBezig} onChange={e => updatePdfRij(rij._id, "btwBedrag", e.target.value)} className="w-full h-8 rounded-lg border border-gray-300 px-3 text-sm text-right focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:bg-gray-100" />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">Totaal</label>
+                          <input type="number" step="0.01" value={rij.totaal} disabled={isBezig} onChange={e => updatePdfRij(rij._id, "totaal", e.target.value)} className="w-full h-8 rounded-lg border border-gray-300 px-3 text-sm text-right font-medium focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:bg-gray-100" />
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          {rij.geextraheerdRegels?.length
+                            ? `${rij.geextraheerdRegels.length} factuurregel${rij.geextraheerdRegels.length !== 1 ? "s" : ""} herkend`
+                            : "Geen losse factuurregels herkend"}
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">Notities / omschrijving</label>
+                        <input value={rij.notities} disabled={isBezig} onChange={e => updatePdfRij(rij._id, "notities", e.target.value)} placeholder="Optioneel" className="w-full h-8 rounded-lg border border-gray-300 px-3 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:bg-gray-100" />
+                      </div>
+                    </div>
+                  );
+                })}
+
+                <div className="flex justify-end pt-2">
+                  <Button onClick={importeerPdfRijen} loading={pdfImportLaden} disabled={pdfLaden || pdfImportLaden} size="lg">
+                    <CheckCircle className="h-4 w-4" />
+                    Importeer {pdfRijen.filter(r => r.scanStatus !== "fout").length} facturen
                   </Button>
                 </div>
               </div>
