@@ -58,7 +58,8 @@ export function ScanModal({ open, onClose, onOpslaan }: Props) {
   const [ladenOcr, setLadenOcr] = useState(false)
   const [opslaan, setOpslaan] = useState(false)
   const [tekenbox, setTekenbox] = useState<TekenBox | null>(null)
-  const [tekenStart, setTekenStart] = useState<{ x: number; y: number } | null>(null)
+  const tekenStartRef = useRef<{ x: number; y: number } | null>(null)
+  const tekenboxRef = useRef<TekenBox | null>(null)
   const imgWrapperRef = useRef<HTMLDivElement>(null)
   const imgRef = useRef<HTMLImageElement>(null)
 
@@ -66,7 +67,7 @@ export function ScanModal({ open, onClose, onOpslaan }: Props) {
     setBestandPad(null); setBonPad(null); setPreviewBase64(null)
     setAantalPaginas(1); setHuidigePagina(1)
     setFormulier(LEEG_SCAN_FORMULIER); setGeselecteerdVeld(null)
-    setTekenbox(null); setTekenStart(null)
+    setTekenbox(null); tekenStartRef.current = null; tekenboxRef.current = null
   }
 
   const handleClose = () => { resetState(); onClose() }
@@ -123,26 +124,30 @@ export function ScanModal({ open, onClose, onOpslaan }: Props) {
   const onMouseDown = (e: React.MouseEvent) => {
     if (!previewBase64 || e.button !== 0) return
     e.preventDefault()
-    setTekenStart(getRelPos(e))
+    tekenStartRef.current = getRelPos(e)
+    tekenboxRef.current = null
     setTekenbox(null)
   }
 
   const onMouseMove = (e: React.MouseEvent) => {
-    if (!tekenStart) return
+    if (!tekenStartRef.current) return
     e.preventDefault()
     const pos = getRelPos(e)
-    setTekenbox({
-      x: Math.min(tekenStart.x, pos.x),
-      y: Math.min(tekenStart.y, pos.y),
-      w: Math.abs(pos.x - tekenStart.x),
-      h: Math.abs(pos.y - tekenStart.y),
-    })
+    const box = {
+      x: Math.min(tekenStartRef.current.x, pos.x),
+      y: Math.min(tekenStartRef.current.y, pos.y),
+      w: Math.abs(pos.x - tekenStartRef.current.x),
+      h: Math.abs(pos.y - tekenStartRef.current.y),
+    }
+    tekenboxRef.current = box
+    setTekenbox(box)
   }
 
   const onMouseUp = async (e: React.MouseEvent) => {
-    if (!tekenStart || !bestandPad) { setTekenStart(null); return }
-    const box = tekenbox
-    setTekenStart(null)
+    if (!tekenStartRef.current || !bestandPad) { tekenStartRef.current = null; return }
+    const box = tekenboxRef.current
+    tekenStartRef.current = null
+    tekenboxRef.current = null
     if (!box || box.w < 0.005 || box.h < 0.005) { setTekenbox(null); return }
 
     setLadenOcr(true)
@@ -210,7 +215,11 @@ export function ScanModal({ open, onClose, onOpslaan }: Props) {
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-gray-950">
+    <div
+      className="fixed inset-0 z-50 flex flex-col bg-gray-950"
+      onMouseMove={onMouseMove}
+      onMouseUp={onMouseUp}
+    >
       {/* Topbalk */}
       <div className="flex items-center justify-between px-4 py-2 bg-gray-900 text-white shrink-0 border-b border-gray-700">
         <div className="flex items-center gap-3">
@@ -357,8 +366,6 @@ export function ScanModal({ open, onClose, onOpslaan }: Props) {
                   className="relative inline-block select-none"
                   style={{ cursor: previewBase64 ? 'crosshair' : 'default' }}
                   onMouseDown={onMouseDown}
-                  onMouseMove={onMouseMove}
-                  onMouseUp={onMouseUp}
                 >
                   <img
                     ref={imgRef}
