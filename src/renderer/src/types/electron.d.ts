@@ -131,7 +131,17 @@ interface ElectronAPI {
     delete: (id: string) => Promise<{ succes: boolean }>
   }
   scan: {
-    kiesEnScan: () => Promise<{ succes: boolean; velden?: { klantNaam?: string; nummer?: string; datum?: string; vervaldatum?: string; subtotaal?: number; btwBedrag?: number; totaal?: number; omschrijving?: string; notities?: string; documentType?: string; error?: string }; bonPad?: string; fout?: string }>
+    openEnPreview: () => Promise<{
+      succes: boolean
+      bestandPad?: string
+      bonPad?: string
+      previewBase64?: string
+      aantalPaginas?: number
+      velden?: { klantNaam?: string; nummer?: string; datum?: string; vervaldatum?: string; subtotaal?: number; btwBedrag?: number; totaal?: number; omschrijving?: string; notities?: string; error?: string }
+      fout?: string
+    }>
+    renderPagina: (data: { bestandPad: string; pagina: number }) => Promise<{ succes: boolean; previewBase64?: string; fout?: string }>
+    ocrUitsnede: (data: { bestandPad: string; pagina: number; x: number; y: number; breedte: number; hoogte: number }) => Promise<{ succes: boolean; tekst: string; fout?: string }>
   }
   vasteActiva: {
     list: () => Promise<unknown[]>
