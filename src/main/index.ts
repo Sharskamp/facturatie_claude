@@ -3823,8 +3823,8 @@ function setupIpcHandlers() {
         await Promise.all(tegels.map(t => ocrOpGedeelte(t.x, t.y, t.w, t.h, tegelSchaal)))
       }
 
-      const uniek = dedupliceerdOcrBoxes(alleBoxes)
-      return { succes: true, regels: groeperNaarScanRegels(uniek) }
+      // Geef individuele woorden terug zodat elk woord apart klikbaar is
+      return { succes: true, regels: dedupliceerdOcrBoxes(alleBoxes) }
     } catch (e) {
       console.error('[SCAN:VOLLEDIG]', e)
       return { succes: false, regels: [] }
