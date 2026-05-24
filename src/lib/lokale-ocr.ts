@@ -12,6 +12,7 @@ import * as os from 'os'
 import * as path from 'path'
 import { BrowserWindow } from 'electron'
 import { ocrAfbeelding, type OcrWoord } from './paddle-ocr'
+import { execSync } from 'child_process'
 
 export interface OcrRegel {
   omschrijving: string
@@ -195,39 +196,29 @@ interface PdfPage {
 // ── PDF → PNG via Electron offscreen BrowserWindow ───────────────────────────
 export async function pdfPaginaNaarPng(pad: string, paginaIndex = 0): Promise<Buffer> {
   try {
-    // Probeer pdf2pic eerst
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { convert } = require('pdf2pic')
+    // Gebruik ImageMagick convert command direct
+    const outputPath = path.join(os.tmpdir(), `pdf_page_${Date.now()}_${paginaIndex}.png`)
+    const inputSpec = `${pad}[${paginaIndex}]`
 
-    const options = {
-      density: 150,
-      saveFilename: `page_${paginaIndex}`,
-      savePath: os.tmpdir(),
-      format: 'png',
-      width: 1240,
-      height: 1754,
-    }
-
-    const converted = await convert({
-      url: pad,
-      page: paginaIndex + 1,
-      ...options
+    execSync(`convert -density 150 "${inputSpec}" -quality 90 "${outputPath}"`, {
+      timeout: 30000,
+      stdio: 'pipe'
     })
 
-    if (converted && converted.path && fs.existsSync(converted.path)) {
-      const pngBuffer = fs.readFileSync(converted.path)
+    if (fs.existsSync(outputPath)) {
+      const buffer = fs.readFileSync(outputPath)
       try {
-        fs.unlinkSync(converted.path)
+        fs.unlinkSync(outputPath)
       } catch {
         // ignore
       }
-      return pngBuffer
+      return buffer
     }
-  } catch {
-    // pdf2pic failed - dat's oké, we gebruiken een placeholder
+  } catch (e) {
+    console.error('ImageMagick convert failed:', e instanceof Error ? e.message : String(e))
   }
 
-  // Fallback: maak een placeholder afbeelding (zwart met PDF icon text)
+  // Fallback: maak een placeholder afbeelding
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { createCanvas } = require('canvas')
   const canvas = createCanvas(1240, 1754)
