@@ -4207,11 +4207,30 @@ app.whenReady().then(async () => {
         title: 'Database beschadigd',
         message: 'De database is beschadigd en kan niet worden geopend.',
         detail: `Er is automatisch een back-up gemaakt van uw database:\n${backupPad}\n\nKies hoe u verder wilt gaan:`,
-        buttons: ['Opnieuw beginnen (data kwijt)', 'Afsluiten'],
-        defaultId: 1,
-        cancelId: 1,
+        buttons: ['Herstel uit back-up...', 'Opnieuw beginnen (data kwijt)', 'Afsluiten'],
+        defaultId: 0,
+        cancelId: 2,
       })
       if (keuze === 0) {
+        // Laat gebruiker een back-upbestand kiezen
+        const gekozen = dialog.showOpenDialogSync({
+          title: 'Kies back-up database',
+          filters: [{ name: 'SQLite database', extensions: ['db', 'sqlite'] }],
+          properties: ['openFile'],
+        })
+        if (!gekozen || gekozen.length === 0) { app.quit(); return }
+        try { fs.unlinkSync(dbPath) } catch {}
+        try { fs.copyFileSync(gekozen[0], dbPath) } catch {}
+        try {
+          runMigratie(dbPath)
+          logSchrijven(`Database hersteld vanuit back-up: ${gekozen[0]}`)
+        } catch (e2) {
+          logSchrijven(`Herstel uit back-up mislukt: ${e2}`)
+          dialog.showErrorBox('Herstel mislukt', `De gekozen back-up kon niet worden geopend.\n\nFout: ${e2}`)
+          app.quit()
+          return
+        }
+      } else if (keuze === 1) {
         try { fs.unlinkSync(dbPath) } catch {}
         try {
           runMigratie(dbPath)
