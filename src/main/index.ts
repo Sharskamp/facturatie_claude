@@ -4196,12 +4196,44 @@ app.whenReady().then(async () => {
     logSchrijven('Database migratie succesvol')
   } catch (e) {
     logSchrijven(`Database migratie fout: ${e}`)
-    dialog.showErrorBox(
-      'Database initialisatie mislukt',
-      `Er is een fout opgetreden bij het bijwerken van de database.\n\nFout: ${e}\n\nDe applicatie wordt afgesloten. Maak een back-up van uw database en probeer opnieuw.`
-    )
-    app.quit()
-    return
+    const foutTekst = String(e)
+    const isCorrupt = foutTekst.includes('malformed') || foutTekst.includes('disk image') || foutTekst.includes('corrupt')
+    if (isCorrupt && fs.existsSync(dbPath)) {
+      const backupPad = dbPath.replace(/\.db$/, '') + `.corrupt.${Date.now()}.db`
+      try { fs.copyFileSync(dbPath, backupPad) } catch {}
+      logSchrijven(`Beschadigde database opgeslagen als: ${backupPad}`)
+      const keuze = dialog.showMessageBoxSync({
+        type: 'error',
+        title: 'Database beschadigd',
+        message: 'De database is beschadigd en kan niet worden geopend.',
+        detail: `Er is automatisch een back-up gemaakt van uw database:\n${backupPad}\n\nKies hoe u verder wilt gaan:`,
+        buttons: ['Opnieuw beginnen (data kwijt)', 'Afsluiten'],
+        defaultId: 1,
+        cancelId: 1,
+      })
+      if (keuze === 0) {
+        try { fs.unlinkSync(dbPath) } catch {}
+        try {
+          runMigratie(dbPath)
+          logSchrijven('Nieuwe database aangemaakt na herstel')
+        } catch (e2) {
+          logSchrijven(`Herstel mislukt: ${e2}`)
+          dialog.showErrorBox('Herstel mislukt', `De database kon niet opnieuw worden aangemaakt.\n\nFout: ${e2}`)
+          app.quit()
+          return
+        }
+      } else {
+        app.quit()
+        return
+      }
+    } else {
+      dialog.showErrorBox(
+        'Database initialisatie mislukt',
+        `Er is een fout opgetreden bij het bijwerken van de database.\n\nFout: ${e}\n\nDe applicatie wordt afgesloten. Maak een back-up van uw database en probeer opnieuw.`
+      )
+      app.quit()
+      return
+    }
   }
 
   initPrisma()
