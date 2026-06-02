@@ -10,6 +10,7 @@ import { haalAgendaAfspraken, maakGoogleAuthUrl, wisselCodeVoorTokens, vernieuwA
 import { autoUpdater } from 'electron-updater'
 import * as os from 'os'
 
+app.commandLine.appendSwitch('lang', 'nl')
 app.setName('Streamline Facturatie')
 
 let prisma: PrismaClient

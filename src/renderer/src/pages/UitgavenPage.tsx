@@ -319,7 +319,7 @@ export default function UitgavenPagina() {
                         await window.api.uitgaven.update(bonScanInfo.uitgaveId, updateData);
                         await haalUitgavenOp();
                         toonMelding("succes",
-                          `Ingevuld: ${res.bedrag != null ? `€${res.bedrag}` : ""}${res.leverancier ? ` bij ${res.leverancier}` : ""}${res.datum ? ` op ${res.datum}` : ""}`
+                          `Ingevuld: ${res.bedrag != null ? `€${res.bedrag}` : ""}${res.leverancier ? ` bij ${res.leverancier}` : ""}${res.datum ? ` op ${formatDatum(res.datum)}` : ""}`
                         );
                       } else {
                         toonMelding("fout", "Geen gegevens herkend op de bon");
