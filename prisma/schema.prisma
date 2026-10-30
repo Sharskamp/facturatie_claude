@@ -70,6 +70,10 @@ model User {
   googleClientId        String?
   googleClientSecret    String?
   googlePrimaryCalendarId String?
+  // Auto & bijtelling
+  autoKenteken          String?
+  autoCatalogusWaarde   Float?
+  autoBijtellingsPercentage Float @default(16)
   // Invoice layout settings
   layoutPrimairKleur    String    @default("#4f46e5")
   layoutSecundairKleur  String?
@@ -374,8 +378,20 @@ model VasteActiva {
   categorieNaam       String?
   notities            String?
   actief              Boolean  @default(true)
+  kiaEligible         Boolean  @default(false)
   aangemaakt          DateTime @default(now())
   bijgewerkt          DateTime @updatedAt
+}
+
+model PriveTransactie {
+  id           String   @id @default(cuid())
+  datum        DateTime
+  type         String
+  bedrag       Float
+  omschrijving String
+  notities     String?
+  aangemaakt   DateTime @default(now())
+  bijgewerkt   DateTime @updatedAt
 }
 
 model Product {

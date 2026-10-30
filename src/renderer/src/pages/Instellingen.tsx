@@ -39,7 +39,7 @@ import { FactuurLayoutPreview } from "@/components/facturen/FactuurLayoutPreview
 import { FactuurHtmlDocument } from "@/components/facturen/FactuurHtmlDocument";
 import { type FactuurHtmlFactuur } from "@/lib/factuur-html";
 
-type Tab = "bedrijf" | "facturen" | "layout" | "email" | "google" | "kor" | "overig" | "geavanceerd" | "navigatie" | "bank";
+type Tab = "bedrijf" | "facturen" | "layout" | "email" | "google" | "kor" | "overig" | "geavanceerd" | "navigatie" | "bank" | "auto";
 
 const TAB_CONFIG: Array<{ id: Tab; label: string; icon: React.ElementType }> = [
   { id: "bedrijf", label: "Bedrijfsgegevens", icon: Building2 },
@@ -51,6 +51,7 @@ const TAB_CONFIG: Array<{ id: Tab; label: string; icon: React.ElementType }> = [
   { id: "overig", label: "Overig", icon: MoreHorizontal },
   { id: "navigatie", label: "Navigatie", icon: Menu },
   { id: "bank", label: "Bankimport", icon: CreditCard },
+  { id: "auto", label: "Auto & bijtelling", icon: Car },
   { id: "geavanceerd", label: "Geavanceerd", icon: Settings },
 ];
 
@@ -67,6 +68,8 @@ const ALLE_PAGINAS = [
   { href: "/bank-import", naam: "Bankimport" },
   { href: "/producten", naam: "Producten" },
   { href: "/vaste-activa", naam: "Vaste activa" },
+  { href: "/prive-transacties", naam: "Privé transacties" },
+  { href: "/belasting", naam: "Belastingrapport" },
   { href: "/rapporten", naam: "Rapporten" },
 ];
 
@@ -153,6 +156,10 @@ interface Instellingen {
   bankWeergaveVelden?: string;
   uitgavenWeergaveVelden?: string;
   spaarrekeningen?: string;
+  // Auto & bijtelling
+  autoKenteken?: string;
+  autoCatalogusWaarde?: number;
+  autoBijtellingsPercentage?: number;
 }
 
 const ALLE_BANK_VELDEN = [
@@ -2095,6 +2102,69 @@ export default function InstellingenPagina() {
                     </>
                   );
                 })()}
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {actieveTab === "auto" && (
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2"><Car className="h-5 w-5" /> Auto & bijtelling</CardTitle>
+                <CardDescription>
+                  Registreer je zakelijke auto voor automatische bijtellingsberekening in het belastingrapport.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <Input
+                    label="Kenteken"
+                    value={instellingen.autoKenteken ?? ""}
+                    onChange={(e) => updateVeld("autoKenteken", e.target.value)}
+                    placeholder="Bijv. AB-123-C"
+                  />
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1.5">Cataloguswaarde (€)</label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm select-none">€</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="100"
+                        value={instellingen.autoCatalogusWaarde ?? ""}
+                        onChange={(e) => updateVeld("autoCatalogusWaarde", parseFloat(e.target.value) || 0)}
+                        className="flex h-9 w-full rounded-lg border border-gray-300 bg-white pl-7 pr-3 py-1 text-sm text-gray-900 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                        placeholder="0"
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">Bijtellingspercentage</label>
+                  <select
+                    value={String(instellingen.autoBijtellingsPercentage ?? 16)}
+                    onChange={(e) => updateVeld("autoBijtellingsPercentage", parseFloat(e.target.value))}
+                    className="flex h-9 w-full max-w-xs rounded-lg border border-gray-300 bg-white px-3 py-1 text-sm text-gray-900 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                  >
+                    <option value="16">16% (elektrisch / milieuvriendelijk)</option>
+                    <option value="22">22% (overige auto&apos;s)</option>
+                  </select>
+                </div>
+                {(instellingen.autoCatalogusWaarde ?? 0) > 0 && (
+                  <div className="rounded-lg bg-amber-50 border border-amber-200 p-4">
+                    <p className="text-sm font-medium text-amber-800">Jaarlijkse bijtelling</p>
+                    <p className="text-2xl font-bold text-amber-700 mt-1">
+                      €{((instellingen.autoCatalogusWaarde ?? 0) * (instellingen.autoBijtellingsPercentage ?? 16) / 100).toLocaleString("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </p>
+                    <p className="text-xs text-amber-600 mt-1">
+                      {(instellingen.autoBijtellingsPercentage ?? 16)}% van €{(instellingen.autoCatalogusWaarde ?? 0).toLocaleString("nl-NL")} cataloguswaarde — wordt meegenomen in het belastingrapport als inkoop-correctie
+                    </p>
+                  </div>
+                )}
+                <Button loading={opslaan} onClick={() => slaOp({ autoKenteken: instellingen.autoKenteken, autoCatalogusWaarde: instellingen.autoCatalogusWaarde, autoBijtellingsPercentage: instellingen.autoBijtellingsPercentage })}>
+                  Opslaan
+                </Button>
               </CardContent>
             </Card>
           </div>

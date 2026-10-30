@@ -121,6 +121,7 @@ export default function UrenPagina() {
   const [geselecteerdeUren, setGeselecteerdeUren] = useState<Set<string>>(new Set());
   const [klanten, setKlanten] = useState<Klant[]>([]);
   const [factuurKlantId, setFactuurKlantId] = useState("");
+  const [urenDitJaar, setUrenDitJaar] = useState<number>(0);
   const [factuurLaden, setFactuurLaden] = useState(false);
 
   // Timer state
@@ -229,6 +230,16 @@ export default function UrenPagina() {
     }
   }, []);
 
+  const haalJaarurenOp = useCallback(async () => {
+    try {
+      const jaar = new Date().getFullYear();
+      const data = await window.api.belasting.jaaroverzicht(jaar);
+      setUrenDitJaar(data.urenTotaal);
+    } catch {
+      // stil falen
+    }
+  }, []);
+
   useEffect(() => {
     haalUrenOp();
   }, [haalUrenOp]);
@@ -236,6 +247,10 @@ export default function UrenPagina() {
   useEffect(() => {
     haalKlantenOp();
   }, [haalKlantenOp]);
+
+  useEffect(() => {
+    haalJaarurenOp();
+  }, [haalJaarurenOp]);
 
   const toggleSelecteerUur = (id: string, gefactureerd: boolean) => {
     if (gefactureerd) return;
@@ -332,6 +347,7 @@ export default function UrenPagina() {
       setModalOpen(false);
       resetFormulier();
       haalUrenOp();
+      haalJaarurenOp();
     } catch {
       toonMelding("fout", "Opslaan mislukt");
     } finally {
@@ -505,6 +521,37 @@ export default function UrenPagina() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Urencriterium teller */}
+        {(() => {
+          const DREMPEL = 1225;
+          const pct = Math.min(100, Math.round((urenDitJaar / DREMPEL) * 100));
+          const gehaald = urenDitJaar >= DREMPEL;
+          return (
+            <Card className={gehaald ? "border-green-200 bg-green-50" : "border-amber-200 bg-amber-50"}>
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <Clock className={`h-4 w-4 ${gehaald ? "text-green-600" : "text-amber-600"}`} />
+                    <span className="text-sm font-semibold text-gray-800">Urencriterium zelfstandigenaftrek</span>
+                  </div>
+                  <span className={`text-sm font-bold ${gehaald ? "text-green-700" : "text-amber-700"}`}>
+                    {gehaald ? "✓ Gehaald" : `Nog ${Math.ceil(DREMPEL - urenDitJaar)} uur nodig`}
+                  </span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2.5 mb-1">
+                  <div
+                    className={`h-2.5 rounded-full transition-all ${gehaald ? "bg-green-500" : "bg-amber-400"}`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                <p className="text-xs text-gray-500">
+                  {urenDitJaar.toFixed(1)} van {DREMPEL} uur geregistreerd in {new Date().getFullYear()} ({pct}%)
+                </p>
+              </CardContent>
+            </Card>
+          );
+        })()}
 
         {/* Week navigatie */}
         <div className="flex items-center gap-3">

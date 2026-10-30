@@ -34,6 +34,7 @@ interface VasteActivum {
   categorieNaam?: string | null;
   notities?: string | null;
   actief: boolean;
+  kiaEligible: boolean;
 }
 
 const LEEG_FORMULIER = {
@@ -45,6 +46,7 @@ const LEEG_FORMULIER = {
   restwaarde: "0",
   categorieNaam: "",
   notities: "",
+  kiaEligible: false,
 };
 
 function berekenBoekwaarde(activum: VasteActivum): number {
@@ -137,6 +139,7 @@ export default function VasteActivaPage() {
       restwaarde: String(activum.restwaarde),
       categorieNaam: activum.categorieNaam ?? "",
       notities: activum.notities ?? "",
+      kiaEligible: activum.kiaEligible ?? false,
     });
     setBewerkenId(activum.id);
     setModalOpen(true);
@@ -158,6 +161,7 @@ export default function VasteActivaPage() {
         restwaarde: parseFloat(formulier.restwaarde) || 0,
         categorieNaam: formulier.categorieNaam || null,
         notities: formulier.notities || null,
+        kiaEligible: formulier.kiaEligible,
       };
       if (bewerkenId) {
         await window.api.vasteActiva.update(bewerkenId, payload);
@@ -190,6 +194,11 @@ export default function VasteActivaPage() {
   const totaalAanschafwaarde = activa.reduce((s, a) => s + a.aanschafWaarde, 0);
   const totaalBoekwaarde = activa.reduce((s, a) => s + berekenBoekwaarde(a), 0);
   const afschrijvingDitJaar = activa.reduce((s, a) => s + berekenAfschrijvingDitJaar(a), 0);
+  const huidigJaar = new Date().getFullYear();
+  const kiaInvesteringenDitJaar = activa
+    .filter(a => a.kiaEligible && new Date(a.aanschafDatum).getFullYear() === huidigJaar)
+    .reduce((s, a) => s + a.aanschafWaarde, 0);
+  const kiaAftrek = Math.min(kiaInvesteringenDitJaar * 0.28, 17227);
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -223,7 +232,7 @@ export default function VasteActivaPage() {
         )}
 
         {/* Samenvatting cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-gray-500 flex items-center gap-2">
@@ -257,6 +266,15 @@ export default function VasteActivaPage() {
               <p className="text-xs text-gray-400 mt-1">Kosten {new Date().getFullYear()}</p>
             </CardContent>
           </Card>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-gray-500">KIA-aftrek {new Date().getFullYear()}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-2xl font-bold text-green-600">{formatBedrag(kiaAftrek)}</p>
+              <p className="text-xs text-gray-400 mt-1">{formatBedrag(kiaInvesteringenDitJaar)} KIA-waardig</p>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Tabel */}
@@ -272,6 +290,7 @@ export default function VasteActivaPage() {
                 <TableHead className="text-right">Restwaarde</TableHead>
                 <TableHead className="text-center">Methode</TableHead>
                 <TableHead className="text-center">Jaren</TableHead>
+                <TableHead className="text-center">KIA</TableHead>
                 <TableHead className="text-right">Acties</TableHead>
               </TableRow>
             </TableHeader>
@@ -318,6 +337,13 @@ export default function VasteActivaPage() {
                       </TableCell>
                       <TableCell className="text-center text-gray-600">
                         {activum.afschrijvingJaren}j
+                      </TableCell>
+                      <TableCell className="text-center">
+                        {activum.kiaEligible ? (
+                          <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700">KIA</span>
+                        ) : (
+                          <span className="text-gray-300">—</span>
+                        )}
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center justify-end gap-1">
@@ -446,6 +472,18 @@ export default function VasteActivaPage() {
               placeholder="Optionele notities..."
               rows={2}
             />
+            <label className="flex items-center gap-3 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={formulier.kiaEligible}
+                onChange={(e) => setFormulier({ ...formulier, kiaEligible: e.target.checked })}
+                className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+              />
+              <div>
+                <span className="text-sm font-medium text-gray-700">KIA-waardig</span>
+                <p className="text-xs text-gray-400">Kleinschaligheidsinvesteringsaftrek (28% van aanschafwaarde, max €17.227/jaar)</p>
+              </div>
+            </label>
           </div>
           <ModalFooter>
             <ModalClose asChild>

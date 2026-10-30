@@ -162,6 +162,34 @@ interface ElectronAPI {
     onNieuwBestand: (cb: (data: { pad: string; naam: string }) => void) => void
     verwijderListeners: () => void
   }
+  privetransacties: {
+    list: (params?: { jaar?: number }) => Promise<unknown[]>
+    create: (data: unknown) => Promise<unknown>
+    update: (id: string, data: unknown) => Promise<unknown>
+    delete: (id: string) => Promise<{ succes: boolean }>
+  }
+  belasting: {
+    jaaroverzicht: (jaar: number) => Promise<{
+      jaar: number
+      omzet: number
+      btwOmzet: number
+      kosten: number
+      btwInkoop: number
+      afschrijvingen: number
+      kmVergoeding: number
+      winst: number
+      btwTeBetalen: number
+      kiaWaardigeInvesteringen: number
+      kiaAftrek: number
+      urenTotaal: number
+      urencriteriumGehaald: boolean
+      bijtelling: number
+      priveStortingen: number
+      priveOnttrekkingen: number
+      btwPerKwartaal: Array<{ kwartaal: number; btwOmzet: number; btwInkoop: number; saldo: number }>
+      kostenPerCategorie: Array<{ categorie: string; bedrag: number; btw: number }>
+    }>
+  }
 }
 
 declare global {

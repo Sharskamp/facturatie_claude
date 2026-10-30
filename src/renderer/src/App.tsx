@@ -32,6 +32,8 @@ import BankImport from './pages/BankImport'
 import Producten from './pages/Producten'
 import VasteActiva from './pages/VasteActiva'
 import Crediteuren from './pages/Crediteuren'
+import PriveTransacties from './pages/PriveTransacties'
+import BelastingRapport from './pages/BelastingRapport'
 import DashboardLayout from './components/layout/DashboardLayout'
 
 function AppRoutes() {
@@ -75,6 +77,8 @@ function AppRoutes() {
           <Route path="/producten" element={<Producten />} />
           <Route path="/vaste-activa" element={<VasteActiva />} />
           <Route path="/crediteuren" element={<Crediteuren />} />
+          <Route path="/prive-transacties" element={<PriveTransacties />} />
+          <Route path="/belasting" element={<BelastingRapport />} />
           <Route path="/facturen/import-historisch" element={<FactuurImportHistorisch />} />
         </Route>
       ) : (
