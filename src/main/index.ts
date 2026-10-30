@@ -301,6 +301,28 @@ function runMigratie(dbPath: string): void {
     `)
   } catch {}
 
+  // VasteActiva — KIA markering
+  kolomToevoegen('VasteActiva', 'kiaEligible', 'BOOLEAN NOT NULL DEFAULT false')
+
+  // User — auto bijtelling
+  kolomToevoegen('User', 'autoKenteken', 'TEXT')
+  kolomToevoegen('User', 'autoCatalogusWaarde', 'REAL')
+  kolomToevoegen('User', 'autoBijtellingsPercentage', 'REAL NOT NULL DEFAULT 16')
+
+  // PriveTransactie tabel
+  db.exec(`CREATE TABLE IF NOT EXISTS "PriveTransactie" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "datum" DATETIME NOT NULL,
+    "type" TEXT NOT NULL,
+    "bedrag" REAL NOT NULL,
+    "omschrijving" TEXT NOT NULL,
+    "notities" TEXT,
+    "aangemaakt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "bijgewerkt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`)
+  try { db.exec('CREATE INDEX IF NOT EXISTS "PriveTransactie_datum_idx" ON "PriveTransactie"("datum")') } catch {}
+  try { db.exec('CREATE INDEX IF NOT EXISTS "PriveTransactie_type_idx" ON "PriveTransactie"("type")') } catch {}
+
   // Seed default categories if none exist
   const catCount = (db.prepare('SELECT COUNT(*) as count FROM "Categorie"').get() as { count: number }).count;
   if (catCount === 0) {
@@ -4186,6 +4208,164 @@ ${dagenTeLasten > 0 ? `<tr><td style="padding:4px 8px"><strong>Dagen te laat:</s
     )
     await prisma.factuur.update({ where: { id }, data: { herinneringVerzondenOp: nu } })
     return { succes: true }
+  })
+
+  // ── Privé transacties ──
+  ipcMain.handle('privetransacties:list', async (_, params?: { jaar?: number }) => {
+    const where: Record<string, unknown> = {}
+    if (params?.jaar) {
+      where.datum = {
+        gte: new Date(`${params.jaar}-01-01`),
+        lt: new Date(`${params.jaar + 1}-01-01`),
+      }
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (prisma as any).priveTransactie.findMany({ where, orderBy: { datum: 'desc' } })
+  })
+
+  ipcMain.handle('privetransacties:create', async (_, data: Record<string, unknown>) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (prisma as any).priveTransactie.create({ data: { ...data, datum: new Date(data.datum as string) } })
+  })
+
+  ipcMain.handle('privetransacties:update', async (_, id: string, data: Record<string, unknown>) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (prisma as any).priveTransactie.update({
+      where: { id },
+      data: { ...data, datum: data.datum ? new Date(data.datum as string) : undefined },
+    })
+  })
+
+  ipcMain.handle('privetransacties:delete', async (_, id: string) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (prisma as any).priveTransactie.delete({ where: { id } })
+    return { succes: true }
+  })
+
+  // ── Belastingrapport ──
+  ipcMain.handle('belasting:jaaroverzicht', async (_, jaar: number) => {
+    const vanDatum = new Date(`${jaar}-01-01`)
+    const totDatum = new Date(`${jaar + 1}-01-01`)
+
+    const user = await prisma.user.findFirst()
+    const kmVergoedingTarief = (user as Record<string, unknown>)?.kmVergoeding as number ?? 0.23
+    const autoCatalogus = (user as Record<string, unknown>)?.autoCatalogusWaarde as number | null ?? null
+    const autoBijtelling = (user as Record<string, unknown>)?.autoBijtellingsPercentage as number ?? 16
+    const bijtelling = autoCatalogus ? Math.round(autoCatalogus * autoBijtelling / 100 * 100) / 100 : 0
+
+    // Omzet: betaalde facturen aangemaakt in dit jaar
+    const facturen = await prisma.factuur.findMany({
+      where: { datum: { gte: vanDatum, lt: totDatum }, status: 'BETAALD' },
+      select: { subtotaal: true, btwBedrag: true, totaal: true },
+    })
+    const omzet = facturen.reduce((s, f) => s + f.subtotaal, 0)
+    const btwOmzet = facturen.reduce((s, f) => s + f.btwBedrag, 0)
+
+    // BTW per kwartaal (op basis van factuurdatum)
+    const alleFacturen = await prisma.factuur.findMany({
+      where: { datum: { gte: vanDatum, lt: totDatum }, status: { notIn: ['CONCEPT', 'GEANNULEERD'] } },
+      select: { datum: true, btwBedrag: true },
+    })
+    const alleUitgaven = await prisma.uitgave.findMany({
+      where: { datum: { gte: vanDatum, lt: totDatum }, zakelijk: true },
+      select: { datum: true, bedrag: true, btwBedrag: true, categorieId: true, categorie: { select: { naam: true } } },
+    })
+    const btwPerKwartaal = [1, 2, 3, 4].map(kwartaal => {
+      const maanden = [(kwartaal - 1) * 3 + 1, (kwartaal - 1) * 3 + 2, (kwartaal - 1) * 3 + 3]
+      const btwOmzetKw = alleFacturen.filter(f => maanden.includes(new Date(f.datum).getMonth() + 1)).reduce((s, f) => s + f.btwBedrag, 0)
+      const btwInkoopKw = alleUitgaven.filter(u => maanden.includes(new Date(u.datum).getMonth() + 1)).reduce((s, u) => s + u.btwBedrag, 0)
+      return { kwartaal, btwOmzet: btwOmzetKw, btwInkoop: btwInkoopKw, saldo: btwOmzetKw - btwInkoopKw }
+    })
+
+    // Uitgaven per categorie
+    const catMap = new Map<string, { bedrag: number; btw: number }>()
+    for (const u of alleUitgaven) {
+      const cat = (u.categorie as { naam: string } | null)?.naam ?? 'Overig'
+      const bestaand = catMap.get(cat) ?? { bedrag: 0, btw: 0 }
+      catMap.set(cat, { bedrag: bestaand.bedrag + u.bedrag, btw: bestaand.btw + u.btwBedrag })
+    }
+    const kostenPerCategorie = Array.from(catMap.entries()).map(([categorie, v]) => ({ categorie, bedrag: v.bedrag, btw: v.btw }))
+    const kosten = alleUitgaven.reduce((s, u) => s + u.bedrag, 0)
+    const btwInkoop = alleUitgaven.reduce((s, u) => s + u.btwBedrag, 0)
+
+    // Afschrijvingen
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const vasteActiva = await (prisma as any).vasteActiva.findMany({ where: { actief: true } }) as Array<Record<string, unknown>>
+    const afschrijvingen = vasteActiva.reduce((s: number, a: Record<string, unknown>) => {
+      const aanschaf = new Date(a.aanschafDatum as string)
+      const eindJaar = new Date(jaar + 1, 0, 1)
+      const startJaar = new Date(jaar, 0, 1)
+      const jaren = a.afschrijvingJaren as number
+      const restwaarde = a.restwaarde as number
+      const aanschafWaarde = a.aanschafWaarde as number
+      const methode = a.afschrijvingMethode as string
+      if (aanschaf >= eindJaar) return s
+      const bereken = (peildatum: Date) => {
+        if (peildatum <= aanschaf) return aanschafWaarde
+        const jarenVerlopen = (peildatum.getTime() - aanschaf.getTime()) / (1000 * 60 * 60 * 24 * 365.25)
+        if (methode === 'lineair') return Math.max(restwaarde, aanschafWaarde - ((aanschafWaarde - restwaarde) / jaren) * jarenVerlopen)
+        return Math.max(restwaarde, aanschafWaarde * Math.pow(1 - 1 / jaren, jarenVerlopen))
+      }
+      return s + Math.max(0, bereken(startJaar) - bereken(eindJaar))
+    }, 0)
+
+    // KM vergoeding
+    const ritten = await prisma.rit.findMany({
+      where: { datum: { gte: vanDatum, lt: totDatum }, zakelijk: true },
+      select: { kilometers: true, retour: true },
+    })
+    const totalKm = ritten.reduce((s, r) => s + r.kilometers * (r.retour ? 2 : 1), 0)
+    const kmVergoeding = totalKm * kmVergoedingTarief
+
+    // Uren
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const urenRecords = await (prisma as any).uurregistratie.findMany({
+      where: { startTijd: { gte: vanDatum, lt: totDatum } },
+      select: { duur: true },
+    }) as Array<{ duur: number | null }>
+    const urenMinuten = urenRecords.reduce((s: number, u: { duur: number | null }) => s + (u.duur ?? 0), 0)
+    const urenTotaal = Math.round(urenMinuten / 60 * 10) / 10
+
+    // KIA
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const kiaActiva = await (prisma as any).vasteActiva.findMany({
+      where: { kiaEligible: true, aanschafDatum: { gte: vanDatum, lt: totDatum } },
+      select: { aanschafWaarde: true },
+    }) as Array<{ aanschafWaarde: number }>
+    const kiaWaardigeInvesteringen = kiaActiva.reduce((s: number, a: { aanschafWaarde: number }) => s + a.aanschafWaarde, 0)
+    const kiaAftrek = Math.min(kiaWaardigeInvesteringen * 0.28, 17227)
+
+    // Privé transacties
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const priveTrans = await (prisma as any).priveTransactie.findMany({
+      where: { datum: { gte: vanDatum, lt: totDatum } },
+      select: { type: true, bedrag: true },
+    }) as Array<{ type: string; bedrag: number }>
+    const priveStortingen = priveTrans.filter((t: { type: string }) => t.type === 'STORTING').reduce((s: number, t: { bedrag: number }) => s + t.bedrag, 0)
+    const priveOnttrekkingen = priveTrans.filter((t: { type: string }) => t.type === 'ONTTREKKING').reduce((s: number, t: { bedrag: number }) => s + t.bedrag, 0)
+
+    const winst = omzet - kosten - afschrijvingen - kmVergoeding + bijtelling
+
+    return {
+      jaar,
+      omzet,
+      btwOmzet,
+      kosten,
+      btwInkoop,
+      afschrijvingen,
+      kmVergoeding,
+      winst,
+      btwTeBetalen: btwOmzet - btwInkoop,
+      kiaWaardigeInvesteringen,
+      kiaAftrek,
+      urenTotaal,
+      urencriteriumGehaald: urenTotaal >= 1225,
+      bijtelling,
+      priveStortingen,
+      priveOnttrekkingen,
+      btwPerKwartaal,
+      kostenPerCategorie,
+    }
   })
 }
 

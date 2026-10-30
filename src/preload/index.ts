@@ -183,4 +183,13 @@ contextBridge.exposeInMainWorld('api', {
     onNieuwBestand: (cb: (data: { pad: string; naam: string }) => void) => ipcRenderer.on('bank:nieuw-bestand', (_e, d) => cb(d)),
     verwijderListeners: () => ipcRenderer.removeAllListeners('bank:nieuw-bestand'),
   },
+  privetransacties: {
+    list: (params?: unknown) => ipcRenderer.invoke('privetransacties:list', params),
+    create: (data: unknown) => ipcRenderer.invoke('privetransacties:create', data),
+    update: (id: string, data: unknown) => ipcRenderer.invoke('privetransacties:update', id, data),
+    delete: (id: string) => ipcRenderer.invoke('privetransacties:delete', id),
+  },
+  belasting: {
+    jaaroverzicht: (jaar: number) => ipcRenderer.invoke('belasting:jaaroverzicht', jaar),
+  },
 })

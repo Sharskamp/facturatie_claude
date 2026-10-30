@@ -21,6 +21,8 @@ import {
   Package,
   Cpu,
   Receipt,
+  Wallet,
+  FileSpreadsheet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState, useEffect } from "react";
@@ -41,6 +43,8 @@ const navigatie = [
   { naam: "Bankimport", href: "/bank-import", icoon: Landmark, uitleg: "Importeer bankafschriften (CSV) van ABN AMRO, ING of Rabobank om transacties te matchen." },
   { naam: "Producten", href: "/producten", icoon: Package, uitleg: "Beheer een productcatalogus met vaste prijzen en BTW-tarieven voor sneller factureren." },
   { naam: "Vaste activa", href: "/vaste-activa", icoon: Cpu, uitleg: "Registreer bedrijfsmiddelen (laptop, auto) en volg de jaarlijkse afschrijvingen." },
+  { naam: "Privé transacties", href: "/prive-transacties", icoon: Wallet, uitleg: "Registreer privé stortingen en onttrekkingen voor je belastingaangifte (vermogensoverzicht)." },
+  { naam: "Belastingrapport", href: "/belasting", icoon: FileSpreadsheet, uitleg: "Jaaroverzicht voor belastingaangifte: winst, BTW per kwartaal, KIA, urencriterium, bijtelling." },
   { naam: "Rapporten", href: "/rapporten", icoon: BarChart3, uitleg: "Bekijk winst & verlies, BTW-overzicht per kwartaal en jaaroverzichten voor de belastingaangifte." },
   { naam: "Instellingen", href: "/instellingen", icoon: Settings, uitleg: "Stel je bedrijfsgegevens, e-mail (SMTP), BTW-nummers en meer in." },
 ];
